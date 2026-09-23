@@ -103,6 +103,51 @@ public class X86RuntimeNullThrowUnwindTests
         Assert.That(index.MatchesUnwind(ImageBase + 0x1000, ImageBase + 0x1009, 4, 0, new byte[] { 4, 0x32 }), Is.False);
     }
 
+    [Test]
+    public void HandlerEvidencePreservesTheNativeRejectionAndExposesOnlyMappedStructure()
+    {
+        var image = Image();
+        image[0x900] = 1 | 3 << 3; // version 1, EHANDLER and UHANDLER
+        U32(image, 0x908, 0x1300); // executable, file-backed handler entry
+        image[0x90C] = 0x38; // first byte of language-specific data; not interpreted here
+        var index = X64UnwindProof.Parse(image)!;
+        var entry = ImageBase + 0x1000;
+        var handler = index.GetHandler(entry);
+        Assert.That(handler, Is.EqualTo(new X64UnwindProof.HandlerInfo(
+            entry, ImageBase + 0x1010, 3, ImageBase + 0x1300, ImageBase + 0x300C)));
+        Assert.That(index.MapReadOnlyData(handler!.Value.HandlerDataAddress, 1), Is.EqualTo(0x90C));
+        Assert.That(index.GetHandler(entry + 1), Is.Null);
+        Assert.That(index.GetHandler(ImageBase + 0x1100), Is.Null);
+        Assert.That(index.ClassifySpan(entry, entry + 1).Kind, Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+        Assert.That(index.MatchesUnwind(entry, entry + 9, 4, 0, new byte[] { 4, 0x42 }), Is.False);
+    }
+
+    [TestCase(0x3000U)] // handler pointer into non-executable data
+    [TestCase(0x4000U)] // handler pointer outside the image
+    public void InvalidHandlerPointersCannotProvideHandlerEvidence(uint invalidHandler)
+    {
+        var image = Image();
+        image[0x900] = 1 | 3 << 3;
+        U32(image, 0x908, invalidHandler);
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.That(index.GetHandler(ImageBase + 0x1000), Is.Null);
+        Assert.That(index.ClassifySpan(ImageBase + 0x1000, ImageBase + 0x1001).Kind,
+            Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+    }
+
+    [Test]
+    public void MutableLanguageHandlerDataCannotBeUsedAsImmutableEvidence()
+    {
+        var image = Image();
+        image[0x900] = 1 | 3 << 3;
+        U32(image, 0x908, 0x1300);
+        U32(image, 0x1FC, 0xC0000040); // the handler data section is writable
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.That(index.GetHandler(ImageBase + 0x1000), Is.Null);
+        Assert.That(index.ClassifySpan(ImageBase + 0x1000, ImageBase + 0x1001).Kind,
+            Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+    }
+
     [TestCase("System")]
     [TestCase("NullReferenceException")]
     public void OnlyCompleteReadOnlyAsciiTypeNameLiteralsCanBindTheRuntimeOperation(string name)

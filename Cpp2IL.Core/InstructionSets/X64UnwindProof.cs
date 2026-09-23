@@ -31,8 +31,13 @@ internal static class X64UnwindProof
     }
 
     internal readonly record struct Section(uint Rva, uint VirtualSize, uint Raw, uint RawSize, uint Characteristics);
-    internal sealed record Unwind(byte PrologSize, byte FrameRegister, byte[] Codes);
+    internal sealed record Unwind(byte PrologSize, byte FrameRegister, byte[] Codes,
+        byte Flags = 0, uint HandlerRva = 0, uint HandlerDataRva = 0);
     internal readonly record struct Function(uint Start, uint End, Unwind? Info);
+    // Structural PE evidence only. The target and its language-specific data still need
+    // independent semantic validation before any managed exception region can be emitted.
+    internal readonly record struct HandlerInfo(ulong Start, ulong End, byte Flags,
+        ulong HandlerAddress, ulong HandlerDataAddress);
 
     internal sealed class Index
     {
@@ -52,11 +57,26 @@ internal static class X64UnwindProof
             if (index < _functions.Length && _functions[index].Start < endRva)
             {
                 var function = _functions[index];
-                return function.Start <= rva && endRva <= function.End && function.Info != null
+                return function.Start <= rva && endRva <= function.End && function.Info is { Flags: 0 }
                     ? new(SpanKind.HandlerFree, _imageBase + function.Start, _imageBase + function.End)
                     : new(SpanKind.Unsupported, _imageBase + function.Start, _imageBase + function.End);
             }
             return new(SpanKind.NoEntry, start, end);
+        }
+
+        internal HandlerInfo? GetHandler(ulong entry)
+        {
+            if (entry == ulong.MaxValue || !TryRange(entry, entry + 1, out var rva, out _))
+                return null;
+            var index = Find(rva);
+            if (index >= _functions.Length || _functions[index] is not
+                { Start: var start, End: var end, Info: { Flags: var flags, HandlerRva: var handler,
+                    HandlerDataRva: var data } } || start != rva || flags == 0)
+                return null;
+            if (MapReadOnlyData(_imageBase + data, 1) < 0)
+                return null;
+            return new(_imageBase + start, _imageBase + end, flags,
+                _imageBase + handler, _imageBase + data);
         }
 
         // Immutable literal evidence must stay inside one readable, file-backed data section.
@@ -187,8 +207,11 @@ internal static class X64UnwindProof
             if (rva == 0 || rva % 4 != 0)
                 return null;
             var at = Map(_sections, rva, 4, false);
-            if (at < 0 || _image[at] != 1)
-                return null; // version1 and NO flags: reject EHANDLER/UHANDLER/CHAININFO/unknown
+            if (at < 0 || (_image[at] & 7) != 1)
+                return null;
+            var flags = (byte)(_image[at] >> 3);
+            if (flags > 3)
+                return null; // chained or unknown unwind formats remain unsupported
             var prolog = _image[at + 1];
             var count = _image[at + 2];
             var frame = _image[at + 3];
@@ -197,7 +220,17 @@ internal static class X64UnwindProof
             var codes = _image.Slice(at + 4, count * 2).ToArray();
             if (!ValidCodes(codes, prolog, frame))
                 return null;
-            return new(prolog, frame, codes);
+            if (flags == 0)
+                return new(prolog, frame, codes);
+            var handlerField = checked(rva + (uint)(4 + (count + 1) / 2 * 4));
+            var fieldOffset = Map(_sections, handlerField, 5, false);
+            if (fieldOffset < 0)
+                return null;
+            var handlerRva = U32(fieldOffset);
+            if (handlerRva == 0 || Map(_sections, handlerRva, 1, true) < 0)
+                return null;
+            var dataRva = checked(handlerField + 4);
+            return new(prolog, frame, codes, flags, handlerRva, dataRva);
         }
 
         private ushort U16(int offset) => BinaryPrimitives.ReadUInt16LittleEndian(_image.Slice(offset, 2));

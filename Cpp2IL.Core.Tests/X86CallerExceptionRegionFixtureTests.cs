@@ -51,4 +51,44 @@ public class X86CallerExceptionRegionFixtureTests
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }
+
+    [Test]
+    public void ExactCatchAndFinallyRetainDistinctHandlerDataAndRemainUnsupported()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_EXCEPTION_REGION_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_EXCEPTION_REGION_FIXTURE_INPUT to the public ExceptionRegionFixture player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var index = X64UnwindProof.ForApplication(app)!;
+            var methods = app.GetAssemblyByName("ExceptionRegionFixture")!.Types
+                .SelectMany(type => type.Methods).OrderBy(method => method.Name).ToArray();
+            Assert.That(methods.Select(method => method.Name),
+                Is.EqualTo(new[] { "CatchZero", "FinallyCount" }));
+            var handlers = methods.Select(method =>
+            {
+                method.EnsureRawBytes();
+                var evidence = index.GetHandler(method.UnderlyingPointer);
+                Assert.That(evidence, Is.Not.Null);
+                Assert.That(evidence!.Value.Flags, Is.EqualTo(3));
+                Assert.That(index.MapReadOnlyData(evidence.Value.HandlerDataAddress, 1), Is.GreaterThanOrEqualTo(0));
+                var native = X86Utils.Iterate(method).ToArray();
+                Assert.That(X86CallerExceptionRegionProof.Check(method, native, new System.Collections.Generic.HashSet<ulong>()),
+                    Does.Contain("unsupported native handlers"));
+                Assert.That(app.InstructionSet.GetIsilFromMethod(method).Select(instruction => instruction.OpCode),
+                    Is.EqualTo(new[] { OpCode.NotImplemented }));
+                return evidence.Value;
+            }).ToArray();
+            Assert.That(handlers[0].HandlerAddress, Is.EqualTo(handlers[1].HandlerAddress));
+            Assert.That(handlers[0].HandlerDataAddress, Is.Not.EqualTo(handlers[1].HandlerDataAddress));
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
 }
