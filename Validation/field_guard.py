@@ -39,6 +39,18 @@ def observations():
     for kind in ("inner-null", "outer-null"):
         expected.append({"kind": "nested-clear:" + kind, "result": None,
                          "exception": "System.NullReferenceException"})
+    for initial in (False, True):
+        for set_value in (True, False):
+            expected.append({"kind": "nested-bool:" + str(set_value).lower() + ":" + str(initial),
+                             "result": set_value, "ownerNeighbor": 81, "innerNeighbor": -82,
+                             "exception": "none"})
+    for set_value in (True, False):
+        expected.append({"kind": "nested-bool:" + str(set_value).lower() + ":inner-null",
+                         "result": None, "ownerNeighbor": 81, "innerNeighbor": None,
+                         "exception": "System.NullReferenceException"})
+        expected.append({"kind": "nested-bool:" + str(set_value).lower() + ":outer-null",
+                         "result": None, "ownerNeighbor": None, "innerNeighbor": None,
+                         "exception": "System.NullReferenceException"})
     return expected
 
 
@@ -51,6 +63,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Field-guard behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 9,
+    return {"status": "passed", "observations": len(expected), "methods": 11,
             "platform": report["platform"], "profile": "field-guard",
-            "scope": "signed 32/64-bit access, direct and nested zero stores, and Boolean field reads and zero store with null receivers; not whole-program equivalence"}
+            "scope": "signed 32/64-bit access, direct and nested zero stores, Boolean reads, and nested Boolean literal stores with null receivers; not whole-program equivalence"}

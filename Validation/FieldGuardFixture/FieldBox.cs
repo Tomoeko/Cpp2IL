@@ -109,4 +109,28 @@ namespace FieldGuardFixture
             Inner.Value = 0;
         }
     }
+
+    public class NestedBooleanBox
+    {
+        public bool Value;
+        public int Neighbor;
+    }
+
+    public class NestedBooleanOwner
+    {
+        public NestedBooleanBox Inner;
+        public int Neighbor;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public void SetTrue()
+        {
+            Inner.Value = true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public void SetFalse()
+        {
+            Inner.Value = false;
+        }
+    }
 }

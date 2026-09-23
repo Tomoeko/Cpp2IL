@@ -43,6 +43,28 @@ namespace RecoveryValidation
                     new NestedFieldBox { Inner = new FieldBox(initial) });
             RecordNestedClear(observations, "inner-null", new NestedFieldBox());
             RecordNestedClear(observations, "outer-null", null);
+            foreach (var initial in new[] { false, true })
+            {
+                RecordNestedBooleanLiteral(observations, "true:" + initial,
+                    new NestedBooleanOwner
+                    {
+                        Inner = new NestedBooleanBox { Value = initial, Neighbor = -82 },
+                        Neighbor = 81
+                    }, true);
+                RecordNestedBooleanLiteral(observations, "false:" + initial,
+                    new NestedBooleanOwner
+                    {
+                        Inner = new NestedBooleanBox { Value = initial, Neighbor = -82 },
+                        Neighbor = 81
+                    }, false);
+            }
+            foreach (var setValue in new[] { true, false })
+            {
+                RecordNestedBooleanLiteral(observations, (setValue ? "true" : "false") + ":inner-null",
+                    new NestedBooleanOwner { Neighbor = 81 }, setValue);
+                RecordNestedBooleanLiteral(observations, (setValue ? "true" : "false") + ":outer-null",
+                    null, setValue);
+            }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -178,6 +200,26 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "nested-clear:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordNestedBooleanLiteral(List<object> observations, string kind,
+            NestedBooleanOwner outer, bool setValue)
+        {
+            var exception = "none";
+            try
+            {
+                if (setValue) outer.SetTrue();
+                else outer.SetFalse();
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "nested-bool:" + kind },
+                { "result", outer != null && outer.Inner != null ? (object)outer.Inner.Value : null },
+                { "ownerNeighbor", outer != null ? (object)outer.Neighbor : null },
+                { "innerNeighbor", outer != null && outer.Inner != null ? (object)outer.Inner.Neighbor : null },
+                { "exception", exception }
             });
         }
 
