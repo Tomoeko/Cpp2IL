@@ -39,6 +39,27 @@ public class X86MetadataGuardProofTests
         Assert.That(proof!.RemovedAddresses, Has.Count.EqualTo(5));
     }
 
+    [Test]
+    public void ExactNonliteralInitializationGuardIsReportedButNotRemoved()
+    {
+        var body = LiteralBody();
+        var materialize = body[6];
+        materialize.MemoryDisplacement64 = Slot + 8;
+        body[6] = materialize;
+        var helpers = new HashSet<ulong> { Helper };
+
+        Assert.That(X86MetadataGuardProof.Find(body, helpers, address => address == Slot), Is.Null);
+        Assert.That(X86MetadataGuardProof.FindUnresolvedInitializationGuards(body, helpers),
+            Is.EquivalentTo(new[] { body[1].IP }));
+
+        var wrongHelper = new HashSet<ulong>();
+        Assert.That(X86MetadataGuardProof.FindUnresolvedInitializationGuards(body, wrongHelper), Is.Empty);
+        var wrongStore = body[5];
+        wrongStore.MemoryDisplacement64 = Flag + 1;
+        body[5] = wrongStore;
+        Assert.That(X86MetadataGuardProof.FindUnresolvedInitializationGuards(body, helpers), Is.Empty);
+    }
+
     [TestCase("unknown-helper")]
     [TestCase("not-literal")]
     [TestCase("condition-not-zero")]

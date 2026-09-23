@@ -67,6 +67,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
         var shiftCountExtensions = X86ShiftCountExtensionProof.Find(context, nativeInstructions);
         var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);
+        var unresolvedMetadataGuards = X86MetadataGuardProof.FindUnresolvedInitializationGuards(context, nativeInstructions);
         if (metadataGuard != null)
             context.PutExtraData("X86MetadataLiteralGuardProof", metadataGuard);
         foreach (var instruction in nativeInstructions)
@@ -75,7 +76,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 continue;
             var firstLiftedIndex = instructions.Count;
             ConvertInstructionStatement(instruction, instructions, addresses, context,
-                singleWidthDividends.Contains(instruction.IP), shiftCountExtensions.Contains(instruction.IP));
+                singleWidthDividends.Contains(instruction.IP), shiftCountExtensions.Contains(instruction.IP),
+                unresolvedMetadataGuards.Contains(instruction.IP));
             if (instruction.Code == Code.Call_rel32_64 &&
                 instructions.Skip(firstLiftedIndex).Any(lifted => lifted.OpCode == ISIL.OpCode.RuntimeNullThrow))
                 noReturnCalls.Add(instruction.IP);
@@ -223,10 +225,11 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         (RflagsBits.ZF, "ZF"), (RflagsBits.SF, "SF"), (RflagsBits.OF, "OF"),
     ];
 
-    private void ConvertInstructionStatement(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend = false, bool shiftCountExtension = false)
+    private void ConvertInstructionStatement(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend = false, bool shiftCountExtension = false, bool unresolvedMetadataGuard = false)
     {
         var first = instructions.Count;
-        ConvertInstructionStatementCore(instruction, instructions, addresses, context, singleWidthDividend, shiftCountExtension);
+        ConvertInstructionStatementCore(instruction, instructions, addresses, context, singleWidthDividend,
+            shiftCountExtension, unresolvedMetadataGuard);
 
         // CALL itself does not change RFLAGS, but the ABI does not preserve status flags across
         // its opaque callee. Tail jumps have no returning continuation in the current method.
@@ -284,7 +287,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         }
     }
 
-    private void ConvertInstructionStatementCore(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend, bool shiftCountExtension)
+    private void ConvertInstructionStatementCore(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend, bool shiftCountExtension, bool unresolvedMetadataGuard)
     {
         var callNoReturn = false;
         int operandSize;
@@ -797,7 +800,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 }
                 if (operandSize is not (32 or 64))
                 {
-                    Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("Narrow integer comparison requires partial-register semantics: " + FormatInstruction(instruction)));
+                    var reason = unresolvedMetadataGuard
+                        ? "Runtime metadata initialization guard has unproved managed effects: "
+                        : "Narrow integer comparison requires partial-register semantics: ";
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(reason + FormatInstruction(instruction)));
                     break;
                 }
                 if (instruction.Mnemonic == Mnemonic.Cmp ||

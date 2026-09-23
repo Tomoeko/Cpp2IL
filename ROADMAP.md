@@ -244,6 +244,8 @@ The authenticated refresh after the bounded `int[]` store and terminal-helper bo
 
 The authenticated refresh after signed 64-bit field-access support preserves both complete denominators and every selected disposition again. The expanded controlled fixture passes all exact-target gates; both broad scopes still fail strict recovery and have no typed-IL, Unity compilation, native rebuild or behavioral equivalence result.
 
+An exact runtime-metadata-guard diagnostic pass preserves all 7,256 private and 12,724 independent selected identities and dispositions. It identifies the first unresolved reason for 901 private and 90 independent methods as a metadata-helper initialization guard with a matching byte flag and branch. Native inspection confirmed that a representative independent guard feeds static-field access and a tail transfer. This classification does not remove the helper or flag write, recover class-initialization effects, or establish source compilation or behavioral equivalence. Both complete scopes still fail strict recovery.
+
 - Run the user-supplied source/build pair locally as an independent validation case. Keep source/original assemblies inaccessible to the player-only recovery step, and use them afterwards for comparisons.
 - Validate the private target with the same reporting, compilation and behavioral gates to the extent an oracle is available. Without source or an equivalent oracle, report the narrower observed evidence honestly.
 - Convert general failures into minimal synthetic regressions. Never encode private game names, method names, offsets, hashes or input-specific exceptions into tracked recovery logic.
