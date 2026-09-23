@@ -18,8 +18,12 @@ namespace RecoveryValidation
                 new { Label = "mixed", Values = new[] { -7, 0, 19, int.MaxValue } }
             };
             foreach (var array in arrays)
+            {
                 Record(observations, array.Label, array.Values);
+                RecordWrite(observations, array.Label, array.Values);
+            }
             Record(observations, "null", null);
+            RecordWrite(observations, "null", null);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -40,6 +44,28 @@ namespace RecoveryValidation
                 observations.Add(new Dictionary<string, object>
                 {
                     { "kind", label }, { "index", index }, { "result", result }, { "exception", exception }
+                });
+            }
+        }
+
+        private static void RecordWrite(List<object> observations, string label, int[] values)
+        {
+            var length = values == null ? 0 : values.Length;
+            foreach (var index in new[] { int.MinValue, -1, 0, 1, length - 1, length, int.MaxValue })
+            {
+                var copy = values == null ? null : (int[])values.Clone();
+                var value = (index & 1) == 0 ? int.MaxValue : int.MinValue;
+                object result = null;
+                var exception = "none";
+                try
+                {
+                    ArrayWrites.Write(copy, index, value);
+                    result = copy == null ? null : (object)copy[index];
+                }
+                catch (Exception error) { exception = error.GetType().FullName; }
+                observations.Add(new Dictionary<string, object>
+                {
+                    { "kind", "write:" + label }, { "index", index }, { "result", result }, { "exception", exception }
                 });
             }
         }

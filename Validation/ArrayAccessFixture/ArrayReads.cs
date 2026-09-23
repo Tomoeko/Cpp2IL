@@ -10,4 +10,13 @@ namespace ArrayAccessFixture
             return values[index];
         }
     }
+
+    public static class ArrayWrites
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void Write(int[] values, int index, int value)
+        {
+            values[index] = value;
+        }
+    }
 }

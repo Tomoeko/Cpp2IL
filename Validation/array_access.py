@@ -1,4 +1,4 @@
-"""Independent oracle for a signed 32-bit array element read."""
+"""Independent oracle for signed 32-bit array element reads and writes."""
 
 import json
 
@@ -21,6 +21,15 @@ def observations():
             else:
                 result, exception = values[index], "none"
             expected.append({"kind": label, "index": index, "result": result, "exception": exception})
+        for index in (-(1 << 31), -1, 0, 1, length - 1, length, (1 << 31) - 1):
+            if values is None:
+                result, exception = None, "System.NullReferenceException"
+            elif index < 0 or index >= length:
+                result, exception = None, "System.IndexOutOfRangeException"
+            else:
+                result, exception = ((1 << 31) - 1 if index & 1 == 0 else -(1 << 31)), "none"
+            expected.append({"kind": "write:" + label, "index": index,
+                             "result": result, "exception": exception})
     return expected
 
 
@@ -33,6 +42,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Array-access behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 1,
+    return {"status": "passed", "observations": len(expected), "methods": 2,
             "platform": report["platform"], "profile": "array-access",
-            "scope": "int-array reads, null and bounds failures; not whole-program equivalence"}
+            "scope": "int-array reads and writes, null and bounds failures; not whole-program equivalence"}

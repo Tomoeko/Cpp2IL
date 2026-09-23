@@ -12,11 +12,11 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Closed exact-profile int[] read: prove both runtime exception exits and the only
-/// successful memory read before replacing the diamond with an implicit managed ldelem.
+/// Closed exact-profile int[] access: prove both runtime exception exits and the only
+/// successful memory access before replacing the diamond with managed ldelem or stelem.
 /// This does not generalize to unchecked native array access or other element widths.
 /// </summary>
-internal static class X86ArrayReadProof
+internal static class X86IntArrayAccessProof
 {
     internal static List<IsilInstruction>? TryLift(MethodAnalysisContext context, IReadOnlyList<Instruction> body)
     {
@@ -25,7 +25,7 @@ internal static class X86ArrayReadProof
         if (app.Binary is not PE { PointerSizeBytes: 8 } ||
             app.Binary.InstructionSetId != DefaultInstructionSets.X86_64 ||
             app.UnityVersion.ToString() != "2021.3.35f1" ||
-            context.Definition is not { parameterCount: 2, GenericContainer: null } definition ||
+            context.Definition is not { GenericContainer: null } definition ||
             owner?.Definition is not { GenericContainer: null } ||
             owner.IsGenericInstance || owner.GenericParameters.Count != 0 ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
@@ -35,9 +35,17 @@ internal static class X86ArrayReadProof
             (context.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
             (context.ImplAttributes & (MethodImplAttributes.CodeTypeMask | MethodImplAttributes.ManagedMask |
                                        MethodImplAttributes.InternalCall)) != 0 ||
-            context.Parameters is not [var array, var index] ||
-            definition.InternalParameterData is not [var rawArray, var rawIndex] ||
-            array.Definition == null || index.Definition == null ||
+            context.Parameters.Count is not (2 or 3) ||
+            definition.parameterCount != context.Parameters.Count ||
+            definition.InternalParameterData?.Length != context.Parameters.Count)
+            return null;
+
+        var isWrite = context.Parameters.Count == 3;
+        var array = context.Parameters[0];
+        var index = context.Parameters[1];
+        var rawArray = definition.InternalParameterData![0];
+        var rawIndex = definition.InternalParameterData[1];
+        if (array.Definition == null || index.Definition == null ||
             array.Definition != rawArray || index.Definition != rawIndex ||
             array.ParameterIndex != 0 || index.ParameterIndex != 1 ||
             !ReferenceEquals(array.DeclaringMethod, context) ||
@@ -48,32 +56,41 @@ internal static class X86ArrayReadProof
             array.ParameterType is not SzArrayTypeAnalysisContext { ElementType: var element } ||
             !ReferenceEquals(element, app.SystemTypes.SystemInt32Type) ||
             !ReferenceEquals(index.ParameterType, app.SystemTypes.SystemInt32Type) ||
-            context.OverrideReturnType != null ||
-            !ReferenceEquals(context.ReturnType, app.SystemTypes.SystemInt32Type) ||
             array.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
             index.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
-            definition.RawReturnType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4,
-                NumMods: 0, Byref: 0, Pinned: 0 } ||
-            body.Count < 13 || body[0].IP != context.UnderlyingPointer)
+            context.OverrideReturnType != null ||
+            definition.RawReturnType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawReturn ||
+            (isWrite
+                ? !ReferenceEquals(context.ReturnType, app.SystemTypes.SystemVoidType) ||
+                  rawReturn.Type != Il2CppTypeEnum.IL2CPP_TYPE_VOID ||
+                  !ValidStoredParameter(context, definition, app)
+                : !ReferenceEquals(context.ReturnType, app.SystemTypes.SystemInt32Type) ||
+                  rawReturn.Type != Il2CppTypeEnum.IL2CPP_TYPE_I4) ||
+            body.Count < 12 || body[0].IP != context.UnderlyingPointer)
             return null;
 
         var nullCall = body[9];
         var boundsCall = body[11];
-        if (!TryProveShape(body) ||
+        if (!TryProveShape(body, isWrite) ||
             X86RuntimeNullThrowProof.TryIdentify(app, nullCall.NearBranchTarget) == null ||
             !X86RuntimeBoundsThrowProof.TryIdentify(app, boundsCall.NearBranchTarget) ||
             X86CallerExceptionRegionProof.Check(context, body,
                 new HashSet<ulong> { nullCall.IP, boundsCall.IP }) != null)
             return null;
 
-        // ArrayRecovery recognizes this typed offset/scale as int[] element access and
-        // the emitter generates ldelem. It preserves the source null-first, unsigned
-        // bounds check and successful load without emitting either helper explicitly.
-        var result = new IsilRegister(null, "array_read_result");
+        // ArrayRecovery recognizes this typed offset/scale as int[] element access.
+        // The emitter preserves null-first and unsigned bounds failure via ldelem/stelem.
         var memory = new ISIL.MemoryOperand(new IsilRegister(null, "rcx"),
             new IsilRegister(null, "rdx"), 0x20, 4);
+        if (isWrite)
+            return
+            [
+                new(0, ISIL.OpCode.Move, memory, new IsilRegister(null, "r8")),
+                new(1, ISIL.OpCode.Return),
+            ];
+        var result = new IsilRegister(null, "array_read_result");
         return
         [
             new(0, ISIL.OpCode.Move, result, memory),
@@ -81,11 +98,23 @@ internal static class X86ArrayReadProof
         ];
     }
 
-    internal static bool TryProveShape(IReadOnlyList<Instruction> body)
+    private static bool ValidStoredParameter(MethodAnalysisContext context,
+        LibCpp2IL.Metadata.Il2CppMethodDefinition definition, ApplicationAnalysisContext app)
     {
-        if (body.Count < 13)
+        var value = context.Parameters[2];
+        return value.Definition != null && value.Definition == definition.InternalParameterData![2] &&
+               value.ParameterIndex == 2 && ReferenceEquals(value.DeclaringMethod, context) &&
+               !value.IsRef && value.Attributes == value.DefaultAttributes && value.OverrideParameterType == null &&
+               ReferenceEquals(value.ParameterType, app.SystemTypes.SystemInt32Type) &&
+               value.Definition.RawType is { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4,
+                   NumMods: 0, Byref: 0, Pinned: 0 };
+    }
+
+    internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite)
+    {
+        if (body.Count < 12)
             return false;
-        for (var i = 0; i < 13; i++)
+        for (var i = 0; i < 12; i++)
         {
             var instruction = body[i];
             if (instruction.IsInvalid || instruction.CodeSize != CodeSize.Code64 ||
@@ -110,12 +139,15 @@ internal static class X86ArrayReadProof
                body[5].Code == Code.Movsxd_r64_rm32 &&
                Registers(body[5], Mnemonic.Movsxd, Register.RAX, Register.EDX) &&
                element.Mnemonic == Mnemonic.Mov && element.OpCount == 2 &&
-               element.Op0Kind == OpKind.Register && element.Op0Register == Register.EAX &&
-               Memory(element, 1, Register.RCX, Register.RAX, 4, 0x20, 4) &&
+               (isWrite
+                   ? Memory(element, 0, Register.RCX, Register.RAX, 4, 0x20, 4) &&
+                     element.Op1Kind == OpKind.Register && element.Op1Register == Register.R8D
+                   : element.Op0Kind == OpKind.Register && element.Op0Register == Register.EAX &&
+                     Memory(element, 1, Register.RCX, Register.RAX, 4, 0x20, 4)) &&
                Stack(body[7], Mnemonic.Add, 0x28) &&
                body[8].Code == Code.Retnq && body[8].OpCount == 0 &&
                Call(body[9]) && body[10].Code == Code.Int3 &&
-               Call(body[11]) && body[12].Code == Code.Int3;
+               Call(body[11]);
     }
 
     private static bool Registers(Instruction i, Mnemonic mnemonic, Register destination, Register source)
