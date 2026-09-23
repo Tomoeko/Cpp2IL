@@ -14,7 +14,7 @@ from run_fixture import ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
-    "catch-divide", "exception-regions", "array-access", "array-call", "enum-passthrough", "reference-field", "field-guard", "scalar-truncation", "loop-calls", "word-fields", "integer-extensions", "byte-fields",
+    "catch-divide", "exception-regions", "array-access", "array-call", "enum-passthrough", "static-field-getter", "reference-field", "field-guard", "scalar-truncation", "loop-calls", "word-fields", "integer-extensions", "byte-fields",
     "float-comparisons", "components", "metadata-literal", "division", "arithmetic", "integers", "scalar-structs", "shifts",
 )}
 PLAYER_FILES = ("GameAssembly.dll", "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat")

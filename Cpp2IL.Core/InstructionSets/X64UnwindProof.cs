@@ -68,6 +68,31 @@ internal static class X64UnwindProof
             return false;
         }
 
+        internal bool IsWritableFileBackedRva(uint rva)
+        {
+            if (rva >= _imageSize || Map(_sections, rva, 1, false) < 0)
+                return false;
+            foreach (var section in _sections)
+                if (rva >= section.Rva && (ulong)rva < (ulong)section.Rva + section.VirtualSize)
+                    // A runtime metadata slot must be readable and writable, with no
+                    // executable mapping that could alias proved code.
+                    return (section.Characteristics & 0xE0000000) == 0xC0000000;
+            return false;
+        }
+
+        internal bool IsWritableZeroInitializedRva(uint rva)
+        {
+            if (rva >= _imageSize)
+                return false;
+            foreach (var section in _sections)
+                if (rva >= section.Rva && (ulong)rva < (ulong)section.Rva + section.VirtualSize)
+                    // PE maps the virtual tail after SizeOfRawData as zeros. Unlike
+                    // TypeInfo slots, compiler-generated once flags may live here.
+                    return (section.Characteristics & 0xE0000000) == 0xC0000000 &&
+                           (ulong)rva - section.Rva >= section.RawSize;
+            return false;
+        }
+
         internal SpanClassification ClassifySpan(ulong start, ulong end)
         {
             if (!TryRange(start, end, out var rva, out var endRva))
