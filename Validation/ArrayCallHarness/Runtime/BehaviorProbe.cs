@@ -26,6 +26,9 @@ namespace RecoveryValidation
             var derived = new DerivedEcho();
             RecordDerived(observations, "derived-values", derived, new[] { int.MinValue, 0, int.MaxValue });
             RecordDerived(observations, "derived-null-receiver", null, new[] { -17, 19 });
+            RecordTwo(observations, "two-receivers", false, false);
+            RecordTwo(observations, "first-null", true, false);
+            RecordTwo(observations, "second-null", false, true);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -71,6 +74,29 @@ namespace RecoveryValidation
                 { "kind", kind }, { "result", result },
                 { "sameReference", sameReference }, { "exception", exception },
                 { "callsAfter", echo == null ? null : (object)echo.Calls }
+            });
+        }
+
+        private static void RecordTwo(List<object> observations, string kind, bool nullFirst, bool nullSecond)
+        {
+            var first = nullFirst ? null : new ArrayEcho();
+            var second = nullSecond ? null : new ArrayEcho();
+            var values = new[] { int.MinValue, 0, int.MaxValue };
+            object result = null;
+            var sameReference = false;
+            var exception = "none";
+            try
+            {
+                var returned = ArrayCalls.ForwardTwo(first, second, values);
+                result = returned;
+                sameReference = ReferenceEquals(returned, values);
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", kind }, { "result", result }, { "sameReference", sameReference },
+                { "exception", exception }, { "firstCalls", first == null ? null : (object)first.Calls },
+                { "secondCalls", second == null ? null : (object)second.Calls }
             });
         }
 

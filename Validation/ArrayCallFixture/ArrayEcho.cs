@@ -32,5 +32,12 @@ namespace ArrayCallFixture
         {
             return echo.Echo(values);
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static int[] ForwardTwo(ArrayEcho first, ArrayEcho second, int[] values)
+        {
+            first.Echo(values);
+            return second.Echo(values);
+        }
     }
 }

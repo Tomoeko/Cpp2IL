@@ -96,6 +96,58 @@ public partial class IlGeneratorParameterTests
     }
 
     [Test]
+    public void TwoGuardedCallsCanShareOneTerminalNullThrow()
+    {
+        var target = AddReceiverIndependentTarget(false);
+        var (context, definition, parameters) = CreateMethod("GuardedPair", _app.SystemTypes.SystemInt32Type,
+            [_typeContext, _typeContext, _app.SystemTypes.SystemInt32Type]);
+        var firstCondition = NullGuardLocal("firstNull", 1280, _app.SystemTypes.SystemBooleanType);
+        var secondCondition = NullGuardLocal("secondNull", 1281, _app.SystemTypes.SystemBooleanType);
+        var firstResult = NullGuardLocal("firstResult", 1282, _app.SystemTypes.SystemInt32Type);
+        var secondResult = NullGuardLocal("secondResult", 1283, _app.SystemTypes.SystemInt32Type);
+        var nullThrow = new Instruction(12, OpCode.RuntimeNullThrow, new StringLiteral("synthetic-proof"));
+        var firstCall = new Instruction(3, OpCode.Call, target, firstResult, parameters[0], parameters[2], Imm(0));
+        var secondCall = new Instruction(7, OpCode.Call, target, secondResult, parameters[1], parameters[2], Imm(0));
+        context.ControlFlowGraph = new([
+            new(0, OpCode.CheckEqual, firstCondition, parameters[0], Imm(0)) { IntegerBitWidth = 64 },
+            new(1, OpCode.ConditionalJump, nullThrow, firstCondition),
+            firstCall,
+            new(4, OpCode.CheckEqual, secondCondition, parameters[1], Imm(0)) { IntegerBitWidth = 64 },
+            new(5, OpCode.ConditionalJump, nullThrow, secondCondition),
+            secondCall,
+            new(8, OpCode.Return, secondResult),
+            nullThrow,
+        ]);
+        context.Locals.AddRange([firstCondition, secondCondition, firstResult, secondResult]);
+        Assert.That(RuntimeNullGuardCoalescer.Run(context, SyntheticNullThrow), Is.EqualTo(2));
+        Assert.That(context.ControlFlowGraph.Instructions.Any(i => i.OpCode == OpCode.RuntimeNullThrow), Is.False);
+        Assert.That(firstCall.CallSemantics, Is.EqualTo(CallSemantics.NullCheckedInstance));
+        Assert.That(secondCall.CallSemantics, Is.EqualTo(CallSemantics.NullCheckedInstance));
+        SsaForm.Remove(context);
+        CopyCoalescer.Run(context);
+        Simplifier.Simplify(context);
+        CallArgumentTrimmer.Run(context);
+        DeadCodeEliminator.Run(context);
+        LocalVariables.RemoveUnused(context);
+        IlGenerator.GenerateIl(context, definition);
+        Assert.That(definition.CilMethodBody!.Instructions.Count(i => i.OpCode == CilOpCodes.Callvirt), Is.EqualTo(2));
+
+        AddDefaultConstructor();
+        using var runtime = Load();
+        var method = runtime.Type.GetMethod("GuardedPair")!;
+        var first = Activator.CreateInstance(runtime.Type);
+        var second = Activator.CreateInstance(runtime.Type);
+        Assert.That(Assert.Throws<TargetInvocationException>(() => method.Invoke(null, [null, second, 11]))!.InnerException,
+            Is.TypeOf<NullReferenceException>());
+        Assert.That(runtime.Type.GetField("InvocationCount")!.GetValue(null), Is.EqualTo(0));
+        Assert.That(Assert.Throws<TargetInvocationException>(() => method.Invoke(null, [first, null, 11]))!.InnerException,
+            Is.TypeOf<NullReferenceException>());
+        Assert.That(runtime.Type.GetField("InvocationCount")!.GetValue(null), Is.EqualTo(1));
+        Assert.That(method.Invoke(null, [first, second, 11]), Is.EqualTo(18));
+        Assert.That(runtime.Type.GetField("InvocationCount")!.GetValue(null), Is.EqualTo(3));
+    }
+
+    [Test]
     public void CoalescedFieldReadRetainsNullFailureAndTheLoadedValue()
     {
         var fixture = CreateFieldNullGuard();

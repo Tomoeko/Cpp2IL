@@ -222,12 +222,20 @@ internal static class RuntimeNullGuardCoalescer
             while (true)
             {
                 if (entry == graph.EntryBlock || entry == graph.ExitBlock || !seen.Add(entry) ||
-                    entry.Predecessors.Count != 1 || !ReferenceEquals(entry.Predecessors[0], predecessor))
+                    !entry.Predecessors.Contains(predecessor))
                     return false;
                 var active = entry.Instructions.Where(i => i.OpCode != OpCode.Nop || i.Operands.Count != 0 ||
                     i.IntegerBitWidth != 0 || i.CallSemantics != CallSemantics.Direct).ToArray();
                 if (active.Length == 1 && active[0].OpCode == OpCode.RuntimeNullThrow && provesRuntimeNullThrow(active[0]))
-                    return entry.Successors.Count == 1 && ReferenceEquals(entry.Successors[0], graph.ExitBlock);
+                    return entry.Successors.Count == 1 && ReferenceEquals(entry.Successors[0], graph.ExitBlock) &&
+                           entry.Predecessors.All(other => ReferenceEquals(other, predecessor) ||
+                               other.Instructions.LastOrDefault() is { OpCode: OpCode.ConditionalJump,
+                                   IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct } &&
+                               other.Successors.Contains(entry));
+                // Only the terminal proven throw may be shared. An intermediate null-arm
+                // block with other incoming edges could perform unobserved work.
+                if (entry.Predecessors.Count != 1)
+                    return false;
                 if (active is not [{ OpCode: OpCode.Jump, IntegerBitWidth: 0,
                         CallSemantics: CallSemantics.Direct, Operands: [Block next] }] ||
                     entry.Successors.Count != 1 || !ReferenceEquals(entry.Successors[0], next))
