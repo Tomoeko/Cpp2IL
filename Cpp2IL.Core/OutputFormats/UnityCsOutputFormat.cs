@@ -6,6 +6,7 @@ using AsmResolver.DotNet;
 using Cpp2IL.Core.Api;
 using Cpp2IL.Core.Logging;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.ProcessingLayers;
 using Cpp2IL.Core.SourceEmission;
 using LibCpp2IL;
 using LibCpp2IL.PE;
@@ -37,6 +38,9 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
             throw new IOException("Unity source output requires an empty project output directory.");
 
         Directory.CreateDirectory(outputRoot);
+        // A source export must not silently omit custom attributes merely because the caller
+        // did not also select an optional diagnostic processing layer. Analysis is cached.
+        new AttributeAnalysisProcessingLayer().Process(context);
         var recovery = new AsmResolverDllOutputFormatIlRecovery();
         List<AssemblyDefinition> assemblies;
         try

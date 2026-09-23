@@ -13,6 +13,7 @@ public sealed class UnitySourceEmissionReport
     public string SourceDialect => "C# 9 with Unity restrictions";
     public string SourceGeneration { get; set; } = "incomplete";
     public string UnityCompilation => "unverified";
+    public string DeclarationFidelity => "unverified";
     public string WindowsNativeBuild => "unverified";
     public string BehavioralValidation => "unverified";
     public string ScriptAssetBindings => "unverified";
@@ -27,6 +28,7 @@ public sealed class UnitySourceEmissionReport
             "  \"UnityVersion\":" + JsonText.Quote(UnityVersion) + ",\n" +
             "  \"SourceDialect\":" + JsonText.Quote(SourceDialect) + ",\n" +
             "  \"SourceGeneration\":" + JsonText.Quote(SourceGeneration) + ",\n" +
+            "  \"DeclarationFidelity\":" + JsonText.Quote(DeclarationFidelity) + ",\n" +
             "  \"UnityCompilation\":" + JsonText.Quote(UnityCompilation) + ",\n" +
             "  \"WindowsNativeBuild\":" + JsonText.Quote(WindowsNativeBuild) + ",\n" +
             "  \"BehavioralValidation\":" + JsonText.Quote(BehavioralValidation) + ",\n" +

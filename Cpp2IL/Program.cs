@@ -628,6 +628,13 @@ internal static class Program
             Logger.ErrorNewline($"Execution Failed: {e.Message}");
             return -1;
         }
+        catch (Cpp2IL.Core.Reporting.IncompleteRecoveryException e)
+        {
+            // An expected validation rejection is a failed run, not a process crash.
+            // The output format has already persisted its complete disposition report.
+            Logger.ErrorNewline(e.Message);
+            return 1;
+        }
 #if !DEBUG
             catch (DllSaveException e)
             {

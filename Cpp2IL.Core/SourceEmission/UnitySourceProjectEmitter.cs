@@ -5,8 +5,8 @@ using System.Linq;
 using System.Text;
 using AsmResolver;
 using AsmResolver.DotNet;
-using AsmResolver.DotNet.Builder;
 using Cpp2IL.Core.Reporting;
+using Cpp2IL.Core.Utils.AsmResolver;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
 using ICSharpCode.Decompiler.IL;
@@ -70,9 +70,20 @@ public static class UnitySourceProjectEmitter
             var managedPaths = new List<string>();
             foreach (var name in selected)
             {
+                var assembly = byName[name];
+                if (assembly.PublicKey?.Any() == true)
+                    report.Diagnostics.Add($"SOURCE005: {name}: Signing configuration is unavailable. Generated source does not establish preservation of strong-name identity.");
+                foreach (var type in assembly.Modules.SelectMany(m => m.GetAllTypes()))
+                {
+                    foreach (var field in type.Fields.Where(f => f.HasFieldMarshal && f.MarshalDescriptor == null))
+                        report.Diagnostics.Add($"SOURCE004: {name}: {field.FullName}: Field marshaling metadata is unresolved; no MarshalAs value was invented.");
+                    foreach (var method in type.Methods)
+                    foreach (var parameter in method.ParameterDefinitions.Where(p => p.HasFieldMarshal && p.MarshalDescriptor == null))
+                        report.Diagnostics.Add($"SOURCE004: {name}: {method.FullName}: Parameter {parameter.Sequence} marshaling metadata is unresolved; no MarshalAs value was invented.");
+                }
                 var path = Path.Combine(managedDirectory, name + ".dll");
                 using (var stream = File.Create(path))
-                    byName[name].WriteManifest(stream, new ManagedPEImageBuilder(ThrowErrorListener.Instance));
+                    byName[name].WriteManifest(stream, RecoveredAssemblyImageBuilder.Create(ThrowErrorListener.Instance));
                 managedPaths.Add(path);
             }
 
@@ -98,7 +109,7 @@ public static class UnitySourceProjectEmitter
                 Directory.CreateDirectory(sourceDirectory);
                 File.WriteAllText(Path.Combine(sourceDirectory, "Recovered.cs"),
                     "// Generated from recovered IL. Compilation and behavioral equivalence require independent validation.\n" + source, new UTF8Encoding(false));
-                File.WriteAllText(Path.Combine(sourceDirectory, "csc.rsp"), "-langversion:9.0\n-unsafe\n", new UTF8Encoding(false));
+                File.WriteAllText(Path.Combine(sourceDirectory, "csc.rsp"), "-langversion:9.0\n-unsafe\n-checked-\n", new UTF8Encoding(false));
 
                 if (!IsPredefinedAssembly(name))
                 {
@@ -124,7 +135,7 @@ public static class UnitySourceProjectEmitter
             File.WriteAllText(Path.Combine(outputDirectory, "ProjectSettings", "ProjectVersion.txt"), $"m_EditorVersion: {TargetUnityVersion}\n");
             Directory.CreateDirectory(Path.Combine(outputDirectory, "Packages"));
             File.WriteAllText(Path.Combine(outputDirectory, "Packages", "manifest.json"), "{\"dependencies\":{}}\n");
-            File.WriteAllText(Path.Combine(outputDirectory, "Assets", "csc.rsp"), "-langversion:9.0\n-unsafe\n");
+            File.WriteAllText(Path.Combine(outputDirectory, "Assets", "csc.rsp"), "-langversion:9.0\n-unsafe\n-checked-\n");
             report.SourceGeneration = report.Diagnostics.Count == 0 ? "generated" : "partial";
         }
         catch

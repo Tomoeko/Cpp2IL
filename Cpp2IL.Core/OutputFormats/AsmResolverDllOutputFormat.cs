@@ -7,7 +7,6 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using AsmResolver.DotNet;
-using AsmResolver.DotNet.Builder;
 using AsmResolver.PE.Builder;
 using AsmResolver.PE.DotNet.Metadata.Tables;
 using AssetRipper.CIL;
@@ -54,7 +53,7 @@ public abstract class AsmResolverDllOutputFormat : Cpp2IlOutputFormat
         //Convert assembly definitions to PE files
         var peImagesToWrite = ret
             .AsParallel()
-            .Select(a => (image: a.ManifestModule!.ToPEImage(new ManagedPEImageBuilder()), name: a.ManifestModule.Name!))
+            .Select(a => (image: a.ManifestModule!.ToPEImage(RecoveredAssemblyImageBuilder.Create()), name: a.ManifestModule.Name!))
             .ToList();
 
         Logger.VerboseNewline($"{(DateTime.Now - start).TotalMilliseconds:F1}ms", "DllOutput");
@@ -117,7 +116,7 @@ public abstract class AsmResolverDllOutputFormat : Cpp2IlOutputFormat
 #endif
 
         MiscUtils.ExecuteParallel(context.Assemblies, AsmResolverAssemblyPopulator.CopyDataFromIl2CppToManaged);
-        MiscUtils.ExecuteParallel(context.Assemblies, AsmResolverAssemblyPopulator.AddExplicitInterfaceImplementations);
+        MiscUtils.ExecuteParallel(context.Assemblies, AsmResolverAssemblyPopulator.AddMethodImplementations);
 
         Logger.VerboseNewline($"{(DateTime.Now - start).TotalMilliseconds:F1}ms", "DllOutput");
 
@@ -206,6 +205,33 @@ public abstract class AsmResolverDllOutputFormat : Cpp2IlOutputFormat
             .ToList();
 
         ret.Add(MostRecentCorLib);
+
+        // Import the declared dependency graph before type/member imports add their own
+        // references. Dependencies can remain observable even when no surviving member
+        // signature uses them (for example through Assembly.GetReferencedAssemblies()).
+        foreach (var assemblyContext in context.Assemblies)
+        {
+            if (assemblyContext.Definition is not { } definition)
+                continue;
+            var module = assemblyContext.GetExtraData<AssemblyDefinition>("AsmResolverAssembly")!.ManifestModule!;
+            foreach (var dependency in definition.ReferencedAssemblies)
+            {
+                var dependencyContext = context.ResolveContextForAssembly(dependency)!;
+                var reference = new AssemblyReference(dependencyContext.Name, dependencyContext.Version)
+                {
+                    Culture = dependencyContext.Culture,
+                    PublicKeyOrToken = dependencyContext.PublicKeyToken,
+                };
+                if (!module.AssemblyReferences.Any(existing => existing.FullName == reference.FullName))
+                {
+                    module.AssemblyReferences.Add(reference);
+                    // The writer's preservation flag includes newly allocated tokens, not
+                    // arbitrary zero-RID entries in AssemblyReferences.
+                    module.TokenAllocator.AssignNextAvailableToken(reference);
+                }
+            }
+        }
+
         return ret;
     }
 
@@ -286,7 +312,9 @@ public abstract class AsmResolverDllOutputFormat : Cpp2IlOutputFormat
         ushort packingSize = 0;
         var classSize = 0U;
         if (!il2CppDefinition.PackingSizeIsDefault)
-            packingSize = (ushort)il2CppDefinition.PackingSize;
+            // Explicit layouts can have a different effective native alignment. The metadata
+            // retains the declared packing separately; that is the managed ClassLayout value.
+            packingSize = (ushort)il2CppDefinition.SpecifiedPackingSize;
 
         if (!il2CppDefinition.ClassSizeIsDefault)
         {

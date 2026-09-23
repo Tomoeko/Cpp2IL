@@ -4,7 +4,7 @@
 
 Produce accurate, readable C# from **Unity 2021.3.35f1 Windows x64 Release IL2CPP** player inputs. Generated source must compile in the supplied exact editor, and recovered behavior must be verified against controlled source/build pairs. Near 1:1 means preservation of recoverable managed structure and observable behavior; it does not promise reproduction of erased source text or byte-identical native binaries.
 
-The user has confirmed this roadmap and `AGENTS.md` and authorized full implementation. Milestone 0 is in progress. Inspection findings and repository test results are not a recovered-project certification.
+The user has confirmed this roadmap and `AGENTS.md` and authorized full implementation. Milestones 0 and 1 have passed their initial synthetic acceptance scope. Later milestones remain active; this is not a whole-project recovery certification.
 
 Windows x64 is the initial platform. Other Unity versions, architectures, obfuscation variants, and full asset/scene reconstruction are outside the first delivery. Existing cross-platform support should remain usable where practical. Assets are not prerequisites for a code-only recovery milestone; serialization and scene compatibility require separate evidence when claimed.
 
@@ -45,7 +45,7 @@ Report total input methods and types, methods with native bodies, emitted bodies
 
 ## Milestone 0 — Reproducible baseline and truthful reporting
 
-Status: in progress. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests passed. The expanded core suite passes 117 tests. The offline parser suite passes three local cases and explicitly skips five optional external samples. Four existing package warnings concern the prerelease Disarm dependency. Private baseline logs are retained locally.
+Status: complete for the initial baseline. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests passed. The expanded core suite passes 307 tests, and the current net10.0 CLI builds without warnings or errors. Twelve public harness checks and the declaration comparer's mutation checks pass without Unity. The offline parser suite passes three local cases and explicitly skips five optional external samples. Four existing solution-wide package warnings concern the prerelease Disarm dependency. Private baseline logs are retained locally.
 
 Implemented evidence:
 
@@ -53,6 +53,7 @@ Implemented evidence:
 - A synthetic assembly with three authored methods and one implicit constructor builds in the supplied exact Windows editor. Its original Windows x64 IL2CPP Release player passes 81 independent integer boundary/overflow input pairs. Actual settings are nondevelopment, `NET_Unity_4_8`, Low stripping, OptimizeSpeed, MSVC 14.29.30133 and Windows SDK 10.0.19041.0. This is original-fixture evidence, not recovered-source evidence.
 - The fresh-project harness records editor compilation, editor behavior, native build and player behavior independently. It refuses empty behavioral reports, stale output and timed-out processes even if they later exit successfully. Private player loading also succeeds; metadata-only stubs remain explicitly unverified behavior.
 - Fork CI now runs the offline suites, and publishing stays restricted to the original repository. No remote workflow or push was performed.
+- The synthetic player baseline contains 11,904 input methods. Default DLL and diffable-source output produce 37 metadata/stub assemblies and 1,775 declaration files. These counts are not recovered behaviors. The initial recovery report counts seven emitted bodies, 23 unresolved and 11,874 explicit exclusions across the player; the verified selection is only the four-method synthetic fixture assembly.
 
 - Confirm the local .NET SDK, package restore, repository build, and relevant existing tests. Distinguish infrastructure failures from code failures. Record a working SDK baseline and resolve stale build guidance when justified.
 - Inventory the supplied editor, Windows IL2CPP support, Wine environment and native toolchain. Record versions and usable host/target combinations locally; do not infer the original player's compiler flags from a directory name.
@@ -65,7 +66,11 @@ Exit evidence: reproducible commands and settings; an honest feature/error inven
 
 ## Milestone 1 — One complete recovery path
 
-Status: in progress. The `cs_unity` exporter uses recovered CIL and pinned ICSharpCode.Decompiler 9.1.0.7988, explicit target references and selected application assemblies. Synthetic IL tests protect source syntax, reference isolation and assembly boundaries. Exact editor validation of regenerated player-only source is the next gate; source generation alone does not satisfy this milestone.
+Status: complete for the initial four-method slice. The `cs_unity` exporter uses recovered CIL and pinned ICSharpCode.Decompiler 9.1.0.7988, explicit target references and selected application assemblies. All four methods recovered from isolated native player inputs pass typed IL verification. Their freshly generated C# compiles in Windows Unity 2021.3.35f1, rebuilds as Windows x64 Release IL2CPP, and passes all 81 independent input pairs in both editor and native player. No generated source was manually repaired. The constructor is exercised as a required dependency. This establishes finite tested behavior, not whole-program equivalence.
+
+A separate negative strict run selects the more complex validation-driver assembly: four of its six methods remain unresolved, and strict mode rejects source output while retaining the full disposition report. The original managed DLL was used separately to validate the decompiler component; it was not supplied to the successful player-only recovery command.
+
+The same complete round-trip runner also passes for eight UInt32/UInt64 comparison methods: isolated player inputs, zero selected fallbacks, typed IL verification, exact-editor compilation, native Release rebuild, and 200 predicate observations across 50 boundary operand pairs. Original and recovered build settings match. Receipts hash the tool snapshot, input files and generated artifacts locally.
 
 - Choose a tiny vertical slice with constants, arithmetic, a conditional, a field read/write and a direct managed call. Build it through the exact target, recover it, regenerate source, compile in Unity, rebuild and compare observable results.
 - Audit the slice's metadata resolution, calling convention, lifting and IL generation. Remove guessed-value and unsupported-operation substitutions from its verified path. Check stack balance/types and control-flow joins explicitly.
@@ -78,7 +83,13 @@ Exit evidence: one end-to-end, player-input-only source recovery with exact Unit
 
 ## Milestone 2 — Metadata and source declaration fidelity
 
-Status: pending the first end-to-end path; investigate declaration blockers earlier when needed.
+Status: in progress. A separate exact-target declaration fixture preserves 10 types, 35 methods, 25 fields, seven properties, two events, six generic parameters and 27 attributes through stripping. A metadata comparer checks identities and declaration facts independently of method bodies; its own mutation checks detect changed declarations. Correcting declared packing removes one measured layout defect. Two raw differences remain: a zero declared size becomes the effective native size, and an original marshaling descriptor is unavailable. Exact-editor/native reflection probes retain these differences rather than normalizing them away.
+
+A separate marshaling fixture proves that Boolean `I1` and `U1` descriptors yield identical field type, flags and marshaled-size evidence. Size alone cannot recover the original annotation. Source output explicitly reports missing marshaling descriptors and strict mode rejects that incomplete declaration. No guessed `MarshalAs` annotation is accepted.
+
+An independent application comparison retains all declaration counts (1,769 types and 12,724 methods). Fixing version-29 empty attribute strings eliminates 26 differences; nine remain at that checkpoint: eight assembly references and one finalizer relationship. Those are active recovery defects, not a completed declaration gate.
+
+Declared assembly dependencies now survive emission even when no retained signature uses them. The writer preserves allocated reference rows, with a regression that removes all consumer types before writing and reloading the assembly. A separate seven-type, 13-method exact-target finalizer fixture passes player-only declaration comparison with zero differences: both destructors retain their canonical `Object.Finalize` mappings, while inherited finalizers and unrelated virtual methods gain no invented mappings. Full independent comparison is being rerun after these changes.
 
 - Verify registration, metadata tables, type/member ownership and address mappings against exact-target fixtures. Validate bounds and fail diagnostically on inconsistent inputs.
 - Preserve namespaces, assembly identities, nested/generic types, constraints, inheritance, interfaces, overrides, explicit implementations, overloads and accessibility.
@@ -91,7 +102,7 @@ Exit evidence: declaration comparisons pass for the declared fixture set; genera
 
 ## Milestone 3 — Windows x64 Release semantics
 
-Status: pending baseline; expand incrementally through the established end-to-end harness.
+Status: in progress through the established end-to-end harness. The initial signed Int32 arithmetic/branch/field/call slice and eight UInt32/UInt64 predicates pass the complete native round trip. Parameter identity, by-reference writes and constructor-fusion boundaries have executable synthetic IL regressions. Dead-code elimination preserves potentially throwing evaluations; propagation and copy coalescing respect effects, aliasing, type identity and native widths. Native operations and opaque calls invalidate overwritten status flags; only proved flag values can survive into managed output, and unused unknown flag results can be removed. Small-struct ABI projection, shift widths and the broader feature groups below remain under active investigation.
 
 Prioritize measured failure categories rather than adding broad pattern collections without evidence.
 
@@ -111,7 +122,7 @@ Exit evidence per feature: a targeted regression where needed, valid output, exa
 
 ## Milestone 4 — Unity project and build verification
 
-Status: harness implemented and validated on the original synthetic fixture. Recovered-source compilation, rebuild and behavior remain pending. Script/asset bindings are not reconstructed by the current code-only exporter.
+Status: the single-command round-trip runner passes for both arithmetic and unsigned-comparison fixtures, with separate typed IL, source compilation, native build and behavioral gates. Broader assembly/project configuration and script/asset bindings remain pending. Script/asset bindings are not reconstructed by the current code-only exporter.
 
 - Expand the minimal exporter to a deterministic application-source/project layout, assembly references, packages, platform defines and required helpers. Identify dependencies that player metadata cannot reconstruct and require explicit local configuration for them.
 - Compile in a fresh project with the supplied Unity 2021.3.35f1 editor. Use its documented [batch mode and editor entry-point arguments](https://docs.unity3d.com/2021.3/Documentation/Manual/EditorCommandLineArguments.html); validate completion and generated outputs as well as process status. Do not suppress compiler errors or use stale assemblies to pass.
@@ -123,7 +134,7 @@ Exit evidence: a clean regeneration/import/build/run cycle with reproducible set
 
 ## Milestone 5 — Private integration and maintainable coverage
 
-Status: pending controlled fixture coverage.
+Status: baselines measured; integration acceptance remains incomplete. The independent application scope contains 12,724 methods: 4,927 emitted, 7,214 failed, 104 partial and 479 without managed bodies. The private target scope contains 7,256 methods: 1,832 emitted, 4,393 failed, 14 partial and 1,017 without managed bodies. These are initial analysis dispositions, not typed IL or recovered-source compilation successes; both strict runs reject output. Counts include every selected method. First-error categories guide investigation but are not root-cause counts. Subsequent fixes require fresh measured runs before claiming improved coverage.
 
 - Run the user-supplied source/build pair locally as an independent validation case. Keep source/original assemblies inaccessible to the player-only recovery step, and use them afterwards for comparisons.
 - Validate the private target with the same reporting, compilation and behavioral gates to the extent an oracle is available. Without source or an equivalent oracle, report the narrower observed evidence honestly.
@@ -138,4 +149,4 @@ Exit evidence: increasing coverage on controlled and independent inputs, explain
 
 After each coherent implementation change, run checks appropriate to its risk, review the staged diff for private information, make a local checkpoint commit, and update the relevant milestone with a short sanitized evidence summary. Keep raw logs and long investigation trails out of this roadmap. Only the user pushes.
 
-Support claims must state the exact tested profile and corpus, declaration fidelity, source compilation and native-build results, behavioral coverage, and unresolved counts. There is currently no measured near-1:1 accuracy result or verified recovered Unity project. The successful exact-target player described above is the original synthetic fixture.
+Support claims must state the exact tested profile and corpus, declaration fidelity, source compilation and native-build results, behavioral coverage, and unresolved counts. The four-method arithmetic and eight-method unsigned-comparison fixtures have verified recovered Unity projects and native behavioral results. There is currently no measured near-1:1 accuracy result for a broader corpus or the private target.

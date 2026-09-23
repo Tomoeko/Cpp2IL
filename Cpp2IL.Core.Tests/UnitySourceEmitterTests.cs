@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using AsmResolver.DotNet;
 using AsmResolver.DotNet.Code.Cil;
 using AsmResolver.DotNet.Signatures;
@@ -48,6 +49,30 @@ public class UnitySourceEmitterTests
         Assert.Throws<ICSharpCode.Decompiler.Metadata.ResolutionException>(() =>
             UnitySourceProjectEmitter.Emit([CreateAssembly("Synthetic.Application")], ["Synthetic.Application"], [], _directory));
         Assert.That(File.ReadAllText(Path.Combine(_directory, "source-emission-report.json")), Does.Contain("failed"));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void UnresolvedMarshalingMetadataMakesSourcePartial(bool parameter)
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        var module = assembly.ManifestModule!;
+        var type = module.TopLevelTypes.Single(t => t.Name == "Constants");
+        if (parameter)
+        {
+            var method = type.Methods[0];
+            method.Signature!.ParameterTypes.Add(module.CorLibTypeFactory.Boolean);
+            method.ParameterDefinitions.Add(new ParameterDefinition(1, "value", ParameterAttributes.HasFieldMarshal));
+        }
+        else
+            type.Fields.Add(new FieldDefinition("Enabled", FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.HasFieldMarshal,
+                module.CorLibTypeFactory.Boolean));
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], _directory);
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.Contains("SOURCE004"));
+        Assert.That(report.DeclarationFidelity, Is.EqualTo("unverified"));
     }
 
     [Test]

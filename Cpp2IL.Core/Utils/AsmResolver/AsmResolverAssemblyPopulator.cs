@@ -488,7 +488,11 @@ public static class AsmResolverAssemblyPopulator
         }
     }
 
+    // Retain the existing public entry point for plugins compiled against earlier versions.
     public static void AddExplicitInterfaceImplementations(AssemblyAnalysisContext asmContext)
+        => AddMethodImplementations(asmContext);
+
+    public static void AddMethodImplementations(AssemblyAnalysisContext asmContext)
     {
         var managedAssembly = asmContext.GetExtraData<AssemblyDefinition>("AsmResolverAssembly") ?? throw new("AsmResolver assembly not found in assembly analysis context for " + asmContext);
         var runtimeContext = asmContext.AppContext.GetExtraData<RuntimeContext>("AsmResolverRuntimeContext") ?? throw new("AsmResolver runtime context not found in application analysis context");
@@ -507,6 +511,7 @@ public static class AsmResolverAssemblyPopulator
 #endif
             {
                 AddExplicitInterfaceImplementations(managedType, typeContext, runtimeContext);
+                CanonicalFinalizerOverride.AddTo(managedType, typeContext);
             }
 #if !DEBUG
             catch (Exception e)
