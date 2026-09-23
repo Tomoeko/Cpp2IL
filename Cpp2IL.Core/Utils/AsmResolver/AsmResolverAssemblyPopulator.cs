@@ -83,7 +83,7 @@ public static class AsmResolverAssemblyPopulator
 #endif
         {
             if (arrayParameter.IsNullArray)
-                return BuildEmptyArrayArgument(arrayParameter);
+                return BuildNullArrayArgument(arrayParameter);
 
             var typeSig = GetTypeSigFromAttributeArg(arrayParameter);
 
@@ -118,7 +118,7 @@ public static class AsmResolverAssemblyPopulator
 #endif
     }
 
-    private static CustomAttributeArgument BuildEmptyArrayArgument(CustomAttributeArrayParameter arrayParameter)
+    private static CustomAttributeArgument BuildNullArrayArgument(CustomAttributeArrayParameter arrayParameter)
     {
         //Need to resolve the type of the array because it's not in the blob and AsmResolver needs it.
 
@@ -130,6 +130,9 @@ public static class AsmResolverAssemblyPopulator
             CustomAttributeParameterKind.ArrayElement => throw new("Array element cannot be an array (or at least, not implemented!)"),
             _ => throw new("Unknown array parameter kind: " + arrayParameter.Kind)
         };
+
+        if (typeSig is not SzArrayTypeSignature)
+            throw new InvalidOperationException("ATTRIBUTE001: The null array has no retained element type and its declared owner is not an array. Original array type is unavailable.");
 
         return new(typeSig) { IsNullArray = true };
     }
@@ -158,9 +161,10 @@ public static class AsmResolverAssemblyPopulator
                 CustomAttributeEnumParameter enumParameter when boxIfNeeded => new(systemTypes.SystemObjectType.ToTypeSignature(), new BoxedArgument(GetTypeSigFromAttributeArg(enumParameter), enumParameter.UnderlyingPrimitiveParameter.PrimitiveValue)),
                 CustomAttributeEnumParameter enumParameter => new(GetTypeSigFromAttributeArg(enumParameter), enumParameter.UnderlyingPrimitiveParameter.PrimitiveValue),
                 
-                //BaseCustomAttributeTypeParameter typeParameter when boxIfNeeded => new(systemTypes.SystemObjectType.ToTypeSignature(), new BoxedArgument(GetTypeSigFromAttributeArg(parentAssembly, typeParameter), typeParameter.TypeContext?.ToTypeSignature(parentAssembly.ManifestModule!))),
+                BaseCustomAttributeTypeParameter typeParameter when boxIfNeeded => new(systemTypes.SystemObjectType.ToTypeSignature(), new BoxedArgument(GetTypeSigFromAttributeArg(typeParameter), typeParameter.TypeContext?.ToTypeSignature())),
                 BaseCustomAttributeTypeParameter typeParameter => new(systemTypes.SystemTypeType.ToTypeSignature(), typeParameter.TypeContext?.ToTypeSignature()),
                 
+                CustomAttributeArrayParameter arrayParameter when boxIfNeeded => BoxArrayArgument(BuildArrayArgument(arrayParameter), systemTypes.SystemObjectType.ToTypeSignature()),
                 CustomAttributeArrayParameter arrayParameter => BuildArrayArgument(arrayParameter),
                 _ => throw new ArgumentException("Unknown custom attribute parameter type: " + parameter.GetType().FullName)
             };
@@ -173,13 +177,16 @@ public static class AsmResolverAssemblyPopulator
 #endif
     }
 
+    private static CustomAttributeArgument BoxArrayArgument(CustomAttributeArgument array, TypeSignature objectType)
+        => new(objectType, new BoxedArgument(array.ArgumentType, array.IsNullArray ? null : array.Elements.ToArray()));
+
     private static CustomAttributeNamedArgument FromAnalyzedAttributeField(CustomAttributeField field)
-        => new(CustomAttributeArgumentMemberType.Field, field.Field.Name, GetTypeSigFromAttributeArg(field.Value), FromAnalyzedAttributeArgument(field.Value, field.Field.FieldType == field.Field.AppContext.SystemTypes.SystemObjectType));
+        => new(CustomAttributeArgumentMemberType.Field, field.Field.Name, field.Field.ToTypeSignature(), FromAnalyzedAttributeArgument(field.Value, field.Field.FieldType == field.Field.AppContext.SystemTypes.SystemObjectType));
 
     private static CustomAttributeNamedArgument FromAnalyzedAttributeProperty(CustomAttributeProperty property)
-        => new(CustomAttributeArgumentMemberType.Property, property.Property.Name, GetTypeSigFromAttributeArg(property.Value), FromAnalyzedAttributeArgument(property.Value, property.Property.PropertyType == property.Property.AppContext.SystemTypes.SystemObjectType));
+        => new(CustomAttributeArgumentMemberType.Property, property.Property.Name, property.Property.ToTypeSignature(), FromAnalyzedAttributeArgument(property.Value, property.Property.PropertyType == property.Property.AppContext.SystemTypes.SystemObjectType));
 
-    private static CustomAttribute? ConvertCustomAttribute(AnalyzedCustomAttribute analyzedCustomAttribute)
+    internal static CustomAttribute? ConvertCustomAttribute(AnalyzedCustomAttribute analyzedCustomAttribute)
     {
         var ctor = analyzedCustomAttribute.Constructor.GetExtraData<MethodDefinition>("AsmResolverMethod") ?? throw new($"Found a custom attribute with no AsmResolver constructor: {analyzedCustomAttribute}");
 
