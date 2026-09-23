@@ -15,6 +15,7 @@ public static class CopyCoalescer
     {
         var copies = FindSameSlotCopies(cfg);
         var escapedSlots = FindEscapedSlotGroups(cfg);
+        var mutableStorage = OperandEffects.LocalsWithMutableStorage(cfg.Instructions);
 
         if (copies.Count == 0 && escapedSlots.Count == 0)
             return;
@@ -29,6 +30,7 @@ public static class CopyCoalescer
             candidates.UnionWith(group);
 
         var interference = BuildInterference(cfg, candidates);
+        var storageInterference = escapedSlots.Count == 0 ? interference : BuildInterference(cfg, candidates, true);
         var groups = new DisjointSet(candidates);
 
         foreach (var group in escapedSlots)
@@ -38,8 +40,15 @@ public static class CopyCoalescer
                 var a = groups.Find(group[0]);
                 var b = groups.Find(group[i]);
 
-                if (a == b || (a.Type != null && b.Type != null && !ReferenceEquals(a.Type, b.Type)))
+                if (a == b)
                     continue;
+
+                // SSA creates a new version when a slot's address can mutate it. These versions
+                // must share initialized storage, but an old value still live after a mutation
+                // needs a separate snapshot. Do not silently merge incompatible values.
+                if ((a.Type != null && b.Type != null && !ReferenceEquals(a.Type, b.Type))
+                    || Interferes(storageInterference, groups, a, b))
+                    throw new DecompilerException("Address-taken storage has incompatible or overlapping value versions.");
 
                 groups.Union(a, b);
             }
@@ -54,7 +63,8 @@ public static class CopyCoalescer
             if (a.Type != null && b.Type != null && !ReferenceEquals(a.Type, b.Type))
                 continue;
 
-            if (a == b || Interferes(interference, groups, a, b))
+            if (a == b || groups.Members(a).Any(mutableStorage.Contains) || groups.Members(b).Any(mutableStorage.Contains)
+                || Interferes(interference, groups, a, b))
                 continue;
 
             groups.Union(a, b);
@@ -69,7 +79,7 @@ public static class CopyCoalescer
 
         foreach (var instruction in cfg.Instructions)
         {
-            if (instruction.OpCode == OpCode.Move
+            if (instruction.OpCode == OpCode.Move && instruction.IntegerBitWidth == 0
                 && instruction.Operands[0] is LocalVariable destination
                 && instruction.Operands[1] is LocalVariable source
                 && !ReferenceEquals(destination, source)
@@ -96,7 +106,7 @@ public static class CopyCoalescer
 
         foreach (var instruction in cfg.Instructions)
         {
-            var locals = Used(instruction);
+            var locals = OperandEffects.ReadLocals(instruction);
             if (Defined(instruction) is { } defined)
                 locals = locals.Append(defined);
 
@@ -131,9 +141,10 @@ public static class CopyCoalescer
     // interference edges between the candidates.
     // whatever is alive where a local is assigned has to keep its own storage, because both values are wanted at once.
     // except: the source of a copy is exempt against its own destination, so after <c>a = b</c> the two agree, because that is, after all, the whole point.
-    private static Dictionary<LocalVariable, HashSet<LocalVariable>> BuildInterference(ISILControlFlowGraph cfg, HashSet<LocalVariable> candidates)
+    private static Dictionary<LocalVariable, HashSet<LocalVariable>> BuildInterference(ISILControlFlowGraph cfg,
+        HashSet<LocalVariable> candidates, bool unifyStorage = false)
     {
-        var liveOut = ComputeBlockLiveOut(cfg);
+        var liveOut = ComputeBlockLiveOut(cfg, unifyStorage);
         var interference = new Dictionary<LocalVariable, HashSet<LocalVariable>>();
 
         void Connect(LocalVariable a, LocalVariable b)
@@ -157,21 +168,23 @@ public static class CopyCoalescer
             for (var i = block.Instructions.Count - 1; i >= 0; i--)
             {
                 var instruction = block.Instructions[i];
-                var defined = Defined(instruction);
-
-                if (defined != null && candidates.Contains(defined))
+                var definitions = DefinedLocals(instruction, unifyStorage).ToList();
+                foreach (var defined in definitions)
                 {
-                    var copySource = instruction.OpCode == OpCode.Move ? instruction.Operands[1] as LocalVariable : null;
+                    if (!candidates.Contains(defined))
+                        continue;
+                    var copySource = instruction.OpCode == OpCode.Move && instruction.IntegerBitWidth == 0
+                        ? instruction.Operands[1] as LocalVariable : null;
 
                     foreach (var other in live)
                         if (candidates.Contains(other) && !ReferenceEquals(other, copySource))
                             Connect(defined, other);
                 }
 
-                if (defined != null)
+                foreach (var defined in definitions)
                     live.Remove(defined);
 
-                foreach (var used in Used(instruction))
+                foreach (var used in ReadLocalsForLiveness(instruction, unifyStorage))
                     live.Add(used);
             }
         }
@@ -179,7 +192,7 @@ public static class CopyCoalescer
         return interference;
     }
 
-    private static Dictionary<Block, HashSet<LocalVariable>> ComputeBlockLiveOut(ISILControlFlowGraph cfg)
+    private static Dictionary<Block, HashSet<LocalVariable>> ComputeBlockLiveOut(ISILControlFlowGraph cfg, bool unifyStorage)
     {
         var liveIn = new Dictionary<Block, HashSet<LocalVariable>>();
         var liveOut = new Dictionary<Block, HashSet<LocalVariable>>();
@@ -205,10 +218,10 @@ public static class CopyCoalescer
             {
                 var instruction = block.Instructions[i];
 
-                if (Defined(instruction) is { } defined)
+                foreach (var defined in DefinedLocals(instruction, unifyStorage))
                     inSet.Remove(defined);
 
-                foreach (var used in Used(instruction))
+                foreach (var used in ReadLocalsForLiveness(instruction, unifyStorage))
                     inSet.Add(used);
             }
 
@@ -227,38 +240,38 @@ public static class CopyCoalescer
 
     private static LocalVariable? Defined(Instruction instruction) => instruction.Destination as LocalVariable;
 
-    private static IEnumerable<LocalVariable> Used(Instruction instruction)
+    private static IEnumerable<LocalVariable> DefinedLocals(Instruction instruction, bool unifyStorage)
     {
-        var defined = Defined(instruction);
-
-        foreach (var operand in instruction.Operands)
-        {
-            switch (operand)
-            {
-                case LocalVariable local when !ReferenceEquals(local, defined):
-                    yield return local;
-                    break;
-                case MemoryOperand memory:
-                    if (memory.Base is LocalVariable memoryBase)
-                        yield return memoryBase;
-                    if (memory.Index is LocalVariable memoryIndex)
-                        yield return memoryIndex;
-                    break;
-                case FieldReference field:
-                    yield return field.Local;
-                    break;
-                case ArrayAccess array:
-                    yield return array.Array;
-                    if (array.Index is LocalVariable arrayIndex)
-                        yield return arrayIndex;
-                    break;
-                case ArrayLength length:
-                    yield return length.Array;
-                    break;
-                case AddressOf { Target: LocalVariable addressed }:
+        if (Defined(instruction) is { } defined)
+            yield return defined;
+        if (unifyStorage)
+            foreach (var operand in instruction.Operands)
+                if (operand is AddressOf { Target: LocalVariable addressed })
                     yield return addressed;
-                    break;
-            }
+    }
+
+    private static IEnumerable<LocalVariable> ReadLocalsForLiveness(Instruction instruction, bool unifyStorage)
+    {
+        if (!unifyStorage)
+        {
+            foreach (var local in OperandEffects.ReadLocals(instruction))
+                yield return local;
+            yield break;
+        }
+
+        // A newly versioned ref slot reads the preceding physical storage, not an independent
+        // incoming value. Its address is a potential definition for this unification proof.
+        // Ordinary arguments, including a value passed alongside that address, remain reads.
+        var destination = Defined(instruction);
+        var destinationIndex = instruction.OpCode is OpCode.Call or OpCode.IndirectCall ? 1 : 0;
+        for (var index = 0; index < instruction.Operands.Count; index++)
+        {
+            var operand = instruction.Operands[index];
+            if ((index == destinationIndex && ReferenceEquals(operand, destination))
+                || operand is AddressOf { Target: LocalVariable })
+                continue;
+            foreach (var local in OperandEffects.ReadLocals(operand))
+                yield return local;
         }
     }
 
@@ -269,41 +282,13 @@ public static class CopyCoalescer
             foreach (var instruction in block.Instructions)
             {
                 for (var i = 0; i < instruction.Operands.Count; i++)
-                {
-                    switch (instruction.Operands[i])
-                    {
-                        case LocalVariable local:
-                            instruction.SetOperand(i, groups.Find(local));
-                            break;
-                        case MemoryOperand memory:
-                            if (memory.Base is LocalVariable memoryBase)
-                                memory.Base = groups.Find(memoryBase);
-                            if (memory.Index is LocalVariable memoryIndex)
-                                memory.Index = groups.Find(memoryIndex);
-                            instruction.SetOperand(i, memory); // MemoryOperand is a struct, write the copy back
-                            break;
-                        case FieldReference field:
-                            field.Local = groups.Find(field.Local);
-                            break;
-                        case ArrayAccess array:
-                            array.Array = groups.Find(array.Array);
-                            if (array.Index is LocalVariable arrayIndex)
-                                array.Index = groups.Find(arrayIndex);
-                            break;
-                        case ArrayLength length:
-                            length.Array = groups.Find(length.Array);
-                            break;
-                        case AddressOf { Target: LocalVariable addressed } addressOf:
-                            addressOf.Target = groups.Find(addressed);
-                            break;
-                    }
-                }
+                    instruction.SetOperand(i, RewriteOperand(instruction.Operands[i], groups));
             }
 
             // the copies that have become self-assignments are why we did this, they're now noise
             foreach (var instruction in block.Instructions)
             {
-                if (instruction.OpCode == OpCode.Move
+                if (instruction.OpCode == OpCode.Move && instruction.IntegerBitWidth == 0
                     && instruction.Operands[0] is LocalVariable destination
                     && instruction.Operands[1] is LocalVariable source
                     && ReferenceEquals(destination, source))
@@ -313,6 +298,35 @@ public static class CopyCoalescer
                 }
             }
         }
+    }
+
+    private static IOperand RewriteOperand(IOperand operand, DisjointSet groups)
+    {
+        switch (operand)
+        {
+            case LocalVariable local:
+                return groups.Find(local);
+            case MemoryOperand memory:
+                if (memory.Base != null)
+                    memory.Base = RewriteOperand(memory.Base, groups);
+                if (memory.Index != null)
+                    memory.Index = RewriteOperand(memory.Index, groups);
+                return memory;
+            case FieldReference field:
+                field.Local = groups.Find(field.Local);
+                break;
+            case ArrayAccess array:
+                array.Array = groups.Find(array.Array);
+                array.Index = RewriteOperand(array.Index, groups);
+                break;
+            case ArrayLength length:
+                length.Array = groups.Find(length.Array);
+                break;
+            case AddressOf address:
+                address.Target = RewriteOperand(address.Target, groups);
+                break;
+        }
+        return operand;
     }
 
     private class DisjointSet(IEnumerable<LocalVariable> locals)

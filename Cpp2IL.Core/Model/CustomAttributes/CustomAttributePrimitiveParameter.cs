@@ -52,7 +52,9 @@ public class CustomAttributePrimitiveParameter : BaseCustomAttributeParameter
                 PrimitiveValue = reader.ReadBoolean();
                 break;
             case Il2CppTypeEnum.IL2CPP_TYPE_CHAR:
-                PrimitiveValue = reader.ReadChar();
+                // Attribute chars are fixed-width UTF-16 code units, independent of the
+                // BinaryReader's text encoding (and may themselves be lone surrogates).
+                PrimitiveValue = (char)reader.ReadUInt16();
                 break;
             case Il2CppTypeEnum.IL2CPP_TYPE_I1:
                 PrimitiveValue = reader.ReadSByte();
@@ -86,7 +88,19 @@ public class CustomAttributePrimitiveParameter : BaseCustomAttributeParameter
                 break;
             case Il2CppTypeEnum.IL2CPP_TYPE_STRING:
                 var strLength = reader.BaseStream.ReadUnityCompressedInt();
-                PrimitiveValue = strLength > 0 ? Encoding.UTF8.GetString(reader.ReadBytes(strLength)) : null;
+                if (strLength == -1)
+                    PrimitiveValue = null;
+                else
+                {
+                    if (strLength < 0)
+                        throw new InvalidDataException("Invalid custom attribute string length");
+                    if (reader.BaseStream.CanSeek && strLength > reader.BaseStream.Length - reader.BaseStream.Position)
+                        throw new EndOfStreamException("Custom attribute string extends past its blob");
+                    var bytes = reader.ReadBytes(strLength);
+                    if (bytes.Length != strLength)
+                        throw new EndOfStreamException("Custom attribute string is truncated");
+                    PrimitiveValue = Encoding.UTF8.GetString(bytes);
+                }
                 break;
             default:
                 throw new Exception("CustomAttributePrimitiveParameter constructed with a non-primitive type: " + PrimitiveType);
