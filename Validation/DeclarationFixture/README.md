@@ -60,7 +60,9 @@ input fingerprints remain under ignored `Files/`.
 
 The comparison retains identities, calling conventions, signatures, generic
 constraints, flags, constants, layout, marshal descriptors, accessor/override
-relationships and decoded attributes. Metadata row order, tokens, MVIDs,
+relationships and decoded attributes, including the selected constructor's
+declaring type and signature. Constructor identity matters even when boxed
+arguments decode to the same value as another overload. Metadata row order, tokens, MVIDs,
 method bodies/RVAs and debug symbols are explicitly outside its scope.
 Multi-module assemblies, resources, exported-type forwarding, security
 declarations and every ECMA-335 form are not yet qualified.
@@ -97,6 +99,7 @@ python3 Validation/test_declaration_comparer.py
 ```
 
 These compile independent .NET test assemblies to detect layout, marshaling,
-constant, attribute, constraint and default-parameter changes, and to verify the
-intentional exclusion of method bodies. They are separate from exact-Unity
+constant, attribute, overloaded attribute constructor, constraint and
+default-parameter changes, and to verify the intentional exclusion of method
+bodies. They are separate from exact-Unity
 fixture validation.

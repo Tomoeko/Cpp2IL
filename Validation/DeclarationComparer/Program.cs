@@ -56,7 +56,7 @@ internal static class Program
             var report = new
             {
                 status = passed ? "passed" : "failed",
-                scope = "Managed declarations only; no input assembly loading/execution, IL validity or behavior claim.",
+                scope = "Managed declaration projection including custom-attribute constructor identity; no input assembly loading/execution, IL validity or behavior claim.",
                 ignoredPhysicalDetails = new[] { "metadata row/token order", "MVID", "method body/RVA", "debug symbols", "assembly file hash equality" },
                 oracle = new { path = oraclePath, sha256 = Hash(oraclePath), counts = oracle.Counts },
                 candidate = new { path = candidatePath, sha256 = Hash(candidatePath), counts = candidate.Counts },
@@ -152,6 +152,7 @@ internal static class Program
                     attributes.Add(Json(new
                     {
                         type = types.AttributeType(reader, attribute.Constructor),
+                        constructor = types.Member(reader, attribute.Constructor),
                         fixedArguments = decoded.FixedArguments.Select(Argument).ToArray(),
                         namedArguments = decoded.NamedArguments.Select(argument => new
                         {

@@ -16,12 +16,18 @@ public sealed class MarkerAttribute : Attribute
 {
     public MarkerAttribute(int number) { }
 }
+public sealed class ChoiceAttribute : Attribute
+{
+    public ChoiceAttribute(object value) { }
+    public ChoiceAttribute(string value) { }
+}
 [StructLayout(LayoutKind.Explicit, Pack = 4, Size = 16)]
 public struct Record
 {
     [FieldOffset(0), MarshalAs(UnmanagedType.U1)] public bool Enabled;
 }
 public sealed class Container<T> where T : class { public T Item; }
+[Choice((object)"fixture")]
 public sealed class Cases
 {
     public const int Limit = 31;
@@ -69,6 +75,8 @@ def main():
                                 .replace("Limit = 31", "Limit = 37").replace("Marker(7)", "Marker(9)")
                                 .replace("where T : class", "where T : struct").replace("extra = 3", "extra = 4"))
         body_only = compile_case("body-only", SOURCE.replace("return value + extra", "return value - extra"))
+        constructor_only = compile_case("attribute-constructor", SOURCE.replace(
+            'Choice((object)"fixture")', 'Choice("fixture")'))
 
         def compare(label, candidate, expected):
             output = work / label
@@ -78,13 +86,17 @@ def main():
 
         assert compare("self", baseline, 0)["differenceCount"] == 0
         assert compare("body-comparison", body_only, 0)["differenceCount"] == 0
+        constructor_report = compare("constructor-comparison", constructor_only, 1)
+        assert constructor_report["differenceCount"] == 1
+        assert constructor_report["differences"][0]["Key"].endswith("/attributes")
+        assert constructor_report["diagnostics"] == []
         report = compare("mutated-comparison", mutation, 1)
         keys = [item["Key"] for item in report["differences"]]
         for expected_fragment in ("]Record", "/field:Enabled", "/field:Limit/constant",
                                   "/attributes", "/generic/0", "/parameter:2/constant"):
             assert any(expected_fragment in key for key in keys), expected_fragment
         assert report["diagnostics"] == []
-        print("Declaration comparison checks passed: self, body exclusion, six declaration mutations.")
+        print("Declaration comparison checks passed: self, body exclusion, overloaded attribute constructor, six declaration mutations.")
 
 
 if __name__ == "__main__":
