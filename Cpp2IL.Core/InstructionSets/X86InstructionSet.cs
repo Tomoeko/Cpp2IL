@@ -807,6 +807,19 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Test:
             case Mnemonic.Cmp:
                 operandSize = (instruction.Op0Kind == OpKind.Register ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize()) * 8;
+                if (instruction.Mnemonic == Mnemonic.Cmp && operandSize == 8 && instruction.Op0Kind == OpKind.Memory &&
+                    instruction.Op1Kind == OpKind.Immediate8 && instruction.Immediate8 == 0 &&
+                    instruction.MemoryBase.GetSize() == 8 && instruction.MemoryBase != Register.RIP && instruction.MemoryIndex == Register.None &&
+                    instruction.SegmentPrefix == Register.None && !instruction.HasLockPrefix)
+                {
+                    // Zero/nonzero is invariant under signed or unsigned byte extension. Keep
+                    // the read width until metadata proves a matching instance field at emission.
+                    // Other flag consumers receive unresolved assignments from the common clobber
+                    // path; this does not admit partial registers or drop volatile barrier calls.
+                    var capturedByte = CaptureComparisonOperand(instruction.IP, ConvertOperand(instruction, 0), "COMPARE_BYTE", 8);
+                    Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), capturedByte, Imm(0)).IntegerBitWidth = 8;
+                    break;
+                }
                 if (operandSize is not (32 or 64))
                 {
                     Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("Narrow integer comparison requires partial-register semantics: " + FormatInstruction(instruction)));
@@ -819,7 +832,25 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     AddTestInstruction(instruction.IP, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1), operandSize);
                 break;
             case Mnemonic.Comiss:
+            case Mnemonic.Comisd:
             case Mnemonic.Ucomiss:
+            case Mnemonic.Ucomisd:
+                if (instruction.Op0Kind != OpKind.Register || instruction.Op1Kind != OpKind.Register)
+                {
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented,
+                        new ISIL.StringLiteral("Floating comparison memory operands require an exact read-width proof"));
+                    break;
+                }
+                // Scalar compare flags have four outcomes, not integer subtraction semantics.
+                // These predicates model managed comparison results; floating status/control
+                // register observations are not represented by the managed recovery pipeline.
+                var floatWidth = instruction.Mnemonic is Mnemonic.Comiss or Mnemonic.Ucomiss ? 32 : 64;
+                var floatLeft = ConvertOperand(instruction, 0);
+                var floatRight = ConvertOperand(instruction, 1);
+                Add(instruction.IP, ISIL.OpCode.FloatCompare, new ISIL.Register(null, "CF"), floatLeft, floatRight, Imm(floatWidth), Imm(9));
+                Add(instruction.IP, ISIL.OpCode.FloatCompare, new ISIL.Register(null, "ZF"), floatLeft, floatRight, Imm(floatWidth), Imm(10));
+                Add(instruction.IP, ISIL.OpCode.FloatCompare, new ISIL.Register(null, "PF"), floatLeft, floatRight, Imm(floatWidth), Imm(8));
+                break;
             case Mnemonic.Maxss:
             case Mnemonic.Minss:
                 // These operations have unordered/NaN and signed-zero behavior which integer flags do not model.
@@ -934,6 +965,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Jae:
             case Mnemonic.Jle:
             case Mnemonic.Jbe:
+            case Mnemonic.Jp:
+            case Mnemonic.Jnp:
                 Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.NearBranchTarget), FlagCondition(instruction.IP, instruction.ConditionCode));
                 break;
             case Mnemonic.Xchg:
@@ -964,12 +997,18 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             var zf = new ISIL.Register(null, "ZF");
             var sf = new ISIL.Register(null, "SF");
             var of = new ISIL.Register(null, "OF");
+            var pf = new ISIL.Register(null, "PF");
             var temp = new ISIL.Register(null, "CONDITION");
             var temp2 = new ISIL.Register(null, "CONDITION2");
             ISIL.IOperand result;
             switch (condition)
             {
                 case ConditionCode.e: result = zf; break;
+                case ConditionCode.p: result = pf; break;
+                case ConditionCode.np:
+                    Add(ip, ISIL.OpCode.CheckEqual, temp, pf, Imm(0));
+                    result = temp;
+                    break;
                 case ConditionCode.ne:
                     Add(ip, ISIL.OpCode.CheckEqual, temp, zf, Imm(0));
                     result = temp;
@@ -1050,13 +1089,13 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             Add(ip, ISIL.OpCode.Move, new ISIL.Register(null, "OF"), Imm(0));
         }
 
-        ISIL.IOperand CaptureComparisonOperand(ulong ip, ISIL.IOperand operand, string name)
+        ISIL.IOperand CaptureComparisonOperand(ulong ip, ISIL.IOperand operand, string name, int width = 0)
         {
             if (operand is not ISIL.MemoryOperand)
                 return operand;
             // Native CMP reads each operand once, even though several flags depend on it.
             var captured = new ISIL.Register(null, name);
-            Add(ip, ISIL.OpCode.Move, captured, operand);
+            Add(ip, ISIL.OpCode.Move, captured, operand).IntegerBitWidth = width;
             return captured;
         }
     }

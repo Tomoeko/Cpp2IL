@@ -86,6 +86,22 @@ public class X86FlagClobberTests
         Assert.That(UnresolvedFlags(graph), Does.Contain("PF"));
     }
 
+    [Test]
+    public void IntegerComparisonCannotReuseFloatingUnorderedFlag()
+    {
+        var graph = Analyze("0F2EC139D1", "PF"); // ucomiss xmm0,xmm1; cmp ecx,edx; observe parity
+        Assert.That(UnresolvedFlags(graph), Does.Contain("PF"));
+        Assert.That(graph.Instructions.Any(i => i.OpCode == OpCode.FloatCompare), Is.False);
+    }
+
+    [Test]
+    public void IntegerParityBranchKeepsItsUnresolvedFlag()
+    {
+        var graph = Analyze("39D17A019090"); // cmp ecx,edx; jp final-nop; nop; nop
+        Assert.That(UnresolvedFlags(graph), Does.Contain("PF"));
+        Assert.That(graph.Instructions.Any(i => i.OpCode == OpCode.ConditionalJump), Is.True);
+    }
+
     [TestCase("E800000000")] // direct call
     [TestCase("FFD3")] // call rbx
     [TestCase("FF13")] // call [rbx]

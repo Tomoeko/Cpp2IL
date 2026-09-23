@@ -20,3 +20,12 @@ and [ECMA-335, Partition III](https://ecma-international.org/publications-and-st
 Signaling-NaN exception status, externally changed floating-point control state,
 packed SIMD operations and MIN/MAX selection are separate scopes. This fixture
 does not establish them or byte-identical floating-point execution.
+
+The exact Unity 2021.3.35f1 Windows x64 Release round trip passes all twelve
+player-only recovered methods through strict analysis, typed IL verification and
+both declaration comparisons with zero differences. The original and rebuilt
+players each match all 2,028 Boolean results across 338 input pairs; both fresh
+editor runs also pass. Generated source is never repaired by hand. The tested
+scalar COMISS/COMISD/UCOMISS/UCOMISD register forms preserve the unordered parity
+flag and the parity branches used by equality and inequality. Native memory
+operands still require a separate read-width proof.

@@ -70,8 +70,6 @@ public class X86ComparisonTests
     [TestCase("38D1")] // cmp cl, dl
     [TestCase("6639D1")] // cmp cx, dx
     [TestCase("84C9")] // test cl, cl
-    [TestCase("0F2FC1")] // comiss xmm0, xmm1
-    [TestCase("0F2EC1")] // ucomiss xmm0, xmm1
     [TestCase("F30F5FC1")] // maxss xmm0, xmm1
     [TestCase("F30F5DC1")] // minss xmm0, xmm1
     [TestCase("0F4703")] // cmova eax, [rbx] reads memory even when not selected

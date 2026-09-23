@@ -15,7 +15,8 @@ public static class BooleanFlagSimplifier
 
         foreach (var instruction in method.ControlFlowGraph!.Instructions)
         {
-            if (instruction.OpCode is not (OpCode.CheckEqual or OpCode.CheckNotEqual) || instruction.Operands.Count < 3)
+            if (instruction.OpCode is not (OpCode.CheckEqual or OpCode.CheckNotEqual) || instruction.Operands.Count < 3 ||
+                instruction.IntegerBitWidth != 0)
                 continue;
 
             if (!IsZeroConstant(instruction.Operands[2]))

@@ -87,6 +87,8 @@ public static partial class IlGenerator
                 string.Join("; ", unsupported.Take(12).Select(i => i.ToString())) +
                 (unsupported.Length > 12 ? "; additional failures omitted" : ""));
 
+        NarrowFieldEqualityProof.Validate(context);
+
         // Native return registers can remain live even when metadata identifies a void callee.
         // There is no managed value to store in that case. Check before constructor fusion can
         // erase the call, otherwise InitializeLocals would silently supply a fabricated zero.
@@ -552,12 +554,22 @@ public static partial class IlGenerator
                 // operands are coerced to the (float) result type. A no-op when they already match.
                 var floatConversion = FloatArithmeticConversion(instruction);
 
-                LoadArithmeticOperand(instruction.Operands[1], instruction.IntegerBitWidth, method, locals);
-                if (floatConversion is { } conv1)
-                    instructions.Add(conv1);
-                LoadArithmeticOperand(instruction.Operands[2], instruction.IntegerBitWidth, method, locals);
-                if (floatConversion is { } conv2)
-                    instructions.Add(conv2);
+                if (instruction.IntegerBitWidth == 8 && instruction.OpCode is OpCode.CheckEqual or OpCode.CheckNotEqual)
+                {
+                    // The preflight proved one captured byte field compared only with zero.
+                    // Both signed and unsigned managed extensions preserve that predicate.
+                    LoadOperand(instruction.Operands[1], method, locals);
+                    LoadOperand(instruction.Operands[2], method, locals);
+                }
+                else
+                {
+                    LoadArithmeticOperand(instruction.Operands[1], instruction.IntegerBitWidth, method, locals);
+                    if (floatConversion is { } conv1)
+                        instructions.Add(conv1);
+                    LoadArithmeticOperand(instruction.Operands[2], instruction.IntegerBitWidth, method, locals);
+                    if (floatConversion is { } conv2)
+                        instructions.Add(conv2);
+                }
 
                 switch (instruction.OpCode)
                 {
