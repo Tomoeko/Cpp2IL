@@ -116,7 +116,8 @@ python3 Validation/prune_generated_artifacts.py --apply
 The default dry run waits 24 hours after a terminal receipt. The script removes
 only `project/`, `player/` and `player-input/` trees under completed ignored
 `Files/validation/` runs; it retains receipts, logs, recovered source and
-recovery reports, and writes a private cleanup manifest. Use `--exclude RUN_NAME`
+recovery reports, copies small `project/Reports/` witnesses beside each run,
+and writes a private cleanup manifest. Use `--exclude RUN_NAME`
 to keep a run under investigation. A pruned run can no longer be passed to
 `--baseline-run`; rebuild that original fixture when a new player input is
 needed. Never use the cleanup script on the supplied editor, license prefix,

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VALIDATION = ROOT / "Files" / "validation"
 HEAVY_TREES = ("project", "player", "player-input")
 FINAL_STATUSES = frozenset(("passed", "failed", "observed"))
+MAX_REPORT_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,32 @@ def plan(validation_root, minimum_age_seconds=24 * 3600, now=None, excluded=()):
     return candidates
 
 
+def preserve_project_reports(project):
+    reports = project / "Reports"
+    if not reports.is_dir() or reports.is_symlink():
+        return []
+    items = list(reports.rglob("*"))
+    if any(item.is_symlink() for item in items):
+        raise ValueError("a generated project report contains a symbolic link")
+    files = [item for item in items if item.is_file()]
+    if sum(item.stat().st_size for item in files) > MAX_REPORT_BYTES:
+        raise ValueError("generated project reports exceed the retention limit")
+    destination = project.parent / "preserved-project-reports"
+    if destination.is_symlink():
+        raise ValueError("the preserved report directory is a symbolic link")
+    kept = []
+    for source in files:
+        target = destination / source.relative_to(reports)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if target.is_symlink() or target.read_bytes() != source.read_bytes():
+                raise ValueError("an existing preserved project report differs")
+        else:
+            shutil.copy2(source, target)
+        kept.append(str(target.relative_to(project.parent)))
+    return kept
+
+
 def prune(candidates, validation_root, manifest_root):
     validation_root = Path(validation_root).resolve()
     manifest_root = Path(manifest_root)
@@ -107,7 +134,9 @@ def prune(candidates, validation_root, manifest_root):
                         encoding="utf-8")
     removed = 0
     try:
-        for candidate in candidates:
+        for candidate, row in zip(candidates, rows):
+            if candidate.path.name == "project":
+                row["preservedReports"] = preserve_project_reports(candidate.path)
             shutil.rmtree(candidate.path)
             removed += 1
     finally:

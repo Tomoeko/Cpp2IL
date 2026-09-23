@@ -28,6 +28,8 @@ class PruneGeneratedArtifactsTests(unittest.TestCase):
             completed = run("completed", "passed")
             (completed / "project").mkdir()
             (completed / "project" / "temporary.bin").write_bytes(b"temporary")
+            (completed / "project" / "Reports").mkdir()
+            (completed / "project" / "Reports" / "editor-behavior.json").write_text('{"observations":1}')
             (completed / "replacement" / "player-input").mkdir(parents=True)
             (completed / "replacement" / "player-input" / "binary.bin").write_bytes(b"binary")
             (completed / "recovered").mkdir()
@@ -54,6 +56,8 @@ class PruneGeneratedArtifactsTests(unittest.TestCase):
             self.assertTrue((completed / "receipt.json").is_file())
             self.assertTrue((completed / "recovered" / "Recovered.cs").is_file())
             self.assertTrue((completed / "run.log").is_file())
+            self.assertEqual((completed / "preserved-project-reports" / "editor-behavior.json").read_text(),
+                             '{"observations":1}')
             self.assertTrue((running / "project").is_dir())
             self.assertTrue((recent / "project").is_dir())
             self.assertTrue((unmarked / "project").is_dir())
