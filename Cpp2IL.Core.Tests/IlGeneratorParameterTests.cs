@@ -21,7 +21,7 @@ using ReflectionTypeAttributes = System.Reflection.TypeAttributes;
 namespace Cpp2IL.Core.Tests;
 
 /// <summary>Executes synthetic recovered IL on the test runtime; this is not Unity validation.</summary>
-public class IlGeneratorParameterTests
+public partial class IlGeneratorParameterTests
 {
     private ApplicationAnalysisContext _app = null!;
     private AssemblyDefinition _assembly = null!;
@@ -330,6 +330,35 @@ public class IlGeneratorParameterTests
         Assert.That(definition.CilMethodBody!.Instructions[0].OpCode, Is.EqualTo(CilOpCodes.Ldc_I8));
         using var runtime = Load();
         Assert.That(runtime.Type.GetMethod("One")!.Invoke(null, null), Is.EqualTo(1L));
+    }
+
+    [TestCase(0)]
+    [TestCase(32)]
+    public void EnumArithmeticPreservesItsUnderlyingIntegerValue(int nativeWidth)
+    {
+        var enumBase = _app.SystemTypes.SystemInt32Type.DeclaringAssembly.GetTypeByFullName("System.Enum")!;
+        var enumContext = new InjectedTypeAnalysisContext(_typeContext.DeclaringAssembly, "Synthetic", "Code",
+            enumBase, ReflectionTypeAttributes.Public | ReflectionTypeAttributes.Sealed)
+        {
+            EnumUnderlyingType = _app.SystemTypes.SystemInt32Type
+        };
+        var enumDefinition = new TypeDefinition("Synthetic", "Code", TypeAttributes.Public | TypeAttributes.Sealed,
+            _module.DefaultImporter.ImportTypeSignature(enumBase.ToTypeSignature()).ToTypeDefOrRef());
+        enumDefinition.Fields.Add(new FieldDefinition("value__",
+            FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RuntimeSpecialName, _module.CorLibTypeFactory.Int32));
+        _module.TopLevelTypes.Add(enumDefinition);
+        enumContext.PutExtraData("AsmResolverType", enumDefinition);
+        var (context, definition, parameters) = CreateMethod("NextCode", _app.SystemTypes.SystemInt32Type, [enumContext]);
+        var result = new LocalVariable("result", new Register(900, "result"), _app.SystemTypes.SystemInt32Type);
+        context.Locals.Add(result);
+        Emit(context, definition,
+        [
+            new(0, OpCode.Add, result, parameters[0], Imm(1)) { IntegerBitWidth = nativeWidth },
+            new(1, OpCode.Return, result),
+        ]);
+        using var runtime = Load();
+        var enumType = runtime.Type.Assembly.GetType("Synthetic.Code")!;
+        Assert.That(runtime.Type.GetMethod("NextCode")!.Invoke(null, [Enum.ToObject(enumType, 41)]), Is.EqualTo(42));
     }
 
     private (InjectedMethodAnalysisContext Context, MethodDefinition Definition, LocalVariable[] Parameters) CreateMethod(

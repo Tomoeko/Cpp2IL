@@ -2,7 +2,7 @@
 
 ## Objective and current checkpoint
 
-Recover accurate, readable C# from **Unity 2021.3.35f1, Windows x64, Release IL2CPP** builds, and verify that the generated code compiles in that exact Unity version. Aim for near 1:1 observable behavior and preservation of recoverable managed structure.
+Recover accurate, readable C# from **Unity 2021.3.35f1, Windows x64, Release IL2CPP** builds, and verify that the generated code compiles in that exact Unity version. Target **1:1 managed-structure and behavioral fidelity**. Unresolved or unavailable information remains a gap toward that target and must not be counted as complete recovery.
 
 The user has confirmed this file and `ROADMAP.md` and authorized implementation of the full roadmap. The initial documentation gate is released. Continue routine implementation, validation and local checkpoint commits without recurring approval requests.
 

@@ -75,7 +75,7 @@ public static class DeadCodeEliminator
         {
             OpCode.Move or OpCode.Phi or OpCode.UnresolvedValue
                 or OpCode.Add or OpCode.Subtract or OpCode.Multiply
-                or OpCode.ShiftLeft or OpCode.ShiftRight
+                or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightUnsigned
                 or OpCode.And or OpCode.Or or OpCode.Xor
                 or OpCode.Not or OpCode.Negate => true,
             var comparison when comparison.IsComparison() => true,

@@ -20,7 +20,7 @@ reference. Its 17 observations establish the original API behavior; they do not
 claim successful recovery. Strict recovery of that assembly must remain rejected
 by the bounded single-field parameter bridge.
 
-The proposed recovery proof is deliberately narrow:
+The implemented recovery proof is deliberately narrow:
 
 - The player is Windows PE x64 with eight-byte pointers; native operand width is
   established as 32 or 64 bits.
@@ -39,6 +39,14 @@ width must survive lifting and analysis; missing width is not inferred merely
 because the struct has one field. Exact-target native inspection, typed IL
 verification, fresh Unity source compilation and rebuilt-player observations are
 separate acceptance gates.
+
+The four-method fixture passes player-only strict recovery, typed IL verification,
+exact Unity 2021.3.35f1 source compilation, and a fresh Windows x64 IL2CPP Release
+build. Both original and recovered players pass all 50 input pairs. A separate
+declaration comparison preserves the three types, four methods, two fields, eight
+parameters and three attributes. The three negative layout methods remain rejected
+by strict recovery. These results establish this finite fixture scope, not general
+struct ABI recovery or whole-program equivalence.
 
 The underlying representation follows the [Microsoft x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170#parameter-passing),
 which passes eligible scalar-sized aggregates in integer argument registers.

@@ -13,13 +13,24 @@ import sys
 from run_fixture import ROOT, VERSION, run_process, write_json
 
 
-PROFILES = {"arithmetic": ("RecoveryFixture", 4), "integers": ("IntegerFixture", 8),
-            "scalar-structs": ("ScalarStructFixture", 4)}
+PROFILES = {
+    "arithmetic": ("RecoveryFixture", 4),
+    "integers": ("IntegerFixture", 8),
+    "scalar-structs": ("ScalarStructFixture", 4),
+    "shifts": ("ShiftFixture", 4),
+}
 PLAYER_FILES = ("GameAssembly.dll", "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat")
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def managed_oracle(run_directory, assembly):
+    path = run_directory / "player/RecoveryFixture_BackUpThisFolder_ButDontShipItWithYourGame/Managed" / (assembly + ".dll")
+    if not path.is_file():
+        raise ValueError("The original or rebuilt native run did not retain its managed declaration oracle")
+    return path
 
 
 def checked_baseline(directory, profile):
@@ -150,6 +161,41 @@ def main():
             raise ValueError("Typed IL verification did not pass")
         receipt["stages"]["managedIl"] = {"status": "passed", "toolVersion": verification["actual_tool_version"]}
 
+        # Consult managed validation oracles only after player-only recovery has completed.
+        # Snapshot the independent comparer too, since other local work may rebuild it.
+        comparison_project = ROOT / "Validation/DeclarationComparer/DeclarationComparer.csproj"
+        run("build-declaration-comparer", [args.dotnet, "build", str(comparison_project), "-c", "Release", "--nologo", "-v", "quiet"])
+        comparison_directory = directory / "declaration-comparer"
+        comparison_directory.mkdir()
+        receipt["comparisonToolFiles"] = []
+        for path in sorted((comparison_project.parent / "bin/Release/net10.0").iterdir()):
+            if path.is_file() and path.suffix in {".dll", ".json"}:
+                target = comparison_directory / path.name
+                shutil.copyfile(path, target)
+                receipt["comparisonToolFiles"].append({"path": path.name, "sha256": digest(target)})
+        original_managed = managed_oracle(baseline, assembly)
+        unstripped = baseline / "project/Library/ScriptAssemblies" / (assembly + ".dll")
+
+        def compare_declarations(name, candidate):
+            output = directory / name
+            command = [args.dotnet, str(comparison_directory / "DeclarationComparer.dll"),
+                       "--oracle", str(original_managed), "--candidate", str(candidate),
+                       "--unstripped", str(unstripped), "--output", str(output)]
+            for reference in references:
+                command += ["--reference-dir", reference]
+            run(name, command)
+            comparison = json.loads((output / "report.json").read_text(encoding="utf-8"))
+            if comparison["status"] != "passed" or comparison["differenceCount"] != 0 or comparison["diagnostics"]:
+                raise ValueError("Declaration comparison failed; inspect its local report")
+            receipt["stages"][name] = {
+                "status": "passed", "scope": "comparer projection against original stripped managed declarations",
+                "differenceCount": 0, "counts": comparison["candidate"]["counts"],
+                "originalStrippingLosses": len(comparison["stripping"]["lostIdentities"]),
+                "report": str(output / "report.json"), "reportSha256": digest(output / "report.json"),
+            }
+
+        compare_declarations("recoveredDeclarations", project / "RecoveredManaged" / (assembly + ".dll"))
+
         replacement = directory / "replacement"
         run("replacement", fixture_command + ["--source-dir", str(project / "Assets/Recovered" / assembly),
                                               "--run-dir", str(replacement)], args.timeout * 2 + 30)
@@ -161,6 +207,8 @@ def main():
         if any(original["stages"]["nativeBuild"][key] != rebuilt["stages"]["nativeBuild"][key] for key in settings):
             raise ValueError("Original and recovered native build settings differ")
         receipt["stages"]["recovered"] = rebuilt["stages"]
+        compare_declarations("rebuiltDeclarations", managed_oracle(replacement, assembly))
+        receipt["declarationFidelity"] = "passed_against_stripped_oracle"
         receipt["artifacts"] = [{"path": str(path.relative_to(directory)), "sha256": digest(path)}
                                 for path in sorted(recovered.rglob("*")) if path.is_file()]
         for item in receipt["inputFiles"]:
@@ -169,6 +217,9 @@ def main():
         for item in receipt["toolFiles"]:
             if digest(tool_directory / item["path"]) != item["sha256"]:
                 raise ValueError("Recovery tool snapshot changed during validation")
+        for item in receipt["comparisonToolFiles"]:
+            if digest(comparison_directory / item["path"]) != item["sha256"]:
+                raise ValueError("Declaration comparer snapshot changed during validation")
         receipt["status"] = "passed"
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         receipt["status"] = "failed"

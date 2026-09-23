@@ -71,7 +71,7 @@ public enum OpCode
     /// <summary>Shifts the bits of op 2 left by op 3, and moves the result into op 1</summary>
     ShiftLeft,
 
-    /// <summary>Shifts the bits of op 2 right by op 3, and moves the result into op 1</summary>
+    /// <summary>Arithmetic right shift with sign fill: op 1 = op 2 shifted by op 3.</summary>
     ShiftRight,
 
     /// <summary>Bitwise AND on op 2 and op 3, moves the result into op 1</summary>
@@ -141,4 +141,7 @@ public enum OpCode
     /// May be removed only when the definition is unused. A surviving definition cannot emit IL.
     /// </summary>
     UnresolvedValue,
+
+    /// <summary>Logical right shift: op 1 = op 2 shifted by op 3 with zero fill.</summary>
+    ShiftRightUnsigned,
 }

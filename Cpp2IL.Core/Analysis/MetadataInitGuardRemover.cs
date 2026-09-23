@@ -264,7 +264,7 @@ public static class MetadataInitGuardRemover
         {
             OpCode.Nop => true,
             OpCode.Move or OpCode.Add or OpCode.Subtract or OpCode.Multiply or OpCode.Divide or OpCode.Modulo
-                or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.And or OpCode.Or or OpCode.Xor
+                or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightUnsigned or OpCode.And or OpCode.Or or OpCode.Xor
                 or OpCode.Not or OpCode.Negate
                 => instruction.Operands is [LocalVariable, ..],
             var comparison when comparison.IsComparison() => instruction.Operands is [LocalVariable, ..],

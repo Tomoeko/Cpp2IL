@@ -28,6 +28,11 @@ public static class ConstantFolder
         if (instruction.IntegerBitWidth != 0 && !instruction.OpCode.IsComparison())
             return false;
 
+        // Widthless shifts cannot establish truncation or count masking. Keep them explicit
+        // for the emitter to reject; native-width shifts retain their contract above.
+        if (instruction.OpCode is OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightUnsigned)
+            return false;
+
         // Unary constant folds.
         if (instruction is { OpCode: OpCode.Not, Operands: [_, Immediate n] })
             return ToConstant(instruction, IsBoolean(instruction.Operands[0]) ? n.Value == 0 ? 1 : 0 : ~n.Value);
@@ -70,8 +75,6 @@ public static class ConstantFolder
                 case OpCode.And: return ToConstant(instruction, a & b);
                 case OpCode.Or: return ToConstant(instruction, a | b);
                 case OpCode.Xor: return ToConstant(instruction, a ^ b);
-                case OpCode.ShiftLeft: return ToConstant(instruction, a << (int)(b & 0x3F));
-                case OpCode.ShiftRight: return ToConstant(instruction, a >> (int)(b & 0x3F));
             }
         }
 
@@ -90,9 +93,7 @@ public static class ConstantFolder
             case OpCode.Multiply:
                 return Identity(instruction, 1);
             case OpCode.Subtract:
-            case OpCode.ShiftLeft:
-            case OpCode.ShiftRight:
-                // right identity only: x - 0 / x << 0 / x >> 0 == x, but 0 - x etc. are not
+                // Subtraction has only a right identity.
                 return Constant(instruction.Operands[2]) == 0 && ToMove(instruction, instruction.Operands[1]);
         }
 

@@ -10,7 +10,11 @@ using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Utils;
 using Cpp2IL.Core.Utils.AsmResolver;
+using LibCpp2IL;
+using LibCpp2IL.BinaryStructures;
+using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core;
 
@@ -38,12 +42,15 @@ public static class IlGenerator
     private sealed class EmissionLocals
     {
         private readonly Dictionary<LocalVariable, CilLocalVariable> _locals = [];
+        public MethodAnalysisContext Context { get; }
         public Dictionary<LocalVariable, Parameter> Parameters { get; } = [];
+        public Dictionary<LocalVariable, ParameterAnalysisContext> ParameterContexts { get; } = [];
         public CilLocalVariable this[LocalVariable local] => _locals[local];
         public void Add(LocalVariable local, CilLocalVariable definition) => _locals.Add(local, definition);
 
         public EmissionLocals(MethodAnalysisContext context, MethodDefinition definition)
         {
+            Context = context;
             foreach (var local in context.ParameterLocals)
             {
                 if (local.IsMethodInfo)
@@ -64,6 +71,7 @@ public static class IlGenerator
                 if (matches.Length != 1)
                     throw new DecompilerException("Managed parameter cannot be mapped to a unique native argument");
                 Parameters.Add(local, definition.Parameters[matches[0]]);
+                ParameterContexts.Add(local, context.Parameters[matches[0]]);
             }
         }
     }
@@ -470,6 +478,39 @@ public static class IlGenerator
             case OpCode.ShiftStack:
                 throw new DecompilerException($"Unresolved control-flow instruction: {instruction.OpCode}");
 
+            case OpCode.ShiftLeft:
+            case OpCode.ShiftRight:
+            case OpCode.ShiftRightUnsigned:
+                var shiftWidth = instruction.IntegerBitWidth;
+                if (shiftWidth is not (32 or 64))
+                    throw new DecompilerException("Shift requires an established 32/64-bit native operand width");
+                if (IntegerStackWidth(DestinationType(instruction.Operands[0])) != shiftWidth)
+                    throw new DecompilerException("Shift destination does not preserve the established native operand width");
+                LoadArithmeticOperand(instruction.Operands[1], shiftWidth, method, locals);
+                // x64 consumes CL or an immediate, then masks to 5/6 bits. CIL requires an
+                // Int32/native-int count even for an Int64 value; do not widen both operands.
+                if (instruction.Operands[2] is Immediate shiftCount)
+                    instructions.Add(CilOpCodes.Ldc_I4, unchecked((int)shiftCount.Value));
+                else
+                {
+                    var countWidth = IntegerStackWidth(DestinationType(instruction.Operands[2]));
+                    if (countWidth is not (32 or 64))
+                        throw new DecompilerException("Shift count has no established integer representation");
+                    LoadOperand(instruction.Operands[2], method, locals);
+                    if (countWidth == 64)
+                        instructions.Add(CilOpCodes.Conv_I4);
+                }
+                instructions.Add(CilOpCodes.Ldc_I4, shiftWidth - 1);
+                instructions.Add(CilOpCodes.And);
+                instructions.Add(instruction.OpCode switch
+                {
+                    OpCode.ShiftRightUnsigned => CilOpCodes.Shr_Un,
+                    OpCode.ShiftRight => CilOpCodes.Shr,
+                    _ => CilOpCodes.Shl,
+                });
+                StoreToOperand(instruction.Operands[0], method, locals);
+                break;
+
             case OpCode.CheckEqual:
             case OpCode.CheckGreater:
             case OpCode.CheckLess:
@@ -486,9 +527,6 @@ public static class IlGenerator
             case OpCode.Multiply:
             case OpCode.Divide:
             case OpCode.Modulo:
-
-            case OpCode.ShiftLeft:
-            case OpCode.ShiftRight:
 
             case OpCode.And:
             case OpCode.Or:
@@ -551,9 +589,6 @@ public static class IlGenerator
                     case OpCode.Multiply: instructions.Add(CilOpCodes.Mul); break;
                     case OpCode.Divide: instructions.Add(CilOpCodes.Div); break;
                     case OpCode.Modulo: instructions.Add(CilOpCodes.Rem); break;
-
-                    case OpCode.ShiftLeft: instructions.Add(CilOpCodes.Shl); break;
-                    case OpCode.ShiftRight: instructions.Add(CilOpCodes.Shr); break;
 
                     case OpCode.And: instructions.Add(CilOpCodes.And); break;
                     case OpCode.Or: instructions.Add(CilOpCodes.Or); break;
@@ -647,6 +682,9 @@ public static class IlGenerator
     {
         if (nativeWidth == 0)
         {
+            if (DestinationType(operand) is { IsValueType: true, IsEnumType: false } type &&
+                type.Type is Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE or Il2CppTypeEnum.IL2CPP_TYPE_GENERICINST)
+                throw new DecompilerException("Managed struct arithmetic requires a proved native scalar projection");
             LoadOperand(operand, method, locals);
             return;
         }
@@ -662,8 +700,49 @@ public static class IlGenerator
             return;
         }
         if (IntegerStackWidth(DestinationType(operand)) != nativeWidth)
-            throw new DecompilerException("Native integer operand width does not match its recovered managed type");
+        {
+            if (TryGetScalarStructParameterField(operand, nativeWidth, locals) is not { } field)
+                throw new DecompilerException("Native integer operand width does not match its recovered managed type");
+            LoadOperand(field, method, locals);
+            return;
+        }
         LoadOperand(operand, method, locals);
+    }
+
+    private static FieldReference? TryGetScalarStructParameterField(IOperand operand, int nativeWidth, EmissionLocals locals)
+    {
+        // Windows x64 passes 32/64-bit aggregates in integer argument slots. This is a
+        // projection of an evidenced by-value parameter, not a change to its managed type.
+        // The size proof is the boxed instance size minus the object header, combined with
+        // blittability, default sequential layout and a single full-width primitive field.
+        if (operand is not LocalVariable { IsThis: false, IsMethodInfo: false, Type: { } type } local ||
+            !locals.ParameterContexts.TryGetValue(local, out var parameter) || parameter.IsRef ||
+            !ReferenceEquals(parameter.ParameterType, type) || !ReferenceEquals(parameter.DefaultParameterType, type) ||
+            locals.Context.AppContext.Binary is not PE { PointerSizeBytes: 8 } binary ||
+            binary.InstructionSetId != DefaultInstructionSets.X86_64 ||
+            type is GenericInstanceTypeAnalysisContext || type.GenericParameters.Count != 0 ||
+            type.Definition is not { IsValueType: true, IsEnumType: false, IsBlittable: true,
+                IsImportOrWindowsRuntime: false, IsByRefLike: false,
+                PackingSizeIsDefault: true, ClassSizeIsDefault: true } definition ||
+            (definition.Attributes & TypeAttributes.LayoutMask) != TypeAttributes.SequentialLayout ||
+            TypeSizes.UnboxedSize(type, binary.PointerSizeBytes) != nativeWidth / 8)
+            return null;
+
+        var fields = type.Fields.Where(f => !f.IsStatic).ToArray();
+        if (fields.Length != 1 || fields[0] is not { Offset: 0, DefaultOffset: 0 } field ||
+            field.Attributes.HasFlag(FieldAttributes.HasFieldMarshal) ||
+            field.DefaultAttributes.HasFlag(FieldAttributes.HasFieldMarshal) ||
+            !ReferenceEquals(field.FieldType, field.DefaultFieldType) ||
+            (field.Visibility != FieldAttributes.Public && !ReferenceEquals(field.DeclaringType, locals.Context.DeclaringType)))
+            return null;
+
+        var expectedWidth = field.FieldType.Type switch
+        {
+            Il2CppTypeEnum.IL2CPP_TYPE_I4 or Il2CppTypeEnum.IL2CPP_TYPE_U4 => 32,
+            Il2CppTypeEnum.IL2CPP_TYPE_I8 or Il2CppTypeEnum.IL2CPP_TYPE_U8 => 64,
+            _ => 0
+        };
+        return expectedWidth == nativeWidth ? new FieldReference(field, local, 0) : null;
     }
 
     private static void LoadOperand(IOperand operand, MethodDefinition method,

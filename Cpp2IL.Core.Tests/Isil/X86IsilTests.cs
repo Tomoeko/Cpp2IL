@@ -122,6 +122,8 @@ public class X86IsilTests
             decoder.Decode(out var x86Instruction);
 
             var isil = new X86InstructionSet().GetIsilFromInstruction(x86Instruction);
+            foreach (var arithmetic in expected.Where(i => i.OpCode is OpCode.Add or OpCode.Subtract or OpCode.Multiply))
+                arithmetic.IntegerBitWidth = bytes.StartsWith("48 ") ? 64 : 32;
             
             Assert.That(isil.Count, Is.EqualTo(expected.Length), x86Instruction.ToString);
             for (var i = 0; i < expected.Length; i++)

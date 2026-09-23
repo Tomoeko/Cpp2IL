@@ -342,6 +342,12 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 break;
             case Mnemonic.Lea:
                 var destination = ConvertOperand(instruction, 0);
+                var leaWidth = instruction.Op0Register.GetSize() * 8;
+                if (leaWidth is not (32 or 64))
+                {
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("LEA requires a supported 32/64-bit result width"));
+                    return;
+                }
 
                 // RIP-relative LEA is effectively loading the absolute address.
                 if (instruction.IsIPRelativeMemoryOperand)
@@ -377,26 +383,26 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                         if (baseRegister != null)
                         {
                             var temp = new ISIL.Register(null, "TEMP");
-                            Add(instruction.IP, ISIL.OpCode.Multiply, temp, indexRegister, Imm(instruction.MemoryIndexScale));
+                            Add(instruction.IP, ISIL.OpCode.Multiply, temp, indexRegister, Imm(instruction.MemoryIndexScale)).IntegerBitWidth = leaWidth;
                             source = temp;
                         }
                         else
                         {
-                            Add(instruction.IP, ISIL.OpCode.Multiply, destination, indexRegister, Imm(instruction.MemoryIndexScale));
+                            Add(instruction.IP, ISIL.OpCode.Multiply, destination, indexRegister, Imm(instruction.MemoryIndexScale)).IntegerBitWidth = leaWidth;
                             source = destination;
                         }
                     }
 
                     if (baseRegister != null)
-                        Add(instruction.IP, ISIL.OpCode.Add, destination, baseRegister, source);
+                        Add(instruction.IP, ISIL.OpCode.Add, destination, baseRegister, source).IntegerBitWidth = leaWidth;
                     else if (!ReferenceEquals(source, destination))
                         Add(instruction.IP, ISIL.OpCode.Move, destination, source);
 
                     var displacement = unchecked((long)instruction.MemoryDisplacement64);
                     if (displacement > 0)
-                        Add(instruction.IP, ISIL.OpCode.Add, destination, destination, Imm(displacement));
+                        Add(instruction.IP, ISIL.OpCode.Add, destination, destination, Imm(displacement)).IntegerBitWidth = leaWidth;
                     else if (displacement < 0)
-                        Add(instruction.IP, ISIL.OpCode.Subtract, destination, destination, Imm(-displacement));
+                        Add(instruction.IP, ISIL.OpCode.Subtract, destination, destination, Imm(-displacement)).IntegerBitWidth = leaWidth;
 
                     return;
                 }
@@ -409,9 +415,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     if (displacement == 0)
                         Add(instruction.IP, ISIL.OpCode.Move, destination, baseRegister);
                     else if (displacement > 0)
-                        Add(instruction.IP, ISIL.OpCode.Add, destination, baseRegister, Imm(displacement));
+                        Add(instruction.IP, ISIL.OpCode.Add, destination, baseRegister, Imm(displacement)).IntegerBitWidth = leaWidth;
                     else
-                        Add(instruction.IP, ISIL.OpCode.Subtract, destination, baseRegister, Imm(-displacement));
+                        Add(instruction.IP, ISIL.OpCode.Subtract, destination, baseRegister, Imm(-displacement)).IntegerBitWidth = leaWidth;
 
                     return;
                 }
@@ -425,13 +431,23 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 else
                     Add(instruction.IP, ISIL.OpCode.Xor, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
                 break;
-            case Mnemonic.Shl: // unsigned shift
-            case Mnemonic.Sal: // signed shift
-                Add(instruction.IP, ISIL.OpCode.ShiftLeft, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
-                break;
-            case Mnemonic.Shr: // unsigned shift
-            case Mnemonic.Sar: // signed shift
-                Add(instruction.IP, ISIL.OpCode.ShiftRight, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+            case Mnemonic.Shl:
+            case Mnemonic.Sal:
+            case Mnemonic.Shr:
+            case Mnemonic.Sar:
+                var shiftWidth = (instruction.Op0Kind == OpKind.Register ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize()) * 8;
+                if (shiftWidth is not (32 or 64))
+                {
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("Shift requires a supported 32/64-bit operand width"));
+                    break;
+                }
+                var shiftOpcode = instruction.Mnemonic switch
+                {
+                    Mnemonic.Shr => ISIL.OpCode.ShiftRightUnsigned,
+                    Mnemonic.Sar => ISIL.OpCode.ShiftRight,
+                    _ => ISIL.OpCode.ShiftLeft,
+                };
+                Add(instruction.IP, shiftOpcode, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1)).IntegerBitWidth = shiftWidth;
                 break;
             case Mnemonic.And:
             case Mnemonic.Andps: //Floating point and

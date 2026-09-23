@@ -83,11 +83,20 @@ python3 Validation/run_roundtrip.py --editor "$UNITY_WINDOWS_EDITOR" --wine "$WI
 This creates the original fixture player, isolates only its binary and metadata
 for strict source recovery, verifies recovered IL with the pinned verifier, then
 compiles, rebuilds and runs the generated C# with the independent behavior driver.
-All four fixture methods, including the constructor, must be emitted without
-detected degradation. Original and rebuilt player settings must match. Tool files
-are snapshotted and hashed so another local build cannot change the run midway.
-`roundtrip.json` links the separate stage results; declaration fidelity and asset
-bindings are not inferred from these behavioral checks.
+All selected fixture methods, including the arithmetic fixture's constructor,
+must be emitted without detected degradation. Original and rebuilt player
+settings must match. Tool files are snapshotted and hashed so another local build
+cannot change the run midway.
+
+After recovery has finished, the independent declaration comparer consults the
+original player's retained managed backup and the original unstripped compiler
+output. It compares original stripped declarations with both recovered managed
+IL and the rebuilt player's managed backup. Its projection includes attribute
+constructor identity, and stripping losses are recorded separately. The runner
+requires zero declaration differences or decode diagnostics; missing oracle
+files fail the gate. Neither oracle is passed to Cpp2IL. The comparer is also
+snapshotted and hashed. `roundtrip.json` records these declaration, IL, compilation,
+native build and behavior gates separately; asset bindings remain unverified.
 
 To reuse an existing successful original fixture build, add
 `--baseline-run Files/validation/source-player`. The runner verifies the prior

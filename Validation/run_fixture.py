@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VALIDATION = ROOT / "Validation"
 VALUES = [-(2**31), -(2**31) + 1, -17, -1, 0, 1, 17, 2**31 - 2, 2**31 - 1]
 PROFILES = {
+    "shifts": {"assembly": "ShiftFixture", "source": VALIDATION / "ShiftFixture", "methods": 4},
     "arithmetic": {"assembly": "RecoveryFixture", "source": VALIDATION / "Fixture", "methods": 4},
     "integers": {"assembly": "IntegerFixture", "source": VALIDATION / "IntegerFixture", "methods": 8},
     "scalar-structs": {"assembly": "ScalarStructFixture", "source": VALIDATION / "ScalarStructFixture", "methods": 4},
@@ -36,6 +37,8 @@ def int32(value):
 def verify_behavior(path, stage, profile="arithmetic"):
     if profile in ("scalar-structs", "scalar-structs-negative"):
         return verify_scalar_struct_behavior(path, stage, profile)
+    if profile == "shifts":
+        return verify_shift_behavior(path, stage)
     if profile == "integers":
         return verify_integer_behavior(path, stage)
     if profile != "arithmetic":
@@ -90,6 +93,37 @@ def verify_integer_behavior(path, stage):
     return {"status": "passed", "observations": len(expected), "predicateChecks": len(expected) * 4,
             "methods": 8, "platform": report["platform"], "profile": "integers",
             "scope": "finite UInt32/UInt64 comparison vectors; not a whole-program equivalence proof"}
+
+
+def shift_observations():
+    for width in (32, 64):
+        values = [0, 1, 2**(width - 1) - 1, 2**(width - 1), 2**width - 1]
+        for value in values:
+            signed = value if value < 2**(width - 1) else value - 2**width
+            for count in (-65, -64, -33, -32, -1, 0, 1, 31, 32, 33, 63, 64, 65):
+                masked = count & (width - 1)
+                yield {"width": width, "value": value, "count": count,
+                       "arithmetic": signed >> masked, "logical": value >> masked}
+
+
+def verify_shift_behavior(path, stage):
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report["unityVersion"] != VERSION or report["stage"] != stage or report.get("profile") != "shifts":
+        raise ValueError("Shift report has the wrong version, stage or profile")
+    observations = report["observations"]
+    if not isinstance(observations, list) or any(not isinstance(item, dict) for item in observations):
+        raise ValueError("Shift observations must be a list of objects")
+    for observation in observations:
+        if any(type(observation.get(key)) is not int for key in ("width", "value", "count", "arithmetic", "logical")):
+            raise ValueError("Shift observations require exact JSON integers")
+    expected = list(shift_observations())
+    if observations != expected:
+        raise ValueError("Behavior differs from the independent shift oracle")
+    if stage == "player" and report["platform"] != "WindowsPlayer":
+        raise ValueError("The behavioral run was not a Windows player")
+    return {"status": "passed", "observations": len(expected), "resultChecks": len(expected) * 2,
+            "methods": 4, "platform": report["platform"], "profile": "shifts",
+            "scope": "finite Int32/UInt32/Int64/UInt64 shift vectors; not a whole-program equivalence proof"}
 
 
 def scalar_struct_observations(profile):
@@ -148,7 +182,7 @@ def copy_sources(source, destination):
 def copy_harness(profile, destination):
     if profile == "arithmetic":
         return copy_sources(VALIDATION / "Harness", destination)
-    harness = {"integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
+    harness = {"shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
                "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
     copied = copy_sources(VALIDATION / harness, destination)
     for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):
