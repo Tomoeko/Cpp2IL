@@ -38,7 +38,7 @@ internal static class X64CatchDivideBodyProof
         var metadataHelper = app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata;
         if (native.Length is < 28 or > 44 || app.Binary is not PE pe ||
             native.Skip(28).Any(instruction => instruction.Code != Code.Int3) ||
-            !HasInt3Padding(pe, native[27].NextIP, region.End) || metadataHelper == 0 ||
+            !X64NativePaddingProof.HasInt3Padding(pe, native[27].NextIP, region.End) || metadataHelper == 0 ||
             !Push(native[0], Register.RBX) || !Stack(native[1], Mnemonic.Sub, 0x30) ||
             !Move(native[2], Register.R8D, Register.EDX) ||
             !Test(native[3], Register.EDX) || !Branch(native[4], Mnemonic.Je, native[13].IP) ||
@@ -86,20 +86,6 @@ internal static class X64CatchDivideBodyProof
             return null;
 
         return new Evidence(catchProof.CheckedClass, constructor, caughtReturn, allocator, nullGuard, raiser);
-    }
-
-    private static bool HasInt3Padding(PE pe, ulong start, ulong end)
-    {
-        if (end < start || end - start > 16)
-            return false;
-        if (end == start)
-            return true;
-        var first = pe.MapVirtualAddressToRaw(start, false);
-        var last = pe.MapVirtualAddressToRaw(end - 1, false);
-        var bytes = pe.GetRawBinaryContent();
-        return first >= 0 && last >= first && (ulong)(last - first) == end - start - 1 &&
-               last < bytes.Length && bytes.Slice((int)first, (int)(end - start)).ToArray()
-                   .All(value => value == 0xCC);
     }
 
     private static bool Push(Instruction i, Register register) => i.Mnemonic == Mnemonic.Push &&

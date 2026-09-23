@@ -7,19 +7,14 @@ using Cpp2IL.Core.Utils.AsmResolver;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Emits a managed catch only when every part of the bounded x64 signed-divide
-/// shape, its native helper chain, and both funclet exits are established from
-/// the current player's bytes and metadata.
+/// Emits a managed finally only for the bounded signed-divide/counter shape
+/// whose complete native body, EH4 cleanup, and metadata identities are proved.
 /// </summary>
-internal static class X64CatchDivideRecovery
+internal static class X64FinallyCountRecovery
 {
     internal static bool TryGenerate(MethodAnalysisContext method, MethodDefinition definition)
     {
-        if (X64CatchDivideBodyProof.Find(method) is not { } body ||
-            X64CatchFuncletClassProof.Find(method) is not { } funclet ||
-            !ReferenceEquals(body.ExceptionClass, funclet.CheckedClass) ||
-            !X64ManagedThrowHelperProof.Check(method, body) ||
-            !X64CatchFuncletFlowProof.Check(method, funclet))
+        if (X64FinallyCountBodyProof.Find(method) is not { } body)
             return false;
 
         var il = new CilMethodBody
@@ -32,9 +27,9 @@ internal static class X64CatchDivideRecovery
         var result = new CilLocalVariable(definition.DeclaringModule!.CorLibTypeFactory.Int32);
         il.LocalVariables.Add(result);
         var instructions = il.Instructions;
-        var tryStart = new CilInstruction(CilOpCodes.Ldarg_1);
-        var divide = new CilInstruction(CilOpCodes.Ldarg_0);
-        var catchStart = new CilInstruction(CilOpCodes.Pop);
+        var tryStart = new CilInstruction(CilOpCodes.Ldarg_0);
+        var divide = new CilInstruction(CilOpCodes.Ldc_I4, body.Dividend);
+        var finallyStart = new CilInstruction(CilOpCodes.Ldarg_1);
         var returnStart = new CilInstruction(CilOpCodes.Ldloc, result);
 
         instructions.Add(tryStart);
@@ -42,25 +37,27 @@ internal static class X64CatchDivideRecovery
         instructions.Add(CilOpCodes.Newobj, body.Constructor.ToMethodDescriptor());
         instructions.Add(CilOpCodes.Throw);
         instructions.Add(divide);
-        instructions.Add(CilOpCodes.Ldarg_1);
+        instructions.Add(CilOpCodes.Ldarg_0);
         instructions.Add(CilOpCodes.Div);
         instructions.Add(CilOpCodes.Stloc, result);
         instructions.Add(CilOpCodes.Leave, new CilInstructionLabel(returnStart));
-        instructions.Add(catchStart);
-        instructions.Add(CilOpCodes.Ldc_I4, body.CaughtReturn);
-        instructions.Add(CilOpCodes.Stloc, result);
-        instructions.Add(CilOpCodes.Leave, new CilInstructionLabel(returnStart));
+        instructions.Add(finallyStart);
+        instructions.Add(CilOpCodes.Ldarg_1);
+        instructions.Add(CilOpCodes.Ldind_I4);
+        instructions.Add(CilOpCodes.Ldc_I4_1);
+        instructions.Add(CilOpCodes.Add);
+        instructions.Add(CilOpCodes.Stind_I4);
+        instructions.Add(CilOpCodes.Endfinally);
         instructions.Add(returnStart);
         instructions.Add(CilOpCodes.Ret);
 
         il.ExceptionHandlers.Add(new CilExceptionHandler
         {
-            HandlerType = CilExceptionHandlerType.Exception,
+            HandlerType = CilExceptionHandlerType.Finally,
             TryStart = new CilInstructionLabel(tryStart),
-            TryEnd = new CilInstructionLabel(catchStart),
-            HandlerStart = new CilInstructionLabel(catchStart),
-            HandlerEnd = new CilInstructionLabel(returnStart),
-            ExceptionType = body.ExceptionClass.ToTypeSignature().ToTypeDefOrRef()
+            TryEnd = new CilInstructionLabel(finallyStart),
+            HandlerStart = new CilInstructionLabel(finallyStart),
+            HandlerEnd = new CilInstructionLabel(returnStart)
         });
         return true;
     }

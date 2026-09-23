@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Cpp2IL.Core.Model.Contexts;
 using Iced.Intel;
 using LibCpp2IL.PE;
@@ -7,12 +6,15 @@ using LibCpp2IL.PE;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Checks the small native wrappers reached by the bounded catch/divide body.
-/// This does not establish the catch funclet's unmatched-exception path.
+/// Checks the small native wrappers reached by a bounded explicit managed throw.
+/// This does not establish a caller's exception-region or continuation behavior.
 /// </summary>
-internal static class X64CatchDivideHelperProof
+internal static class X64ManagedThrowHelperProof
 {
     internal static bool Check(MethodAnalysisContext method, X64CatchDivideBodyProof.Evidence body)
+        => Check(method, body.Allocator, body.NullGuard, body.Raiser);
+
+    internal static bool Check(MethodAnalysisContext method, ulong allocator, ulong nullGuard, ulong raiser)
     {
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
@@ -20,16 +22,16 @@ internal static class X64CatchDivideHelperProof
             return false;
         var helpers = app.GetOrCreateKeyFunctionAddresses();
         if (helpers.il2cpp_vm_object_new == 0 || helpers.il2cpp_vm_exception_raise == 0 ||
-            Read(pe, index, body.Allocator, 1, 16) is not [var allocate] ||
+            X64NativeInstructionReader.Read(pe, index, allocator, 1, 16) is not [var allocate] ||
             allocate.Mnemonic != Mnemonic.Jmp || allocate.Op0Kind != OpKind.NearBranch64 ||
             allocate.NearBranchTarget != helpers.il2cpp_vm_object_new ||
-            Read(pe, index, body.NullGuard, 6, 64) is not [var sub, var test, var branch,
+            X64NativeInstructionReader.Read(pe, index, nullGuard, 6, 64) is not [var sub, var test, var branch,
                 var add, var ret, var nullExit] ||
             !Stack(sub, Mnemonic.Sub, 0x28) || !Test(test, Register.RCX) ||
             branch.Mnemonic != Mnemonic.Je || branch.Op0Kind != OpKind.NearBranch64 ||
             branch.NearBranchTarget != nullExit.IP || !Stack(add, Mnemonic.Add, 0x28) ||
             ret.Code != Code.Retnq || nullExit.Code != Code.Call_rel32_64 ||
-            Read(pe, index, body.Raiser, 12, 96) is not [var save, var push, var reserve,
+            X64NativeInstructionReader.Read(pe, index, raiser, 12, 96) is not [var save, var push, var reserve,
                 var retainException, var retainFrame, var firstAddress, var firstCall,
                 var secondAddress, var secondCall, var restoreFrame, var restoreException,
                 var raise] ||
@@ -46,33 +48,6 @@ internal static class X64CatchDivideHelperProof
             !Call(raise, helpers.il2cpp_vm_exception_raise))
             return false;
         return true;
-    }
-
-    private static IReadOnlyList<Instruction>? Read(PE pe, X64UnwindProof.Index index,
-        ulong address, int count, int maxBytes)
-    {
-        if (address < index.ImageBase || address >= ulong.MaxValue - (ulong)maxBytes ||
-            address - index.ImageBase > uint.MaxValue ||
-            !index.IsExecutableRva((uint)(address - index.ImageBase)))
-            return null;
-        var start = pe.MapVirtualAddressToRaw(address, false);
-        var end = pe.MapVirtualAddressToRaw(address + (ulong)maxBytes - 1, false);
-        var raw = pe.GetRawBinaryContent();
-        if (start < 0 || end < start || end - start != maxBytes - 1 || end >= raw.Length)
-            return null;
-        var decoder = Decoder.Create(64, new ByteArrayCodeReader(raw.Slice((int)start, maxBytes).ToArray()), address);
-        var result = new Instruction[count];
-        for (var i = 0; i < count; i++)
-        {
-            result[i] = decoder.Decode();
-            if (result[i].IsInvalid || result[i].CodeSize != CodeSize.Code64 ||
-                result[i].NextIP > address + (ulong)maxBytes || result[i].HasLockPrefix ||
-                result[i].HasRepPrefix || result[i].HasRepnePrefix ||
-                result[i].SegmentPrefix != Register.None ||
-                index.ClassifySpan(address, result[i].NextIP).Kind == X64UnwindProof.SpanKind.Unsupported)
-                return null;
-        }
-        return result;
     }
 
     private static bool Stack(Instruction i, Mnemonic mnemonic, ulong size) =>

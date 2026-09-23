@@ -38,7 +38,7 @@ public class X86CallerExceptionRegionFixtureTests
             Assert.That(X64CatchFuncletFlowProof.Check(method, funclet), Is.True);
             var body = X64CatchDivideBodyProof.Find(method);
             Assert.That(body, Is.Not.Null);
-            Assert.That(X64CatchDivideHelperProof.Check(method, body!), Is.True);
+            Assert.That(X64ManagedThrowHelperProof.Check(method, body!), Is.True);
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }
@@ -84,7 +84,7 @@ public class X86CallerExceptionRegionFixtureTests
     }
 
     [Test]
-    public void ExactCatchAndFinallyRetainDistinctHandlerDataAndRemainUnsupported()
+    public void ExactCatchAndFinallyRetainDistinctHandlerDataAndRejectOrdinaryLifting()
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_EXCEPTION_REGION_FIXTURE_INPUT");
         if (string.IsNullOrEmpty(directory))
@@ -117,8 +117,13 @@ public class X86CallerExceptionRegionFixtureTests
             Assert.That(catchBody?.ExceptionClass.FullName, Is.EqualTo("System.DivideByZeroException"));
             Assert.That(catchBody?.Constructor.Name, Is.EqualTo(".ctor"));
             Assert.That(catchBody?.CaughtReturn, Is.EqualTo(-17));
-            Assert.That(X64CatchDivideHelperProof.Check(methods[0], catchBody!), Is.True);
+            Assert.That(X64ManagedThrowHelperProof.Check(methods[0], catchBody!), Is.True);
             Assert.That(X64CatchDivideBodyProof.Find(methods[1]), Is.Null);
+            Assert.That(X64FinallyCountBodyProof.Find(methods[0]), Is.Null);
+            var finallyBody = X64FinallyCountBodyProof.Find(methods[1]);
+            Assert.That(finallyBody?.ExceptionClass.FullName, Is.EqualTo("System.DivideByZeroException"));
+            Assert.That(finallyBody?.Constructor.Name, Is.EqualTo(".ctor"));
+            Assert.That(finallyBody?.Dividend, Is.EqualTo(100));
             var handlers = methods.Select(method =>
             {
                 method.EnsureRawBytes();
@@ -136,7 +141,24 @@ public class X86CallerExceptionRegionFixtureTests
                     Is.EqualTo(method.Name == "CatchZero" ? new[] { -1, -1 } : new[] { -1, 0, 0 }));
                 Assert.That(map.UnwindActions.Any(action => action.Kind != 0),
                     Is.EqualTo(method.Name == "FinallyCount"));
+                if (method.Name == "FinallyCount")
+                {
+                    var actionAddress = index.ImageBase + map.UnwindActions[0].ActionRva!.Value;
+                    Assert.That(X64FinallyCleanupActionProof.Check(pe, index,
+                        actionAddress), Is.True);
+                    var fAddress = index.ImageBase + map.TryBlocks[0].Handlers[0].FuncletRva;
+                    Assert.That(X64FinallyFuncletProof.Check(pe, index,
+                        fAddress,
+                        map.UnwindActions[0].ObjectOffset!.Value), Is.True);
+                }
                 var native = X86Utils.Iterate(method).ToArray();
+                if (method.Name == "FinallyCount")
+                {
+                    Assert.That(X64ManagedThrowHelperProof.Check(method,
+                        native[29].NearBranchTarget, native[32].NearBranchTarget,
+                        native[40].NearBranchTarget), Is.True);
+                    Assert.That(X64FinallyRethrowProof.Check(pe, index, native[42].NearBranchTarget), Is.True);
+                }
                 Assert.That(X86CallerExceptionRegionProof.Check(method, native, new System.Collections.Generic.HashSet<ulong>()),
                     Does.Contain("unsupported native handlers"));
                 Assert.That(app.InstructionSet.GetIsilFromMethod(method).Select(instruction => instruction.OpCode),
