@@ -26,13 +26,17 @@ namespace RecoveryValidation
             foreach (var value in new[] { long.MinValue, -17L, 0L, 17L, long.MaxValue })
                 RecordLongWrite(observations, value.ToString(), new LongBox(42), value);
             RecordLongWrite(observations, "null", null, 17);
+            var booleanReader = new BooleanReader();
             foreach (var initial in new[] { false, true })
             {
                 var box = new BooleanBox { Value = initial };
                 RecordBooleanRead(observations, initial.ToString(), box);
+                RecordBooleanInstanceRead(observations, initial.ToString(), booleanReader, box);
                 RecordBooleanClear(observations, initial.ToString(), box);
             }
             RecordBooleanRead(observations, "null", null);
+            RecordBooleanInstanceRead(observations, "box-null", booleanReader, null);
+            RecordBooleanInstanceRead(observations, "reader-null", null, new BooleanBox());
             RecordBooleanClear(observations, "null", null);
             foreach (var initial in new[] { int.MinValue, 0, int.MaxValue })
                 RecordNestedClear(observations, initial.ToString(),
@@ -128,6 +132,20 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "bool-read:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordBooleanInstanceRead(List<object> observations, string kind,
+            BooleanReader reader, BooleanBox box)
+        {
+            object result = null;
+            var exception = "none";
+            try { result = reader.Read(box); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "bool-instance-read:" + kind }, { "result", result },
+                { "exception", exception }
             });
         }
 

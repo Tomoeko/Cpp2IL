@@ -20,8 +20,10 @@ namespace Cpp2IL.Core.InstructionSets;
 internal static class X86BooleanFieldReadProof
 {
     internal const string EvidenceKey = "X86BooleanFieldReadProof";
-    internal sealed record Proof(FieldAnalysisContext Field, ulong LoadIp);
-    internal sealed record Shape(long FieldOffset, ulong LoadIp, int CallIndex);
+    internal sealed record Proof(FieldAnalysisContext Field, ulong LoadIp,
+        Register ReceiverRegister);
+    internal sealed record Shape(long FieldOffset, ulong LoadIp, int CallIndex,
+        Register ReceiverRegister);
 
     internal static Proof? Find(MethodAnalysisContext method, IReadOnlyList<Instruction> body)
     {
@@ -33,7 +35,8 @@ internal static class X86BooleanFieldReadProof
             method.Definition is not { GenericContainer: null } definition ||
             method.DeclaringType?.Definition is not { GenericContainer: null } owner ||
             !ReferenceEquals(definition.DeclaringType, owner) ||
-            !method.IsStatic || method.IsVoid || method.OverrideReturnType != null ||
+            method.IsStatic != (shape.ReceiverRegister == Register.RCX) ||
+            method.IsVoid || method.OverrideReturnType != null ||
             !ReferenceEquals(method.ReturnType, app.SystemTypes.SystemBooleanType) ||
             definition.RawReturnType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
@@ -70,7 +73,8 @@ internal static class X86BooleanFieldReadProof
                 NumMods: 0, Byref: 0, Pinned: 0 }).ToArray();
         if (fields is not [{ } matched] || matched.Name != matched.DefaultName)
             return null;
-        var receiver = new IsilLocalVariable("native-receiver", new IsilRegister(null, "rcx"), box);
+        var receiver = new IsilLocalVariable("native-receiver",
+            new IsilRegister(null, shape.ReceiverRegister == Register.RCX ? "rcx" : "rdx"), box);
         var access = new IsilFieldReference(matched, receiver, (int)matched.Offset);
         if (!NarrowFieldEqualityProof.HasUnchangedByteFieldLayout(access))
             return null;
@@ -79,7 +83,7 @@ internal static class X86BooleanFieldReadProof
         if (X86RuntimeNullThrowProof.TryIdentify(app, call.NearBranchTarget) == null ||
             X86CallerExceptionRegionProof.Check(method, body, new HashSet<ulong> { call.IP }) != null)
             return null;
-        return new Proof(matched, shape.LoadIp);
+        return new Proof(matched, shape.LoadIp, shape.ReceiverRegister);
     }
 
     internal static Shape? TryProveShape(IReadOnlyList<Instruction> body)
@@ -99,22 +103,24 @@ internal static class X86BooleanFieldReadProof
         var branch = body[2];
         var load = body[3];
         var call = body[6];
+        var receiverRegister = test.Op0Register;
         if (!Stack(body[0], Mnemonic.Sub) ||
             test.Mnemonic != Mnemonic.Test || test.Op0Kind != OpKind.Register ||
-            test.Op1Kind != OpKind.Register || test.Op0Register != Register.RCX ||
-            test.Op1Register != Register.RCX ||
+            test.Op1Kind != OpKind.Register ||
+            receiverRegister is not (Register.RCX or Register.RDX) ||
+            test.Op1Register != receiverRegister ||
             branch.Mnemonic != Mnemonic.Je || branch.Op0Kind != OpKind.NearBranch64 ||
             branch.NearBranchTarget != call.IP ||
             load.Code != Code.Movzx_r32_rm8 || load.Op0Kind != OpKind.Register ||
             load.Op0Register != Register.EAX || load.Op1Kind != OpKind.Memory ||
-            load.MemoryBase != Register.RCX || load.MemoryIndex != Register.None ||
+            load.MemoryBase != receiverRegister || load.MemoryIndex != Register.None ||
             load.MemorySize.GetSize() != 1 || load.MemoryDisplacement64 > int.MaxValue ||
             !Stack(body[4], Mnemonic.Add) ||
             body[5].Code != Code.Retnq || body[5].OpCount != 0 ||
             call.Code != Code.Call_rel32_64 || call.Op0Kind != OpKind.NearBranch64 ||
             call.NearBranchTarget == 0)
             return null;
-        return new Shape((long)load.MemoryDisplacement64, load.IP, 6);
+        return new Shape((long)load.MemoryDisplacement64, load.IP, 6, receiverRegister);
     }
 
     private static bool Stack(Instruction instruction, Mnemonic mnemonic)

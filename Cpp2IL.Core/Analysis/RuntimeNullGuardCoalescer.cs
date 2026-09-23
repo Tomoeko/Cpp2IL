@@ -378,7 +378,8 @@ internal static class RuntimeNullGuardCoalescer
             return false;
         var current = X86BooleanFieldReadProof.Find(method, X86Utils.Iterate(method).ToArray());
         return current != null && ReferenceEquals(current.Field, proof.Field) &&
-               current.LoadIp == proof.LoadIp;
+               current.LoadIp == proof.LoadIp &&
+               current.ReceiverRegister == proof.ReceiverRegister;
     }
 
     private static bool HasOutputOptions(MethodAnalysisContext method)

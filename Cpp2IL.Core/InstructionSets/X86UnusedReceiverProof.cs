@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Cpp2IL.Core.Api;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
@@ -20,6 +21,14 @@ internal static class X86UnusedReceiverProof
             !Enum.TryParse<Register>(receiver.Name, true, out var nativeRegister) ||
             !nativeRegister.IsGPR64())
             return false;
+
+        if (nativeRegister == Register.RCX && !method.IsStatic &&
+            method.GetExtraData<X86BooleanFieldReadProof.Proof>(
+                X86BooleanFieldReadProof.EvidenceKey) is { ReceiverRegister: Register.RDX } original &&
+            X86BooleanFieldReadProof.Find(method, X86Utils.Iterate(method).ToArray()) is
+                { ReceiverRegister: Register.RDX } current &&
+            ReferenceEquals(original.Field, current.Field) && original.LoadIp == current.LoadIp)
+            return true;
 
         return IsUnused(X86Utils.Disassemble(method.RawBytes.AsSpan(), method.UnderlyingPointer, false), nativeRegister);
     }

@@ -12,13 +12,28 @@ public class X86BooleanFieldReadProofTests
     {
         var body = Body();
         var shape = X86BooleanFieldReadProof.TryProveShape(body);
+        var secondArgument = X86BooleanFieldReadProof.TryProveShape(Body(Register.RDX));
         Assert.Multiple(() =>
         {
             Assert.That(shape, Is.Not.Null);
             Assert.That(shape!.FieldOffset, Is.EqualTo(0x10));
             Assert.That(shape.LoadIp, Is.EqualTo(body[3].IP));
             Assert.That(shape.CallIndex, Is.EqualTo(6));
+            Assert.That(shape.ReceiverRegister, Is.EqualTo(Register.RCX));
+            Assert.That(secondArgument, Is.Not.Null);
+            Assert.That(secondArgument!.ReceiverRegister, Is.EqualTo(Register.RDX));
+            Assert.That(secondArgument.FieldOffset, Is.EqualTo(0x10));
         });
+    }
+
+    [Test]
+    public void SecondArgumentLoadMustUseTheGuardedRegister()
+    {
+        var body = Body(Register.RDX);
+        var load = body[3];
+        load.MemoryBase = Register.RCX;
+        body[3] = load;
+        Assert.That(X86BooleanFieldReadProof.TryProveShape(body), Is.Null);
     }
 
     [TestCase("wrong-test")]
@@ -59,10 +74,12 @@ public class X86BooleanFieldReadProofTests
         Assert.That(X86BooleanFieldReadProof.TryProveShape(body), Is.Null);
     }
 
-    private static List<Instruction> Body()
+    private static List<Instruction> Body(Register receiver = Register.RCX)
     {
         const ulong address = 0x1000;
-        var bytes = Convert.FromHexString("4883EC284885C974090FB641104883C428C3E8E93F0000");
+        var bytes = Convert.FromHexString(receiver == Register.RDX
+            ? "4883EC284885D274090FB642104883C428C3E8E93F0000"
+            : "4883EC284885C974090FB641104883C428C3E8E93F0000");
         var decoder = Decoder.Create(64, new ByteArrayCodeReader(bytes), address);
         var body = new List<Instruction>();
         while (decoder.IP < address + (ulong)bytes.Length)
