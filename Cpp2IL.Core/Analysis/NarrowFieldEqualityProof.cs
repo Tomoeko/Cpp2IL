@@ -68,7 +68,18 @@ internal static class NarrowFieldEqualityProof
     internal static bool HasUnchangedByteFieldLayout(FieldReference reference)
         => HasUnchangedFieldLayout(reference, 8);
 
+    internal static bool HasUnchangedReferenceFieldLayout(FieldReference reference)
+    {
+        var field = reference.Field;
+        return !field.FieldType.IsValueType &&
+               HasUnchangedFieldLayout(reference,
+                   field.DeclaringType.AppContext.Binary.PointerSizeBytes * 8, true);
+    }
+
     internal static bool HasUnchangedFieldLayout(FieldReference reference, int width)
+        => HasUnchangedFieldLayout(reference, width, false);
+
+    private static bool HasUnchangedFieldLayout(FieldReference reference, int width, bool referenceField)
     {
         var field = reference.Field;
         var owner = field.DeclaringType;
@@ -76,7 +87,7 @@ internal static class NarrowFieldEqualityProof
             (field.Attributes & (FieldAttributes.Literal | FieldAttributes.HasFieldMarshal)) != 0 ||
             field.BackingData?.Field.RawFieldType is not { NumMods: 0, Byref: 0, Pinned: 0 } ||
             !ReferenceEquals(field.FieldType, field.DefaultFieldType) ||
-            !HasExactStorageWidth(field.FieldType, width) ||
+            !(referenceField || HasExactStorageWidth(field.FieldType, width)) ||
             field.Offset < 2 * owner.AppContext.Binary.PointerSizeBytes || field.Offset != field.DefaultOffset || reference.Offset != field.Offset ||
             !ReferenceEquals(reference.Local.Type, owner) || owner.IsValueType || owner.IsEnumType ||
             owner is GenericInstanceTypeAnalysisContext || owner.GenericParameters.Count != 0 ||

@@ -68,8 +68,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var shiftCountExtensions = X86ShiftCountExtensionProof.Find(context, nativeInstructions);
         var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);
         var unresolvedMetadataGuards = X86MetadataGuardProof.FindUnresolvedInitializationGuards(context, nativeInstructions);
-        if (X86BooleanZeroStoreProof.Find(context, nativeInstructions) is { } booleanZeroStore)
-            context.PutExtraData(X86BooleanZeroStoreProof.EvidenceKey, booleanZeroStore);
+        if (X86GuardedZeroStoreProof.Find(context, nativeInstructions) is { } guardedZeroStore)
+            context.PutExtraData(X86GuardedZeroStoreProof.EvidenceKey, guardedZeroStore);
         if (metadataGuard != null)
             context.PutExtraData("X86MetadataLiteralGuardProof", metadataGuard);
         foreach (var instruction in nativeInstructions)

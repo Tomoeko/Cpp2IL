@@ -29,6 +29,11 @@ namespace RecoveryValidation
                 RecordBooleanClear(observations, initial.ToString(), box);
             }
             RecordBooleanClear(observations, "null", null);
+            foreach (var initial in new[] { int.MinValue, 0, int.MaxValue })
+                RecordNestedClear(observations, initial.ToString(),
+                    new NestedFieldBox { Inner = new FieldBox(initial) });
+            RecordNestedClear(observations, "inner-null", new NestedFieldBox());
+            RecordNestedClear(observations, "outer-null", null);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -106,6 +111,22 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "bool-clear:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordNestedClear(List<object> observations, string kind, NestedFieldBox outer)
+        {
+            object result = null;
+            var exception = "none";
+            try
+            {
+                outer.ClearInner();
+                result = outer.Inner == null ? null : (object)outer.Inner.Value;
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "nested-clear:" + kind }, { "result", result }, { "exception", exception }
             });
         }
 

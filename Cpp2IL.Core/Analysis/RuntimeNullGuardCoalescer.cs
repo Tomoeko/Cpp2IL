@@ -50,12 +50,36 @@ internal static class RuntimeNullGuardCoalescer
             LocalVariable local => ReferenceEquals(local.Type, ValueType) &&
                                    method.ParameterLocals.Contains(local) &&
                                    UnchangedParameter(method, local, ValueType),
-            Immediate { Value: 0 } => ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemBooleanType) &&
-                                      method.GetExtraData<X86BooleanZeroStoreProof.Proof>(
-                                          X86BooleanZeroStoreProof.EvidenceKey) is { } proof &&
-                                      ReferenceEquals(proof.Field, Field),
+            Immediate { Value: 0 } =>
+                method.GetExtraData<X86GuardedZeroStoreProof.Proof>(
+                    X86GuardedZeroStoreProof.EvidenceKey) is { } proof &&
+                ReferenceEquals(proof.Field, Field) &&
+                ReferenceEquals(ValueType, proof.ReceiverField == null
+                    ? method.AppContext.SystemTypes.SystemBooleanType
+                    : method.AppContext.SystemTypes.SystemInt32Type) &&
+                ValidZeroStoreReceiver(method, proof),
             _ => false,
         };
+
+        private bool ValidZeroStoreReceiver(MethodAnalysisContext method,
+            X86GuardedZeroStoreProof.Proof proof)
+        {
+            if (proof.ReceiverField == null)
+                return method.ParameterLocals.Contains(Receiver);
+            var definitions = method.ControlFlowGraph!.Instructions
+                .Where(instruction => ReferenceEquals(instruction.Destination, Receiver)).ToArray();
+            if (definitions is not [{ OpCode: OpCode.Move, IntegerBitWidth: 0,
+                    Operands: [LocalVariable destination, FieldReference source] }] ||
+                !ReferenceEquals(destination, Receiver) ||
+                !ReferenceEquals(source.Field, proof.ReceiverField) ||
+                !ReferenceEquals(source.Field.FieldType, Owner) ||
+                !source.Local.IsThis || !method.ParameterLocals.Contains(source.Local) ||
+                !ReferenceEquals(source.Local.Type, method.DeclaringType) ||
+                source.Offset != source.Field.Offset ||
+                !NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(source))
+                return false;
+            return UnchangedParameter(method, source.Local, method.DeclaringType!);
+        }
 
         private static bool UnchangedParameter(MethodAnalysisContext method, LocalVariable local, TypeAnalysisContext type)
         {
@@ -258,8 +282,7 @@ internal static class RuntimeNullGuardCoalescer
                          method.ParameterLocals.Contains(parameterValue) &&
                          Available(parameterValue, entry, instruction) ||
                          value is Immediate { Value: 0 } &&
-                         ReferenceEquals(writeAccess.Field.FieldType,
-                             method.AppContext.SystemTypes.SystemBooleanType)) &&
+                         HasProvedNativeZeroStore(method, writeAccess)) &&
                         provesNativeField(writeAccess))
                     {
                         operation = instruction;
@@ -325,16 +348,23 @@ internal static class RuntimeNullGuardCoalescer
         var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) ? 32 :
             ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 :
             ReferenceEquals(field.FieldType, types.SystemBooleanType) ? 8 : 0;
-        if (width == 8 &&
-            (method.GetExtraData<X86BooleanZeroStoreProof.Proof>(X86BooleanZeroStoreProof.EvidenceKey)
-                is not { } proof || !ReferenceEquals(proof.Field, field) ||
-             X86BooleanZeroStoreProof.Find(method, X86Utils.Iterate(method).ToArray()) is not { } current ||
-             !ReferenceEquals(current.Field, field)))
+        if (width == 8 && !HasProvedNativeZeroStore(method, access))
             return false;
         return field.Name == field.DefaultName &&
                width != 0 &&
                owner.Fields.Contains(field) && NullCheckedCall.IsReferenceClass(owner) &&
                NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, width);
+    }
+
+    private static bool HasProvedNativeZeroStore(MethodAnalysisContext method, FieldReference access)
+    {
+        var proof = method.GetExtraData<X86GuardedZeroStoreProof.Proof>(
+            X86GuardedZeroStoreProof.EvidenceKey);
+        if (proof == null || !ReferenceEquals(proof.Field, access.Field))
+            return false;
+        var current = X86GuardedZeroStoreProof.Find(method, X86Utils.Iterate(method).ToArray());
+        return current != null && ReferenceEquals(current.Field, proof.Field) &&
+               ReferenceEquals(current.ReceiverField, proof.ReceiverField);
     }
 
     private static bool HasOutputOptions(MethodAnalysisContext method)

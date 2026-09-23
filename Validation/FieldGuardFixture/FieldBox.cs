@@ -71,4 +71,15 @@ namespace FieldGuardFixture
             box.Value = false;
         }
     }
+
+    public sealed class NestedFieldBox
+    {
+        public FieldBox Inner;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public void ClearInner()
+        {
+            Inner.Value = 0;
+        }
+    }
 }
