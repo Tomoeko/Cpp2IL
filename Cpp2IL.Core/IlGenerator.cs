@@ -423,7 +423,7 @@ public static partial class IlGenerator
                 if (!targetMethod.IsStatic) // Load 'this' param
                 {
                     if ((instruction.Operands.Count - 1) >= thisParamIndex)
-                        LoadOperand(instruction.Operands[thisParamIndex], method, locals, targetMethod.DeclaringType);
+                        LoadInstanceCallReceiver(instruction.Operands[thisParamIndex], targetMethod, method, locals);
                     else
                         throw new DecompilerException("Instance call has no recovered receiver");
                 }

@@ -68,6 +68,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         if (X86ScalarTruncationProof.TryLift(context, nativeInstructions) is { } scalarTruncation)
             return QualifyExceptionRegions(scalarTruncation);
         var booleanReturnSelfTests = X86BooleanReturnSelfTestProof.Find(context, nativeInstructions);
+        var nonvolatileXmmTraffic = X86NonvolatileXmmStackProof.Find(context, nativeInstructions);
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
         var shiftCountExtensions = X86ShiftCountExtensionProof.Find(context, nativeInstructions);
         var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);
@@ -91,6 +92,14 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 addresses.Add(instruction.IP);
                 instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.CheckEqual,
                     new ISIL.Register(null, "ZF"), new ISIL.Register(null, "rax"), Imm(0)));
+            }
+            else if (nonvolatileXmmTraffic.Contains(instruction.IP))
+            {
+                // These two native operations only preserve a nonvolatile register
+                // across this method's ABI boundary. Their 128-bit payload is not
+                // interpreted as a managed scalar or vector value.
+                addresses.Add(instruction.IP);
+                instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.Nop));
             }
             else
                 ConvertInstructionStatement(instruction, instructions, addresses, context,

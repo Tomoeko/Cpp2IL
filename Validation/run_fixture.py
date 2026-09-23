@@ -25,6 +25,7 @@ import float_comparison
 import integer_extensions
 import loop_calls
 import scalar_truncation
+import xmm_spill
 import word_fields
 
 
@@ -47,6 +48,7 @@ PROFILES = {
     "integer-extensions": {"assembly": "IntegerExtensionFixture", "source": VALIDATION / "IntegerExtensionFixture", "methods": 12},
     "byte-fields": {"assembly": "ByteFieldFixture", "source": VALIDATION / "ByteFieldFixture", "methods": 4},
     "float-comparisons": {"assembly": "FloatComparisonFixture", "source": VALIDATION / "FloatComparisonFixture", "methods": 12},
+    "xmm-spill": {"assembly": "XmmSpillFixture", "source": VALIDATION / "XmmSpillFixture", "methods": 2},
     "components": {"assembly": "ComponentFixture", "source": VALIDATION / "ComponentFixture", "methods": 3},
     "metadata-literal": {"assembly": "MetadataLiteralFixture", "source": VALIDATION / "MetadataLiteralFixture", "methods": 1},
     "narrow-comparisons": {"assembly": "NarrowComparisonFixture", "source": VALIDATION / "NarrowComparisonFixture", "methods": 14},
@@ -96,6 +98,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return byte_fields.verify(path, stage, VERSION)
     if profile == "float-comparisons":
         return float_comparison.verify(path, stage, VERSION)
+    if profile == "xmm-spill":
+        return xmm_spill.verify(path, stage, VERSION)
     if profile == "components":
         return verify_component_behavior(path, stage)
     if profile == "metadata-literal":
@@ -375,7 +379,7 @@ def copy_sources(source, destination):
 def copy_harness(profile, destination):
     if profile == "arithmetic":
         return copy_sources(VALIDATION / "Harness", destination)
-    harness = {"catch-divide": "CatchDivideHarness", "exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "enum-passthrough": "EnumPassthroughHarness", "static-field-getter": "StaticFieldGetterHarness", "reference-field": "ReferenceFieldHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
+    harness = {"catch-divide": "CatchDivideHarness", "exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "enum-passthrough": "EnumPassthroughHarness", "static-field-getter": "StaticFieldGetterHarness", "reference-field": "ReferenceFieldHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "xmm-spill": "XmmSpillHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
                "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
     copied = copy_sources(VALIDATION / harness, destination)
     for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):

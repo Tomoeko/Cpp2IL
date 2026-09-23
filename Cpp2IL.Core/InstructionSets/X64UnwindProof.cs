@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using Cpp2IL.Core.Model.Contexts;
 using LibCpp2IL.PE;
@@ -40,6 +41,7 @@ internal static class X64UnwindProof
     // independent semantic validation before any managed exception region can be emitted.
     internal readonly record struct HandlerInfo(ulong Start, ulong End, byte Flags,
         ulong HandlerAddress, ulong HandlerDataAddress);
+    internal readonly record struct Xmm128Save(ulong End, int Register, uint StackOffset);
 
     internal sealed class Index
     {
@@ -153,6 +155,64 @@ internal static class X64UnwindProof
             var function = _functions[Find(checked((uint)(start - _imageBase)))];
             return function.Info!.Flags == 0 && function.Info.PrologSize == prologSize && function.Info.FrameRegister == frameRegister &&
                    function.Info.Codes.AsSpan().SequenceEqual(codes);
+        }
+
+        // Corroborate each candidate ABI save with the native prologue's exact
+        // register, instruction end, frame size and frame-relative 16-byte slot.
+        // Chained regions and frame-pointer-relative saves are outside this proof.
+        internal bool MatchesXmm128Saves(ulong entry, IReadOnlyList<Xmm128Save> saves,
+            uint frameSize)
+        {
+            if (frameSize == 0 || saves.Count is < 1 or > 10 || saves.Any(save =>
+                    save.Register is < 6 or > 15 || save.StackOffset < 0x20 ||
+                    save.StackOffset % 16 != 0 || save.End <= entry ||
+                    save.End - entry > byte.MaxValue) ||
+                ClassifySpan(entry, saves.Max(save => save.End)) is not
+                    { Kind: SpanKind.HandlerFree } span ||
+                span.Start != entry || span.RootStart != entry)
+                return false;
+
+            var function = _functions[Find(checked((uint)(entry - _imageBase)))];
+            if (function.Info is not { Flags: 0, FrameRegister: 0 } unwind ||
+                saves.Any(save => save.End - entry > unwind.PrologSize))
+                return false;
+
+            var matched = new HashSet<int>();
+            var codes = unwind.Codes;
+            ulong unwindFrameSize = 0;
+            for (var at = 0; at < codes.Length;)
+            {
+                var operation = codes[at + 1] & 15;
+                var info = codes[at + 1] >> 4;
+                unwindFrameSize += operation switch
+                {
+                    0 => 8UL,
+                    1 when info == 0 => (ulong)(codes[at + 2] | codes[at + 3] << 8) * 8,
+                    1 when info == 1 => (uint)(codes[at + 2] | codes[at + 3] << 8 |
+                        codes[at + 4] << 16 | codes[at + 5] << 24),
+                    2 => (ulong)(info + 1) * 8,
+                    _ => 0,
+                };
+                if (operation is 8 or 9)
+                {
+                    // The reader has already validated the code slots. A second XMM
+                    // save needs its own independent stack/exit proof.
+                    if (operation != 8 || !matched.Add(info) ||
+                        !saves.Any(save => save.Register == info &&
+                            codes[at] == save.End - entry &&
+                            (uint)(codes[at + 2] | codes[at + 3] << 8) * 16 == save.StackOffset))
+                        return false;
+                }
+                at += operation switch
+                {
+                    1 when info == 0 => 4,
+                    1 when info == 1 => 6,
+                    4 or 8 => 4,
+                    5 or 9 => 6,
+                    _ => 2,
+                };
+            }
+            return matched.Count == saves.Count && unwindFrameSize == frameSize;
         }
 
         // First record whose end lies beyond the requested PC. All records are sorted and
