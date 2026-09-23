@@ -35,8 +35,6 @@ internal static class X86MetadataGuardProof
     internal static LiteralGuard? Find(IReadOnlyList<Instruction> body, ISet<ulong> helperAddresses,
         Func<ulong, bool> isLiteralSlot)
     {
-        if (body.Any(instruction => instruction.FlowControl == FlowControl.IndirectBranch))
-            return null;
         for (var index = 0; index + 5 < body.Count; index++)
         {
             var compare = body[index];
@@ -61,20 +59,23 @@ internal static class X86MetadataGuardProof
                 !isLiteralSlot(argument.IPRelativeMemoryAddress))
                 continue;
 
-            // No conditional entrance, loop, call or jump may bypass this single straight-line
-            // guard. The only branch inside the region is the guard's forward JNE itself.
-            if (body.Take(index).Any(instruction => instruction.FlowControl != FlowControl.Next) ||
-                body.Any(instruction => instruction.Op0Kind is OpKind.NearBranch16 or OpKind.NearBranch32 or OpKind.NearBranch64 &&
-                    instruction.NearBranchTarget >= compare.IP && instruction.NearBranchTarget < materialize.IP))
-                continue;
-
             // RAX is overwritten with the evidenced literal, and only stack restoration may
             // follow before RET. Thus no removed helper's volatile registers or flags escape.
             // General liveness across calls, joins, partial writes and tail calls is not guessed.
-            if (body[^1].Mnemonic != Mnemonic.Ret || body[^1].OpCount != 0 ||
-                body.Skip(index + 6).Take(body.Count - index - 7).Any(instruction => !IsStackRestore(instruction)))
+            var returnIndex = index + 6;
+            while (returnIndex < body.Count && IsStackRestore(body[returnIndex]))
+                returnIndex++;
+            if (returnIndex >= body.Count || body[returnIndex].Mnemonic != Mnemonic.Ret || body[returnIndex].OpCount != 0)
                 continue;
-            if (index + 6 >= body.Count)
+
+            // The native byte range may include padding and an adjacent unmanaged function.
+            // Bound this proof only after establishing a closed entry path: a straight-line
+            // prefix, the exact guard/merge above, and stack restoration ending at RET. No
+            // accepted edge reaches appended bytes; arbitrary method lifting is not truncated.
+            var reachablePrefix = body.Take(returnIndex + 1);
+            if (body.Take(index).Any(instruction => instruction.FlowControl != FlowControl.Next) ||
+                reachablePrefix.Any(instruction => instruction.Op0Kind is OpKind.NearBranch16 or OpKind.NearBranch32 or OpKind.NearBranch64 &&
+                    instruction.NearBranchTarget >= compare.IP && instruction.NearBranchTarget < materialize.IP))
                 continue;
             return new LiteralGuard(compare.IP, call.NearBranchTarget, argument.IPRelativeMemoryAddress,
                 materialize.IP, body.Skip(index).Take(5).Select(instruction => instruction.IP).ToArray());

@@ -29,6 +29,16 @@ public class X86MetadataGuardProofTests
         });
     }
 
+    [Test]
+    public void ClosedEntryPathCanIgnoreUnreachablePaddingAndAdjacentCode()
+    {
+        var body = LiteralBody();
+        AppendUnreachableCode(body);
+        var proof = X86MetadataGuardProof.Find(body, new HashSet<ulong> { Helper }, address => address == Slot);
+        Assert.That(proof, Is.Not.Null);
+        Assert.That(proof!.RemovedAddresses, Has.Count.EqualTo(5));
+    }
+
     [TestCase("unknown-helper")]
     [TestCase("not-literal")]
     [TestCase("condition-not-zero")]
@@ -52,6 +62,9 @@ public class X86MetadataGuardProofTests
     [TestCase("interior-entry")]
     [TestCase("indirect-branch")]
     [TestCase("extra-store")]
+    [TestCase("branch-to-tail")]
+    [TestCase("alternate-return")]
+    [TestCase("epilogue-jump-to-tail")]
     public void NearMissesKeepInitializationExplicit(string defect)
     {
         var body = LiteralBody();
@@ -90,9 +103,31 @@ public class X86MetadataGuardProofTests
                 break;
             case "indirect-branch": Replace(8, "FFE1"); break;
             case "extra-store": body.Insert(5, body[5]); break;
+            case "branch-to-tail":
+                AppendUnreachableCode(body);
+                Change(2, i => { i.NearBranch64 = body[9].IP; return i; });
+                break;
+            case "alternate-return":
+                Replace(0, "7500");
+                Change(0, i => { i.NearBranch64 = body[8].IP; return i; });
+                break;
+            case "epilogue-jump-to-tail":
+                AppendUnreachableCode(body);
+                Replace(7, "E900000000");
+                Change(7, i => { i.NearBranch64 = body[9].IP; return i; });
+                break;
         }
         var helpers = defect == "unknown-helper" ? new HashSet<ulong>() : new HashSet<ulong> { Helper };
         Assert.That(X86MetadataGuardProof.Find(body, helpers, address => defect != "not-literal" && address == Slot), Is.Null);
+    }
+
+    private static void AppendUnreachableCode(List<Instruction> body)
+    {
+        byte[] bytes = [0xCC, 0xCC, 0xFF, 0xE1, 0x90, 0xC3]; // padding; indirect jump; adjacent return
+        var end = body[^1].NextIP + (ulong)bytes.Length;
+        var decoder = Decoder.Create(64, new ByteArrayCodeReader(bytes), body[^1].NextIP);
+        while (decoder.IP < end)
+            body.Add(decoder.Decode());
     }
 
     private static List<Instruction> LiteralBody()
