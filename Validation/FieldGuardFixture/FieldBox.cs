@@ -29,4 +29,32 @@ namespace FieldGuardFixture
             box.Value = value;
         }
     }
+
+    public sealed class LongBox
+    {
+        public long Value;
+
+        public LongBox(long value)
+        {
+            Value = value;
+        }
+    }
+
+    public static class LongFieldReads
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static long Read(LongBox box)
+        {
+            return box.Value;
+        }
+    }
+
+    public static class LongFieldWrites
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void Write(LongBox box, long value)
+        {
+            box.Value = value;
+        }
+    }
 }

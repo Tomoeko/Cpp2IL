@@ -17,6 +17,12 @@ namespace RecoveryValidation
             foreach (var value in new[] { int.MinValue, -17, 0, 17, int.MaxValue })
                 RecordWrite(observations, value.ToString(), new FieldBox(42), value);
             RecordWrite(observations, "null", null, 17);
+            foreach (var value in new[] { long.MinValue, -17L, 0L, 17L, long.MaxValue })
+                RecordLong(observations, value.ToString(), new LongBox(value));
+            RecordLong(observations, "null", null);
+            foreach (var value in new[] { long.MinValue, -17L, 0L, 17L, long.MaxValue })
+                RecordLongWrite(observations, value.ToString(), new LongBox(42), value);
+            RecordLongWrite(observations, "null", null, 17);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -50,6 +56,34 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "write:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordLong(List<object> observations, string kind, LongBox box)
+        {
+            object result = null;
+            var exception = "none";
+            try { result = LongFieldReads.Read(box); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "long:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordLongWrite(List<object> observations, string kind, LongBox box, long value)
+        {
+            object result = null;
+            var exception = "none";
+            try
+            {
+                LongFieldWrites.Write(box, value);
+                result = box == null ? null : (object)box.Value;
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "long-write:" + kind }, { "result", result }, { "exception", exception }
             });
         }
 

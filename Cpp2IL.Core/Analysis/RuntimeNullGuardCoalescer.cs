@@ -305,10 +305,13 @@ internal static class RuntimeNullGuardCoalescer
     {
         var field = access.Field;
         var owner = field.DeclaringType;
+        var types = owner.AppContext.SystemTypes;
+        var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) ? 32 :
+            ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 : 0;
         return field.Name == field.DefaultName &&
-               ReferenceEquals(field.FieldType, owner.AppContext.SystemTypes.SystemInt32Type) &&
+               width != 0 &&
                owner.Fields.Contains(field) && NullCheckedCall.IsReferenceClass(owner) &&
-               NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, 32);
+               NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, width);
     }
 
     private static bool HasOutputOptions(MethodAnalysisContext method)
