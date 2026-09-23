@@ -10,17 +10,19 @@ namespace Cpp2IL.Core.Tests.Isil;
 public class X86CallerExceptionRegionProofTests
 {
     [TestCase("8BC183C001C3")]
+    [TestCase("8BC1C20000")] // near RET with a zero-byte stack adjustment
     [TestCase("7501C3C3")] // both reachable returns
     [TestCase("EBFE")] // closed frame-free loop
     [TestCase("E900010000")] // direct caller-region escape; tail ABI remains independently checked
     public void FrameFreeLeafPathsNeedNoInventedUnwindEntry(string bytes)
         => Assert.That(Check(bytes, NoEntry), Is.Null);
 
-    [Test]
-    public void PlainReturnDoesNotAttributeAnAdjacentFunctionsHandlersToThisMethod()
+    [TestCase("C3")]
+    [TestCase("C20000")]
+    public void PlainReturnDoesNotAttributeAnAdjacentFunctionsHandlersToThisMethod(string ret)
     {
         var visited = new List<ulong>();
-        var result = Check("C3CC4883EC28E800000000", (start, end) =>
+        var result = Check(ret + "CC4883EC28E800000000", (start, end) =>
         {
             visited.Add(start);
             return start == 0 ? NoEntry(start, end) : new(SpanKind.Unsupported, 1, 12);
@@ -94,7 +96,7 @@ public class X86CallerExceptionRegionProofTests
     [TestCase("FFE0")] // indirect exit
     [TestCase("EBFF")] // middle of an instruction
     [TestCase("90")] // fallthrough without a terminator
-    [TestCase("C20000")] // a different return convention
+    [TestCase("C20100")] // a nonzero stack adjustment changes the return convention
     [TestCase("0F")] // invalid/truncated reachable decoding
     public void AmbiguousEdgesAndBoundariesRemainUnproved(string bytes)
         => Assert.That(Check(bytes, NoEntry), Is.Not.Null);

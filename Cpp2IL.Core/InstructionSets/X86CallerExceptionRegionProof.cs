@@ -77,7 +77,7 @@ internal static class X86CallerExceptionRegionProof
                     return Reject("a calling method has no native unwind entry");
                 // A plain return pops the caller's return address; this is the defined
                 // unwind behavior for a frame-free x64 leaf, not a method-owned frame.
-                if (instruction.Code != Code.Retnq)
+                if (!IsPlainReturn(instruction))
                     foreach (var used in registerInfo.GetInfo(instruction).GetUsedRegisters())
                         if (Writes(used.Access) && NeedsUnwindRestoration(used.Register))
                             return Reject("a method changes its frame or nonvolatile registers without unwind metadata");
@@ -94,7 +94,7 @@ internal static class X86CallerExceptionRegionProof
             switch (instruction.FlowControl)
             {
                 case FlowControl.Return:
-                    if (instruction.Code != Code.Retnq)
+                    if (!IsPlainReturn(instruction))
                         return Reject("the native return convention is not established");
                     break;
                 case FlowControl.UnconditionalBranch:
@@ -127,6 +127,13 @@ internal static class X86CallerExceptionRegionProof
 
     private static bool Writes(OpAccess access) =>
         access is OpAccess.Write or OpAccess.CondWrite or OpAccess.ReadWrite or OpAccess.ReadCondWrite;
+
+    // RET imm16 pops the return address and then adjusts RSP by imm16. An
+    // immediate of zero has the same frame effect as the one-byte near RET.
+    private static bool IsPlainReturn(Instruction instruction) =>
+        instruction.Code == Code.Retnq && instruction.OpCount == 0 ||
+        instruction.Code == Code.Retnq_imm16 && instruction.OpCount == 1 &&
+        instruction.Op0Kind == OpKind.Immediate16 && instruction.Immediate16 == 0;
 
     private static bool NeedsUnwindRestoration(Register register)
     {
