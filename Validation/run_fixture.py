@@ -12,12 +12,19 @@ import subprocess
 import sys
 import time
 
+import float_comparison
+
 
 VERSION = "2021.3.35f1"
 ROOT = Path(__file__).resolve().parent.parent
 VALIDATION = ROOT / "Validation"
 VALUES = [-(2**31), -(2**31) + 1, -17, -1, 0, 1, 17, 2**31 - 2, 2**31 - 1]
 PROFILES = {
+    "float-comparisons": {"assembly": "FloatComparisonFixture", "source": VALIDATION / "FloatComparisonFixture", "methods": 12},
+    "components": {"assembly": "ComponentFixture", "source": VALIDATION / "ComponentFixture", "methods": 3},
+    "metadata-literal": {"assembly": "MetadataLiteralFixture", "source": VALIDATION / "MetadataLiteralFixture", "methods": 1},
+    "narrow-comparisons": {"assembly": "NarrowComparisonFixture", "source": VALIDATION / "NarrowComparisonFixture", "methods": 14},
+    "division": {"assembly": "DivisionFixture", "source": VALIDATION / "DivisionFixture", "methods": 8},
     "shifts": {"assembly": "ShiftFixture", "source": VALIDATION / "ShiftFixture", "methods": 4},
     "arithmetic": {"assembly": "RecoveryFixture", "source": VALIDATION / "Fixture", "methods": 4},
     "integers": {"assembly": "IntegerFixture", "source": VALIDATION / "IntegerFixture", "methods": 8},
@@ -35,6 +42,16 @@ def int32(value):
 
 
 def verify_behavior(path, stage, profile="arithmetic"):
+    if profile == "float-comparisons":
+        return float_comparison.verify(path, stage, VERSION)
+    if profile == "components":
+        return verify_component_behavior(path, stage)
+    if profile == "metadata-literal":
+        return verify_metadata_literal_behavior(path, stage)
+    if profile == "narrow-comparisons":
+        return verify_narrow_behavior(path, stage)
+    if profile == "division":
+        return verify_division_behavior(path, stage)
     if profile in ("scalar-structs", "scalar-structs-negative"):
         return verify_scalar_struct_behavior(path, stage, profile)
     if profile == "shifts":
@@ -93,6 +110,50 @@ def verify_integer_behavior(path, stage):
     return {"status": "passed", "observations": len(expected), "predicateChecks": len(expected) * 4,
             "methods": 8, "platform": report["platform"], "profile": "integers",
             "scope": "finite UInt32/UInt64 comparison vectors; not a whole-program equivalence proof"}
+
+
+def division_observations():
+    for width in (32, 64):
+        minimum, maximum = -(2**(width - 1)), 2**(width - 1) - 1
+        for signed in (True, False):
+            values = ([minimum, minimum + 1, -17, -2, -1, 0, 1, 2, 17, maximum] if signed
+                      else [0, 1, 2, maximum, maximum + 1, 2**width - 2, 2**width - 1])
+            for left in values:
+                for right in values:
+                    if right == 0:
+                        quotient, remainder = 0, 0
+                    elif signed and left == minimum and right == -1:
+                        quotient, remainder = minimum, 0
+                    else:
+                        # CLR integer division truncates toward zero. Never use a float:
+                        # UInt64 boundary operands cannot all be represented exactly by one.
+                        quotient = abs(left) // abs(right)
+                        if (left < 0) != (right < 0):
+                            quotient = -quotient
+                        remainder = left - quotient * right
+                    yield {"width": width, "signed": signed, "left": left, "right": right,
+                           "quotient": quotient, "remainder": remainder}
+
+
+def verify_division_behavior(path, stage):
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report["unityVersion"] != VERSION or report["stage"] != stage or report.get("profile") != "division":
+        raise ValueError("Division report has the wrong version, stage or profile")
+    observations = report["observations"]
+    if not isinstance(observations, list) or any(not isinstance(item, dict) for item in observations):
+        raise ValueError("Division observations must be a list of objects")
+    for observation in observations:
+        if (any(type(observation.get(key)) is not int for key in ("width", "left", "right", "quotient", "remainder"))
+                or type(observation.get("signed")) is not bool):
+            raise ValueError("Division observations require exact JSON integers and a signedness boolean")
+    expected = list(division_observations())
+    if observations != expected:
+        raise ValueError("Behavior differs from the independent division oracle")
+    if stage == "player" and report["platform"] != "WindowsPlayer":
+        raise ValueError("The behavioral run was not a Windows player")
+    return {"status": "passed", "observations": len(expected), "resultChecks": len(expected) * 2,
+            "methods": 8, "platform": report["platform"], "profile": "division",
+            "scope": "finite guarded integer division vectors; general division exceptions are not covered"}
 
 
 def shift_observations():
@@ -160,6 +221,86 @@ def verify_scalar_struct_behavior(path, stage, profile):
             "scope": "finite struct value vectors; not a whole-program equivalence proof"}
 
 
+def narrow_observations():
+    for condition in (False, True):
+        for initial in (False, True):
+            yield {"case": "boolean", "condition": condition, "initial": initial,
+                   "conditionAfter": condition, "observed": initial or condition}
+    for value in (0, 1, 127, 128, 255):
+        yield {"case": "byte", "value": value, "zero": value == 0, "highBit": value >= 128}
+    for value in (-128, -1, 0, 1, 127):
+        yield {"case": "signed", "value": value, "negative": value < 0}
+    for value in (0, 1, 255, 256, 65535):
+        yield {"case": "word", "value": value, "zero": value == 0}
+    for repeat in range(2):
+        yield {"case": "metadata", "repeat": repeat, "literal": "neutral metadata literal", "typeMatches": True}
+    yield {"case": "initialization", "initialCompleted": 0, "initialThrowing": 0,
+           "first": 17, "second": 17, "completedCount": 1, "throwingCount": 1,
+           "failures": ["TypeInitializationException/InvalidOperationException"] * 2}
+
+
+def verify_narrow_behavior(path, stage):
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report["unityVersion"] != VERSION or report["stage"] != stage or report.get("profile") != "narrow-comparisons":
+        raise ValueError("Narrow-comparison report has the wrong version, stage or profile")
+    expected = list(narrow_observations())
+    # Canonical JSON keeps Boolean/number types distinct and preserves exact integer spelling.
+    if json.dumps(report["observations"], sort_keys=True) != json.dumps(expected, sort_keys=True):
+        raise ValueError("Behavior differs from the independent narrow-comparison and initialization oracle")
+    if stage == "player" and report["platform"] != "WindowsPlayer":
+        raise ValueError("The behavioral run was not a Windows player")
+    return {"status": "passed", "observations": len(expected), "methods": 14,
+            "platform": report["platform"], "profile": "narrow-comparisons",
+            "scope": "finite field, metadata and initialization controls; not a whole-program equivalence proof"}
+
+
+def verify_metadata_literal_behavior(path, stage):
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report["unityVersion"] != VERSION or report["stage"] != stage or report.get("profile") != "metadata-literal":
+        raise ValueError("Metadata-literal report has the wrong version, stage or profile")
+    expected = [{"repeat": repeat, "literal": "neutral metadata literal", "sameInstance": True} for repeat in range(2)]
+    if json.dumps(report["observations"], sort_keys=True) != json.dumps(expected, sort_keys=True):
+        raise ValueError("Metadata literal observations differ from the independent oracle")
+    if stage == "player" and report["platform"] != "WindowsPlayer":
+        raise ValueError("The behavioral run was not a Windows player")
+    return {"status": "passed", "observations": 2, "methods": 1,
+            "platform": report["platform"], "profile": "metadata-literal",
+            "scope": "one repeated literal-return method; not a whole-program equivalence proof"}
+
+
+def component_observations():
+    fields = [("MarkerBehaviour", "Count", "System.Int32", 0, 17),
+              ("MarkerBehaviour", "caption", "System.String", None, "neutral caption"),
+              ("MarkerBehaviour", "Configuration", "ComponentFixture.DataAsset", None,
+               {"class": "ComponentFixture.DataAsset", "assembly": "ComponentFixture", "sameAsset": True}),
+              ("MarkerBehaviour", "Payload.Value", "System.Int32", 0, -41),
+              ("DataAsset", "Value", "System.Int32", 0, 73),
+              ("DataAsset", "label", "System.String", None, "neutral label")]
+    for repeat in range(2):
+        for phase in ("fresh", "assigned"):
+            for owner, path, managed_type, fresh, assigned in fields:
+                yield {"repeat": repeat, "phase": phase, "class": "ComponentFixture." + owner,
+                       "assembly": "ComponentFixture", "path": path, "managedType": managed_type,
+                       "value": fresh if phase == "fresh" else assigned}
+
+
+def verify_component_behavior(path, stage):
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report.get("unityVersion") != VERSION or report.get("stage") != stage or report.get("profile") != "components":
+        raise ValueError("Component report has the wrong version, stage or profile")
+    expected = list(component_observations())
+    if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
+        raise ValueError("Component field observations differ from the independent initialization and assignment oracle")
+    helpers = [{"input": value, "output": value} for value in (-(2**31), -1, 0, 1, 2**31 - 1)]
+    if json.dumps(report.get("helpers"), sort_keys=True) != json.dumps(helpers, sort_keys=True):
+        raise ValueError("Component helper observations differ from the independent identity oracle")
+    if stage == "player" and report.get("platform") != "WindowsPlayer":
+        raise ValueError("The behavioral run was not a Windows player")
+    return {"status": "passed", "observations": len(expected), "helperObservations": len(helpers), "methods": 3,
+            "platform": report["platform"], "profile": "components",
+            "scope": "fresh runtime instances and reflected fields; no serialized asset, GUID or scene restoration"}
+
+
 def copy_sources(source, destination):
     if not source.is_dir():
         raise ValueError("Source directory does not exist")
@@ -182,7 +323,7 @@ def copy_sources(source, destination):
 def copy_harness(profile, destination):
     if profile == "arithmetic":
         return copy_sources(VALIDATION / "Harness", destination)
-    harness = {"shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
+    harness = {"float-comparisons": "FloatComparisonHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
                "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
     copied = copy_sources(VALIDATION / harness, destination)
     for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):

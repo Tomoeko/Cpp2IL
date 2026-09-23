@@ -10,15 +10,12 @@ import shutil
 import subprocess
 import sys
 
-from run_fixture import ROOT, VERSION, run_process, write_json
+from run_fixture import ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process, write_json
 
 
-PROFILES = {
-    "arithmetic": ("RecoveryFixture", 4),
-    "integers": ("IntegerFixture", 8),
-    "scalar-structs": ("ScalarStructFixture", 4),
-    "shifts": ("ShiftFixture", 4),
-}
+PROFILES = {name: FIXTURE_PROFILES[name] for name in (
+    "float-comparisons", "components", "metadata-literal", "division", "arithmetic", "integers", "scalar-structs", "shifts",
+)}
 PLAYER_FILES = ("GameAssembly.dll", "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat")
 
 
@@ -62,13 +59,16 @@ def main():
     parser.add_argument("--cpp2il", type=Path, required=True, help="Built Cpp2IL.dll, executed with dotnet")
     parser.add_argument("--dotnet", default="dotnet")
     parser.add_argument("--reference-dir", action="append", type=Path, required=True)
+    parser.add_argument("--il-reference-dir", action="append", type=Path,
+                        help="Explicit ILVerify reference set; defaults to --reference-dir. Source/declaration resolution keeps the full source set.")
     parser.add_argument("--baseline-run", type=Path, help="Reuse a verified original synthetic baseline; otherwise build it")
     parser.add_argument("--install-ilverify", action="store_true")
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=600, help="Per child-stage deadline in seconds")
     parser.add_argument("--profile", choices=sorted(PROFILES), default="arithmetic")
     args = parser.parse_args()
-    assembly, expected_methods = PROFILES[args.profile]
+    profile = PROFILES[args.profile]
+    assembly, expected_methods = profile["assembly"], profile["methods"]
     directory = args.run_dir.expanduser().resolve()
     private = (ROOT / "Files").resolve()
     if directory == private or private not in directory.parents or directory.exists():
@@ -131,7 +131,10 @@ def main():
             shutil.copyfile(source, target)
             receipt["inputFiles"].append({"path": relative, "sha256": digest(target)})
         references = [str(path.expanduser().resolve()) for path in args.reference_dir]
-        if any((Path(path) / (assembly + ".dll")).exists() for path in references):
+        il_references = [str(path.expanduser().resolve()) for path in (args.il_reference_dir or args.reference_dir)]
+        receipt["referenceConfiguration"] = {"sourceAndDeclarations": references, "managedIl": il_references,
+                                             "managedIlExplicit": args.il_reference_dir is not None}
+        if any((Path(path) / (assembly + ".dll")).exists() for path in references + il_references):
             raise ValueError("Reference directories must not contain the original application assembly")
         recovered = directory / "recovered"
         run("recovery", [args.dotnet, str(tool), "--force-binary-path", str(player / PLAYER_FILES[0]),
@@ -151,7 +154,7 @@ def main():
 
         verify = [sys.executable, str(ROOT / "Validation/verify_managed_il.py"), "--assembly",
                   str(project / "RecoveredManaged" / (assembly + ".dll")), "--output-dir", str(directory / "il-verification")]
-        for reference in references:
+        for reference in il_references:
             verify += ["--reference-dir", reference]
         if args.install_ilverify:
             verify += ["--install-tool"]

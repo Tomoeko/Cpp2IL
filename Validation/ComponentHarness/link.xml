@@ -1,0 +1,4 @@
+<linker>
+  <!-- Driver configuration: preserve reflection targets and all three selected bodies. -->
+  <assembly fullname="ComponentFixture" preserve="all" />
+</linker>
