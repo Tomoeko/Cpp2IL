@@ -39,6 +39,7 @@ public class UnitySourceEmitterTests
         Assert.That(report.SourceGeneration, Is.EqualTo("generated"));
         Assert.That(report.UnityCompilation, Is.EqualTo("unverified"));
         Assert.That(report.BehavioralValidation, Is.EqualTo("unverified"));
+        Assert.That(report.Assemblies[0].SourceFiles, Is.EqualTo(new[] { report.Assemblies[0].SourceFile }));
         Assert.That(Directory.GetFiles(Path.Combine(_directory, "Assets"), "*.dll", SearchOption.AllDirectories), Is.Empty);
         Assert.That(File.Exists(Path.Combine(_directory, "Assets/Recovered/Synthetic.Application/Synthetic.Application.asmdef")), Is.True);
     }
@@ -82,6 +83,219 @@ public class UnitySourceEmitterTests
         var name = typeof(object).Assembly.GetName();
         var reference = AssemblyNameReference.Parse($"{name.Name}, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null");
         Assert.Throws<InvalidOperationException>(() => resolver.Resolve(reference));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ExplicitReferenceVersionsResolveByIdentityRegardlessOfSearchOrder(bool reverse)
+    {
+        var first = WriteReference(new Version(1, 0, 0, 0), "first");
+        var second = WriteReference(new Version(2, 0, 0, 0), "second");
+        using var resolver = new ExplicitAssemblyResolver([], reverse ? [second, first] : [first, second]);
+        foreach (var version in new[] { new Version(1, 0, 0, 0), new Version(2, 0, 0, 0) })
+        {
+            var resolved = resolver.Resolve(AssemblyNameReference.Parse($"Synthetic.Reference, Version={version}, Culture=neutral, PublicKeyToken=null"));
+            Assert.That(resolved, Is.Not.Null);
+            Assert.That(resolved!.Metadata.GetAssemblyDefinition().Version, Is.EqualTo(version));
+        }
+    }
+
+    [Test]
+    public void DuplicateExactReferenceIdentitiesRemainAmbiguous()
+    {
+        var first = WriteReference(new Version(1, 0, 0, 0), "first");
+        var second = WriteReference(new Version(1, 0, 0, 0), "second");
+        using var resolver = new ExplicitAssemblyResolver([], [first, second]);
+        Assert.Throws<InvalidOperationException>(() => resolver.Resolve(
+            AssemblyNameReference.Parse("Synthetic.Reference, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null")));
+    }
+
+    [Test]
+    public void ComponentFilesPreserveHelpersAttributesAndManagedIdentity()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        var module = assembly.ManifestModule!;
+        var marker = AddComponent(module, "Synthetic", "Marker", "MonoBehaviour");
+        marker.NestedTypes.Add(new TypeDefinition("", "NestedHelper", TypeAttributes.NestedPublic, module.CorLibTypeFactory.Object.Type));
+        AddComponent(module, "Synthetic", "Data", "ScriptableObject");
+        var attribute = new AsmResolver.DotNet.TypeReference(module, module.CorLibTypeFactory.CorLibScope, "System", "CLSCompliantAttribute")
+            .CreateMemberReference(".ctor", MethodSignature.CreateInstance(module.CorLibTypeFactory.Void, [module.CorLibTypeFactory.Boolean]));
+        assembly.CustomAttributes.Add(new CustomAttribute(attribute)
+        {
+            Signature = new CustomAttributeSignature(new CustomAttributeArgument(module.CorLibTypeFactory.Boolean, true))
+        });
+        var report = EmitComponents(assembly);
+        var entry = report.Assemblies.Single();
+        Assert.That(entry.SourceFiles.Count, Is.EqualTo(3));
+        Assert.That(entry.ComponentScripts.Select(c => c.TypeName), Is.EquivalentTo(new[] { "Synthetic.Marker", "Synthetic.Data" }));
+        var central = ReadSource(entry.SourceFile);
+        Assert.That(central, Does.Contain("class Constants"));
+        Assert.That(central, Does.Not.Contain("class Marker"));
+        Assert.That(central, Does.Contain("CLSCompliant(true)"));
+        var component = ReadSource(entry.ComponentScripts.Single(c => c.TypeName == "Synthetic.Marker").SourceFile);
+        Assert.That(component, Does.Contain("class Marker"));
+        Assert.That(component, Does.Contain("class NestedHelper"));
+        Assert.That(component, Does.Not.Contain("CLSCompliant(true)"));
+        Assert.That(component, Does.Not.Contain("class Constants"));
+        Assert.That(entry.ComponentScripts.All(c => Path.GetFileName(c.SourceFile) == c.TypeName.Split('.').Last() + ".cs"), Is.True);
+        Assert.That(report.ScriptAssetBindings, Is.EqualTo("unverified"));
+        Assert.That(report.SourceGeneration, Is.EqualTo("generated"));
+    }
+
+    [Test]
+    public void IndirectComponentInheritanceUsesResolvedUnityIdentity()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        var module = assembly.ManifestModule!;
+        var parent = AddComponent(module, "Synthetic", "Parent", "MonoBehaviour");
+        module.TopLevelTypes.Add(new TypeDefinition("Synthetic", "Derived", TypeAttributes.Public, parent));
+        var report = EmitComponents(assembly);
+        Assert.That(report.Assemblies.Single().ComponentScripts.Select(c => c.TypeName),
+            Is.EquivalentTo(new[] { "Synthetic.Parent", "Synthetic.Derived" }));
+    }
+
+    [Test]
+    public void ComponentPathsThatDifferOnlyByCaseAreReportedWithoutOverwriting()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        AddComponent(assembly.ManifestModule!, "First", "Marker", "MonoBehaviour");
+        AddComponent(assembly.ManifestModule!, "first", "Marker", "MonoBehaviour");
+        var report = EmitComponents(assembly);
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics.Count(d => d.Contains("SOURCE006")), Is.EqualTo(2));
+        Assert.That(report.Assemblies.Single().SourceFiles.Count, Is.EqualTo(1));
+        Assert.That(ReadSource(report.Assemblies.Single().SourceFile), Does.Contain("namespace First").And.Contain("namespace first"));
+    }
+
+    [TestCase("CON")]
+    [TestCase("Aux")]
+    public void ReservedWindowsComponentNamesRemainExplicitlyUnbound(string name)
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        AddComponent(assembly.ManifestModule!, "Synthetic", name, "MonoBehaviour");
+        var report = EmitComponents(assembly);
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.Contains("SOURCE006"));
+        Assert.That(report.Assemblies.Single().ComponentScripts, Is.Empty);
+    }
+
+    [Test]
+    public void NamespaceFoldersCannotActivateUnityEditorOrResourceRules()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        AddComponent(assembly.ManifestModule!, "Editor.Resources.Plugins.cvs", "Marker", "MonoBehaviour");
+        var report = EmitComponents(assembly);
+        var component = report.Assemblies.Single().ComponentScripts.Single();
+        Assert.That(component.SourceFile, Does.Contain("Components/ns-Editor/ns-Resources/ns-Plugins/ns-cvs/Marker.cs"));
+        Assert.That(ReadSource(component.SourceFile), Does.Contain("namespace Editor.Resources.Plugins.cvs"));
+    }
+
+    [Test]
+    public void UnityIgnoredNamespaceSuffixRemainsExplicitlyUnbound()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        AddComponent(assembly.ManifestModule!, "Synthetic.Hidden~", "Marker", "MonoBehaviour");
+        var report = EmitComponents(assembly);
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.Contains("Unity ignores a namespace directory ending in '~'"));
+        Assert.That(report.Assemblies.Single().ComponentScripts, Is.Empty);
+        Assert.That(report.Assemblies.Single().SourceFiles.Count, Is.EqualTo(1));
+    }
+
+    [TestCase("Synthetic.Bad-Name", "Marker")]
+    [TestCase("Synthetic.1Name", "Marker")]
+    [TestCase("Synthetic.Bad\u200cName", "Marker")]
+    [TestCase("Synthetic", "Bad-Name")]
+    [TestCase("Synthetic", "Bad Name")]
+    public void UnrepresentableDeclarationCannotClaimComponentIdentity(string ns, string name)
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        AddComponent(assembly.ManifestModule!, ns, name, "MonoBehaviour");
+        var report = EmitComponents(assembly);
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.Contains("identifier cannot preserve its metadata name in C#"));
+        Assert.That(report.Assemblies.Single().ComponentScripts, Is.Empty);
+    }
+
+    [Test]
+    public void KeywordAndUnicodeLetterIdentifiersKeepTheirManagedNames()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        AddComponent(assembly.ManifestModule!, "namespace.\u03b1", "class", "MonoBehaviour");
+        var report = EmitComponents(assembly);
+        Assert.That(report.SourceGeneration, Is.EqualTo("generated"));
+        var component = report.Assemblies.Single().ComponentScripts.Single();
+        Assert.That(component.TypeName, Is.EqualTo("namespace.\u03b1.class"));
+        Assert.That(component.SourceFile, Does.EndWith("/class.cs"));
+        Assert.That(ReadSource(component.SourceFile), Does.Contain("namespace @namespace.\u03b1").And.Contain("class @class"));
+    }
+
+    [TestCase("Editor")]
+    [TestCase("Resources")]
+    [TestCase("Plugins")]
+    [TestCase("cvs")]
+    [TestCase(".Hidden")]
+    [TestCase("Trailing~")]
+    public void AssemblyIdentityDoesNotSelectUnitySpecialOrHiddenFolders(string name)
+    {
+        var report = UnitySourceProjectEmitter.Emit([CreateAssembly(name)], [name],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], _directory);
+        var entry = report.Assemblies.Single();
+        Assert.That(entry.Name, Is.EqualTo(name));
+        Assert.That(entry.SourceFile, Is.EqualTo("Assets/Recovered/assembly-" + name + "-source/Recovered.cs"));
+        var definition = Directory.GetFiles(_directory, "*.asmdef", SearchOption.AllDirectories).Single();
+        Assert.That(Path.GetFileName(definition).StartsWith(".", StringComparison.Ordinal), Is.False);
+        Assert.That(File.ReadAllText(definition), Does.Contain("\"name\":\"" + name + "\""));
+    }
+
+    [Test]
+    public void EscapedAssemblyDirectoryCollisionsAreRejectedBeforeWriting()
+    {
+        Assert.Throws<ArgumentException>(() => UnitySourceProjectEmitter.Emit(
+            [CreateAssembly("Editor"), CreateAssembly("assembly-Editor-source")], ["Editor", "assembly-Editor-source"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], _directory));
+        Assert.That(Directory.GetFileSystemEntries(_directory), Is.Empty);
+    }
+
+    private string ReadSource(string relative) => File.ReadAllText(Path.Combine(_directory, "project", relative));
+
+    private UnitySourceEmissionReport EmitComponents(AssemblyDefinition assembly)
+    {
+        var references = Path.Combine(_directory, "references");
+        Directory.CreateDirectory(references);
+        var engine = CreateAssembly("UnityEngine.CoreModule");
+        foreach (var name in new[] { "MonoBehaviour", "ScriptableObject" })
+            engine.ManifestModule!.TopLevelTypes.Add(new TypeDefinition("UnityEngine", name, TypeAttributes.Public,
+                engine.ManifestModule.CorLibTypeFactory.Object.Type));
+        using (var stream = File.Create(Path.Combine(references, "UnityEngine.CoreModule.dll")))
+            engine.WriteManifest(stream);
+        return UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [references, Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "project"));
+    }
+
+    private static TypeDefinition AddComponent(ModuleDefinition module, string ns, string name, string baseName)
+    {
+        var engine = module.AssemblyReferences.FirstOrDefault(r => r.Name == "UnityEngine.CoreModule");
+        if (engine == null)
+        {
+            engine = new AsmResolver.DotNet.AssemblyReference("UnityEngine.CoreModule", new Version(1, 0, 0, 0));
+            module.AssemblyReferences.Add(engine);
+        }
+        var type = new TypeDefinition(ns, name, TypeAttributes.Public,
+            new AsmResolver.DotNet.TypeReference(module, engine, "UnityEngine", baseName));
+        module.TopLevelTypes.Add(type);
+        return type;
+    }
+
+    private string WriteReference(Version version, string directoryName)
+    {
+        var directory = Path.Combine(_directory, directoryName);
+        Directory.CreateDirectory(directory);
+        var reference = CreateAssembly("Synthetic.Reference");
+        reference.Version = version;
+        using var stream = File.Create(Path.Combine(directory, "Synthetic.Reference.dll"));
+        reference.WriteManifest(stream);
+        return directory;
     }
 
     [Test]

@@ -18,19 +18,30 @@ link above will take you to the documentation for LibCpp2IL.
 ## Decompiler
 
 This fork is developing source recovery for Unity **2021.3.35f1 Windows x64 Release IL2CPP**.
-The initial `cs_unity` output emits C# from recovered IL with explicit target references;
-it does not yet establish complete Unity compilation or behavioral fidelity for arbitrary players.
+The target is **1:1 managed-structure and behavioral fidelity**. `cs_unity` emits C# from recovered IL
+with explicit target references. Exact-editor compilation, native rebuilding and behavioral checks
+pass for the finite synthetic scopes recorded in the roadmap; arbitrary player recovery remains incomplete.
 See [source output usage](docs/unity-source-output.md), the [exact-version validation harness](Validation/README.md),
 and the [roadmap](ROADMAP.md). Recovery reports distinguish emitted, partial, failed, skipped, and excluded methods.
 `--strict-recovery` rejects detected gaps; it is separate from Unity compilation and behavioral verification.
-The decompiled CIL is pretty messy right now, the next thing is probably pattern matching to convert il2cpp specific stuff into C#
-(generic ISIL should be converted into more C# specific ISIL, new object, throw, etc. instructions should be added to ISIL),
-but most of the times it's at least possible to see what the method does.
-Use ILSpy because it works with broken CIL better than dnSpy.
+`MethodAnalysisContext.Analyze()` lifts native instructions through `Cpp2IlInstructionSet`, builds control-flow
+and SSA models, and runs the metadata, type, effect and recovery passes. `IlGenerator.GenerateIl()` emits CIL.
+The source exporter then decompiles that CIL using pinned ICSharpCode.Decompiler settings. Unresolved operations
+remain explicit failures rather than evidence of recovered behavior.
 
-The entry point to decompilation is `MethodAnalysisContext.Analyze()`, it translates platform specific assembly into ISIL with `Cpp2IlInstructionSet`,
-builds the control flow graph and dominator info, and the rest of the decompilation is done with `IAction` classes (`MethodAnalysisContext.analysisActions`),
-these include stack analysis, simplification, applying metadata, etc. and then `Ilgenerator.GenerateIl()` translates the ISIL into CIL that's saved into managed dlls.
+### Building this fork locally
+
+Use the .NET SDK selected by `global.json` (10.0.107 with patch roll-forward). From the repository root:
+
+```sh
+dotnet restore
+dotnet build Cpp2IL/Cpp2IL.csproj -c Release -f net10.0 --no-restore
+dotnet test --project Cpp2IL.Core.Tests -c Release --no-restore
+```
+
+The CLI is produced at `Cpp2IL/bin/Release/net10.0/Cpp2IL.dll`. `dotnet build -c Release` also builds
+the solution's other target frameworks. Licensed Unity validation runs separately through the
+[validation harness](Validation/README.md); a successful tool build does not validate recovered source.
 
 ### Development Branch Notes
 
@@ -93,6 +104,10 @@ same argument as above but pass in the path to the APK, and cpp2il will extract 
 
 ## Release Structure
 
+The download links below refer to upstream artifacts and do not establish that this fork's changes are
+included. Build this fork locally to validate its current code. Public CI runs synthetic tool tests;
+the licensed exact-Unity checks remain separate local runs.
+
 Every single commit is built to a CI build using Github Actions - the action file can be found in the .github folder,
 if you want to reproduce the builds yourself. Be aware these may not be the most stable - while there are tests to
 ensure compatibility with a range of games, sometimes things do break! These are versioned by the commit they were built
@@ -141,6 +156,8 @@ It uses the following libraries, for which I am very thankful:
 - [Pastel](https://github.com/silkfire/Pastel) for the console colours.
 - [CommandLineParser](https://github.com/commandlineparser/commandline) so I didn't need to write one myself.
 - [AsmResolver](https://github.com/Washi1337/AsmResolver) for any output formats which produce managed .NET assemblies.
+- [ICSharpCode.Decompiler](https://github.com/icsharpcode/ILSpy) for Unity-compatible C# emission from recovered CIL.
+- [NUnit](https://github.com/nunit/nunit) for the core recovery regressions.
 - [xUnit](https://github.com/xunit/xunit) for the unit tests.
 - [AssetRipper.CIL](https://github.com/AssetRipper/AssetRipper.CIL) for filling stub method bodies with IL that decompiles cleanly. 
 - [AssetRipper.Primitives](https://github.com/AssetRipper/AssetRipper.Primitives) for unity version handling.

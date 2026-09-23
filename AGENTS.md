@@ -60,7 +60,7 @@ Read `ROADMAP.md` before choosing work. Keep its status and evidence current. Ot
 
 ## Validation discipline
 
-The project files and CI use .NET 10. `global.json` pins the validated SDK baseline to 10.0.107 with patch roll-forward and selects Microsoft Testing Platform. Record the actual SDK/package baseline when changing dependencies. The README's older .NET version references are not the authority.
+The project files and CI use .NET 10. `global.json` pins the validated SDK baseline to 10.0.107 with patch roll-forward and selects Microsoft Testing Platform. Record the actual SDK/package baseline when changing dependencies. The project files and SDK pin are the authority for this fork's build requirements.
 
 Existing repository-wide commands, to run from the repository root when appropriate:
 

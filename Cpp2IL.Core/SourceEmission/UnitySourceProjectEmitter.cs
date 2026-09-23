@@ -56,6 +56,9 @@ public static class UnitySourceProjectEmitter
             if (!byName.ContainsKey(name))
                 throw new ArgumentException($"Selected application assembly {name} was not found in the recovered metadata.");
         }
+        if (selected.Select(AssemblyDirectoryName).Select(n => n.Normalize(NormalizationForm.FormC))
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != selected.Length)
+            throw new ArgumentException("Selected assembly output directories collide after escaping Unity folder names.");
 
         // A fresh directory prevents old source or editor assemblies from masking failed output.
         if (Directory.Exists(outputDirectory) && Directory.EnumerateFileSystemEntries(outputDirectory).Any())
@@ -99,16 +102,22 @@ public static class UnitySourceProjectEmitter
 
                 using var file = new PEFile(Path.Combine(managedDirectory, name + ".dll"));
                 resolver.ValidateReferenceClosure(file);
-                var decompiler = new CSharpDecompiler(file, resolver, CreateSettings());
+                var settings = CreateSettings();
+                var decompiler = new CSharpDecompiler(file, resolver, settings);
                 decompiler.ILTransforms.Add(new CollectWarnings(report.Diagnostics, name));
-                var source = decompiler.DecompileWholeModuleAsString();
+                var sources = UnityComponentSourceLayout.Split(decompiler.DecompileWholeModuleAsSingleFile(), settings, name, report.Diagnostics);
                 var relativeDirectory = name == "Assembly-CSharp-firstpass"
                     ? "Assets/Plugins/Recovered/" + name
-                    : "Assets/Recovered/" + name;
+                    : "Assets/Recovered/" + AssemblyDirectoryName(name);
                 var sourceDirectory = Path.Combine(outputDirectory, relativeDirectory);
                 Directory.CreateDirectory(sourceDirectory);
-                File.WriteAllText(Path.Combine(sourceDirectory, "Recovered.cs"),
-                    "// Generated from recovered IL. Compilation and behavioral equivalence require independent validation.\n" + source, new UTF8Encoding(false));
+                foreach (var source in sources)
+                {
+                    var sourcePath = Path.Combine(sourceDirectory, source.Path);
+                    Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+                    File.WriteAllText(sourcePath,
+                        "// Generated from recovered IL. Compilation and behavioral equivalence require independent validation.\n" + source.Text, new UTF8Encoding(false));
+                }
                 File.WriteAllText(Path.Combine(sourceDirectory, "csc.rsp"), "-langversion:9.0\n-unsafe\n-checked-\n", new UTF8Encoding(false));
 
                 if (!IsPredefinedAssembly(name))
@@ -117,13 +126,19 @@ public static class UnitySourceProjectEmitter
                         ",\n  \"allowUnsafeCode\":true,\n  \"overrideReferences\":true,\n  \"precompiledReferences\":" +
                         JsonText.Array(externalReferences.Where(r => !IsTargetProvidedAssembly(r)).Select(r => r + ".dll")) +
                         ",\n  \"autoReferenced\":true\n}\n";
-                    File.WriteAllText(Path.Combine(sourceDirectory, name + ".asmdef"), json, new UTF8Encoding(false));
+                    var definitionFile = name.StartsWith(".", StringComparison.Ordinal) ? "AssemblyDefinition.asmdef" : name + ".asmdef";
+                    File.WriteAllText(Path.Combine(sourceDirectory, definitionFile), json, new UTF8Encoding(false));
                 }
 
                 report.Assemblies.Add(new UnitySourceAssemblyReport
                 {
                     Name = name,
                     SourceFile = relativeDirectory + "/Recovered.cs",
+                    SourceFiles = sources.Select(s => relativeDirectory + "/" + s.Path).ToList(),
+                    ComponentScripts = sources.Where(s => s.ComponentType != null).Select(s => new UnityComponentScriptReport
+                    {
+                        TypeName = s.ComponentType!, SourceFile = relativeDirectory + "/" + s.Path,
+                    }).ToList(),
                     SourceReferences = sourceReferences,
                     ExternalReferences = externalReferences,
                 });
@@ -156,6 +171,17 @@ public static class UnitySourceProjectEmitter
         name.StartsWith("UnityEditor.", StringComparison.Ordinal) || name.StartsWith("Unity.", StringComparison.Ordinal);
 
     private static bool IsPredefinedAssembly(string name) => name is "Assembly-CSharp" or "Assembly-CSharp-firstpass";
+
+    private static string AssemblyDirectoryName(string name)
+    {
+        // Names are metadata identities, not instructions to select Unity import/compile rules.
+        // Keep established ordinary paths and the intentional firstpass location unchanged.
+        var reserved = name.ToUpperInvariant() is "ASSETS" or "EDITOR" or "EDITOR DEFAULT RESOURCES" or "GIZMOS" or
+            "PLUGINS" or "RESOURCES" or "STANDARD ASSETS" or "PRO STANDARD ASSETS" or "STREAMINGASSETS" or "CVS";
+        return reserved || name.StartsWith(".", StringComparison.Ordinal) || name.EndsWith("~", StringComparison.Ordinal) ||
+            name.EndsWith(".androidlib", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".androidpack", StringComparison.OrdinalIgnoreCase)
+            ? "assembly-" + name + "-source" : name;
+    }
 
     private sealed class CollectWarnings(List<string> diagnostics, string assemblyName) : IILTransform
     {

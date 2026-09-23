@@ -1,0 +1,5 @@
+{
+  "name": "ComponentProbe.Editor",
+  "references": ["ComponentFixture"],
+  "includePlatforms": ["Editor"]
+}

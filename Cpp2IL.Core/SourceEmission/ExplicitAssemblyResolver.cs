@@ -38,12 +38,18 @@ public sealed class ExplicitAssemblyResolver : IAssemblyResolver, IDisposable
             if (_recovered.TryGetValue(reference.Name, out var recovered))
                 return LoadMatching(recovered, reference);
 
-            // Reject ambiguous references instead of allowing search order to choose a target API.
+            // A supplied Unity engine reference can target an older framework identity than
+            // the application. Resolve each identity exactly, without inventing a redirect.
             var candidates = _directories.Select(d => Path.Combine(d, reference.Name + ".dll")).Where(File.Exists).ToArray();
-            if (candidates.Length > 1)
+            if (candidates.Length == 0)
+                return null;
+            var matches = candidates.Where(p => Matches(AssemblyName.GetAssemblyName(p), reference)).ToArray();
+            if (matches.Length == 0)
+                throw new InvalidOperationException($"Explicit reference identity does not match {reference.FullName}.");
+            if (matches.Length > 1)
                 throw new InvalidOperationException($"Multiple explicit references were supplied for {reference.Name}.");
 
-            return candidates.Length == 0 ? null : LoadMatching(candidates[0], reference);
+            return LoadMatching(matches[0], reference);
         }
     }
 
@@ -82,15 +88,18 @@ public sealed class ExplicitAssemblyResolver : IAssemblyResolver, IDisposable
     private PEFile LoadMatching(string path, IAssemblyReference reference)
     {
         var identity = AssemblyName.GetAssemblyName(path);
-        if (identity.Name != reference.Name || identity.Version != reference.Version ||
-            (identity.CultureName ?? "") != (reference.Culture ?? "") ||
-            !(identity.GetPublicKeyToken() ?? []).SequenceEqual(reference.PublicKeyToken ?? []))
+        if (!Matches(identity, reference))
             throw new InvalidOperationException($"Explicit reference identity does not match {reference.FullName}.");
 
         if (!_files.TryGetValue(path, out var file))
             _files.Add(path, file = new PEFile(path));
         return file;
     }
+
+    private static bool Matches(AssemblyName identity, IAssemblyReference reference) =>
+        identity.Name == reference.Name && identity.Version == reference.Version &&
+        (identity.CultureName ?? "") == (reference.Culture ?? "") &&
+        (identity.GetPublicKeyToken() ?? []).SequenceEqual(reference.PublicKeyToken ?? []);
 
     internal static void ValidateSimpleName(string name)
     {

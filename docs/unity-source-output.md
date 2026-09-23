@@ -18,6 +18,8 @@ dotnet run --project Cpp2IL -c Release -f net10.0 --no-restore -- \
 
 Use the CLI's `--help` for platform-specific input discovery options. `--unity-reference-dir` accepts multiple directory arguments. The resolver searches only explicitly configured directories and recovered selected application assemblies. Missing, ambiguous, and mismatched assembly identities fail; the host .NET runtime, GAC, working directory, and NuGet cache are never automatic reference sources. Do not provide original managed application assemblies to a player-only recovery run. Deliberate auxiliary references must be recorded separately in validation evidence.
 
+Multiple explicitly supplied framework versions can coexist when the target engine and application require different identities. Each reference must match exactly one candidate's name, version, culture and public-key token. Duplicate exact matches fail; directory order never chooses an API version or creates a redirect.
+
 The exporter writes these independent artifacts:
 
 - `source-recovery-report.json`: method dispositions for the recovery pass, including unsupported behavior and fallback reasons.
@@ -30,7 +32,9 @@ The generated project requires an empty destination. Existing output is never si
 
 Framework and Unity assemblies are never regenerated as source. External references are recorded but not copied into `Assets`. For non-framework dependencies, supply the matching licensed/redistributable plugin or package through the validation harness. The minimal package manifest intentionally does not invent package names or versions from assembly names. Optional Unity engine modules, package assembly definitions, platform defines, API compatibility, and editor/player build settings require explicit configuration. Unknown project settings remain unknown.
 
-Each assembly currently has one source file. This supports code compilation investigation; it does not reconstruct script GUIDs, scene bindings, MonoBehaviour file naming, assets, or serialization identity. Generated files must not be repaired manually to pass a check. Fix recovery/emission logic and regenerate cleanly.
+Each assembly retains `Recovered.cs` for assembly/module attributes and ordinary types. Eligible top-level, nongeneric MonoBehaviour and ScriptableObject types are emitted into separate class-matching files. Namespace and assembly directories avoid Unity's special-folder rules. Unsafe, unrepresentable or colliding component paths produce diagnostics. The report's `SourceFiles` lists all files and `ComponentScripts` maps component identities to files; the existing `SourceFile` continues to identify the central file.
+
+The [component discovery probe](../Validation/ComponentFixture/README.md) passes exact Windows editor import for two scripts and six serialized field identities using an authored managed oracle. That result validates the emitter independently; it does not establish player-only component body recovery. Original script GUIDs, scene bindings and assets remain unreconstructed. Generated files must not be repaired manually to pass a check. Fix recovery/emission logic and regenerate cleanly.
 
 Public emitter tests use synthetic managed IL and explicit test-runtime references to protect output syntax, body preservation, assembly layout, reference isolation, and fresh-output rules. They do **not** claim Unity or Windows IL2CPP validation. The separate exact-editor fixture/harness must establish those gates.
 

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(Cpp2ILToolDirectory)/*.dll" />
+  </ItemGroup>
+  <Target Name="RequireToolDirectory" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(Cpp2ILToolDirectory)/Cpp2IL.Core.dll')" Text="Set Cpp2ILToolDirectory to an existing built or immutable Cpp2IL tool directory." />
+  </Target>
+</Project>

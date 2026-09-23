@@ -37,6 +37,9 @@ public sealed class UnitySourceEmissionReport
             "  \"RecoveryReportFile\":" + JsonText.Quote(RecoveryReportFile) + ",\n" +
             "  \"Assemblies\":[" + string.Join(",", Assemblies.Select(a =>
                 "{\"Name\":" + JsonText.Quote(a.Name) + ",\"SourceFile\":" + JsonText.Quote(a.SourceFile) +
+                ",\"SourceFiles\":" + JsonText.Array(a.SourceFiles) + ",\"ComponentScripts\":[" +
+                string.Join(",", a.ComponentScripts.Select(c => "{\"TypeName\":" + JsonText.Quote(c.TypeName) +
+                    ",\"SourceFile\":" + JsonText.Quote(c.SourceFile) + ",\"EditorDiscovery\":\"unverified\"}")) + "]" +
                 ",\"SourceReferences\":" + JsonText.Array(a.SourceReferences) + ",\"ExternalReferences\":" + JsonText.Array(a.ExternalReferences) + "}")) + "],\n" +
             "  \"Diagnostics\":" + JsonText.Array(Diagnostics) + "\n}\n";
         File.WriteAllText(path, json, new UTF8Encoding(false));
@@ -47,6 +50,14 @@ public sealed class UnitySourceAssemblyReport
 {
     public string Name { get; set; } = "";
     public string SourceFile { get; set; } = "";
+    public List<string> SourceFiles { get; set; } = [];
+    public List<UnityComponentScriptReport> ComponentScripts { get; set; } = [];
     public List<string> SourceReferences { get; set; } = [];
     public List<string> ExternalReferences { get; set; } = [];
+}
+
+public sealed class UnityComponentScriptReport
+{
+    public string TypeName { get; set; } = "";
+    public string SourceFile { get; set; } = "";
 }
