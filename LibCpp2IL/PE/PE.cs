@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -180,6 +181,94 @@ public sealed class PE : Il2CppBinary
         var functionPointer = peExportedFunctionPointers[ordinal];
 
         return functionPointer + peImageBase;
+    }
+
+    /// <summary>
+    /// Returns the file-image address of one named PE32+ import-address-table slot.
+    /// An absent, ordinal-only, bound, or malformed import returns zero.
+    /// </summary>
+    public ulong GetVirtualAddressOfImportedFunctionByName(string library, string function)
+    {
+        if (is32Bit || peOptionalHeader64?.DataDirectory is not { Length: > 1 } directories ||
+            string.IsNullOrEmpty(library) || string.IsNullOrEmpty(function))
+            return 0;
+        var import = directories[1];
+        if (import.VirtualAddress == 0 || import.Size < 20)
+            return 0;
+
+        for (uint descriptor = 0; descriptor < Math.Min(import.Size / 20, 4096U); descriptor++)
+        {
+            var rva = (ulong)import.VirtualAddress + descriptor * 20;
+            if (rva > uint.MaxValue || !TryMapFileBackedRva((uint)rva, 20, out var rawDescriptor))
+                return 0;
+            var entry = raw.AsSpan(rawDescriptor, 20);
+            var lookup = BinaryPrimitives.ReadUInt32LittleEndian(entry);
+            var timeStamp = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(4));
+            var forwarderChain = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(8));
+            var name = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(12));
+            var addressTable = BinaryPrimitives.ReadUInt32LittleEndian(entry.Slice(16));
+            if (lookup == 0 && timeStamp == 0 && forwarderChain == 0 && name == 0 && addressTable == 0)
+                break;
+            if (name == 0 || addressTable == 0 ||
+                !string.Equals(ReadImportName(name), library, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var lookupTable = lookup == 0 ? addressTable : lookup;
+            for (uint ordinal = 0; ordinal < 65536; ordinal++)
+            {
+                var thunkRva = (ulong)lookupTable + ordinal * 8;
+                var slotRva = (ulong)addressTable + ordinal * 8;
+                if (thunkRva > uint.MaxValue || slotRva > uint.MaxValue ||
+                    !TryMapFileBackedRva((uint)thunkRva, 8, out var rawThunk) ||
+                    !TryMapFileBackedRva((uint)slotRva, 8, out _))
+                    return 0;
+                var thunk = BinaryPrimitives.ReadUInt64LittleEndian(raw.AsSpan(rawThunk, 8));
+                if (thunk == 0)
+                    break;
+                if ((thunk & (1UL << 63)) != 0 || thunk > uint.MaxValue - 2U ||
+                    !string.Equals(ReadImportName((uint)thunk + 2U), function, StringComparison.Ordinal))
+                    continue;
+                return peImageBase <= ulong.MaxValue - slotRva ? peImageBase + slotRva : 0;
+            }
+        }
+        return 0;
+    }
+
+    private string? ReadImportName(uint rva)
+    {
+        var bytes = new byte[256];
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            if ((ulong)rva + (uint)i > uint.MaxValue ||
+                !TryMapFileBackedRva(rva + (uint)i, 1, out var offset))
+                return null;
+            if (raw[offset] == 0)
+                return i == 0 ? null : System.Text.Encoding.ASCII.GetString(bytes, 0, i);
+            if (raw[offset] < 32 || raw[offset] > 126)
+                return null;
+            bytes[i] = raw[offset];
+        }
+        return null;
+    }
+
+    private bool TryMapFileBackedRva(uint rva, int length, out int offset)
+    {
+        offset = 0;
+        foreach (var section in peSectionHeaders)
+        {
+            if (rva < section.VirtualAddress)
+                continue;
+            var within = (ulong)rva - section.VirtualAddress;
+            if (within + (uint)length > section.VirtualSize ||
+                within + (uint)length > section.SizeOfRawData)
+                continue;
+            var rawOffset = (ulong)section.PointerToRawData + within;
+            if (rawOffset + (uint)length > (ulong)raw.Length)
+                return false;
+            offset = (int)rawOffset;
+            return true;
+        }
+        return false;
     }
 
     public override bool IsExportedFunction(ulong addr)

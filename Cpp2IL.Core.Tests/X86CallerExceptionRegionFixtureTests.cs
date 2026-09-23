@@ -69,6 +69,9 @@ public class X86CallerExceptionRegionFixtureTests
             Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
             var app = Cpp2IlApi.CurrentAppContext!;
             var index = X64UnwindProof.ForApplication(app)!;
+            var pe = (PE)app.Binary;
+            Assert.That(pe.GetVirtualAddressOfImportedFunctionByName("KERNEL32.dll", "RaiseException"), Is.Not.Zero);
+            Assert.That(pe.GetVirtualAddressOfImportedFunctionByName("KERNEL32.dll", "MissingImport"), Is.Zero);
             var methods = app.GetAssemblyByName("ExceptionRegionFixture")!.Types
                 .SelectMany(type => type.Methods).OrderBy(method => method.Name).ToArray();
             Assert.That(methods.Select(method => method.Name),
@@ -77,8 +80,15 @@ public class X86CallerExceptionRegionFixtureTests
             Assert.That(catchProof?.CheckedClass.FullName,
                 Is.EqualTo("System.DivideByZeroException"));
             Assert.That(catchProof!.ConstantContinuationReturn, Is.EqualTo(-17));
+            Assert.That(X64CatchFuncletFlowProof.Check(methods[0], catchProof), Is.True);
             Assert.That(X64CatchFuncletClassProof.Find(methods[1]), Is.Null,
                 "A finally funclet must not be mistaken for a typed catch.");
+            var catchBody = X64CatchDivideBodyProof.Find(methods[0]);
+            Assert.That(catchBody?.ExceptionClass.FullName, Is.EqualTo("System.DivideByZeroException"));
+            Assert.That(catchBody?.Constructor.Name, Is.EqualTo(".ctor"));
+            Assert.That(catchBody?.CaughtReturn, Is.EqualTo(-17));
+            Assert.That(X64CatchDivideHelperProof.Check(methods[0], catchBody!), Is.True);
+            Assert.That(X64CatchDivideBodyProof.Find(methods[1]), Is.Null);
             var handlers = methods.Select(method =>
             {
                 method.EnsureRawBytes();
