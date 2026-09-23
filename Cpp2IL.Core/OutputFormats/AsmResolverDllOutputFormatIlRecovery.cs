@@ -1,9 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading;
 using AsmResolver.DotNet;
 using AsmResolver.DotNet.Signatures;
 using AsmResolver.PE.DotNet.Cil;
@@ -12,63 +12,165 @@ using Cpp2IL.Core.Extensions;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.Logging;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Reporting;
 using Cpp2IL.Core.Utils;
 
 namespace Cpp2IL.Core.OutputFormats;
 
 public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
 {
+    private readonly ConcurrentDictionary<MethodAnalysisContext, MethodRecoveryResult> _methodResults = new();
+    private int _inputTypeCount;
+
     public override string OutputFormatId => "dll_il_recovery";
 
     public override string OutputFormatName => "DLL files with IL Recovery";
 
+    public bool RequireCompleteRecovery { get; set; }
+
+    public RecoveryReport? LastRecoveryReport { get; private set; }
+
+    public override void OnOutputFormatSelected()
+    {
+        if (Cpp2IlApi.RuntimeOptions != null)
+            RequireCompleteRecovery = Cpp2IlApi.RuntimeOptions.StrictRecovery;
+    }
+
+    public override void DoOutput(ApplicationAnalysisContext context, string outputRoot)
+    {
+        LastRecoveryReport = null;
+        try
+        {
+            base.DoOutput(context, outputRoot);
+        }
+        finally
+        {
+            // Strict rejection must still leave an inspectable report, even though no DLLs are written.
+            LastRecoveryReport?.WriteJson(Path.Combine(outputRoot, "recovery-report.json"));
+        }
+    }
+
     public override List<AssemblyDefinition> BuildAssemblies(ApplicationAnalysisContext context)
     {
-        //We're going to need key function addresses, so grab them. This way the logging is more consistent
-        Logger.InfoNewline("Finding key function addresses...");
-        var start = DateTime.Now;
-        _ = context.GetOrCreateKeyFunctionAddresses();
-        Logger.InfoNewline($"Key function addresses found in {DateTime.Now.Subtract(start).TotalMilliseconds}ms");
+        BeginRecoveryReport(context);
+        var completed = false;
+        try
+        {
+            Logger.InfoNewline("Finding key function addresses...");
+            var start = DateTime.Now;
+            _ = context.GetOrCreateKeyFunctionAddresses();
+            Logger.InfoNewline($"Key function addresses found in {DateTime.Now.Subtract(start).TotalMilliseconds}ms");
 
-        IlGenerator.InjectHelpersType(context);
+            var assemblies = base.BuildAssemblies(context);
+            completed = true;
+            return assemblies;
+        }
+        finally
+        {
+            LastRecoveryReport = CreateRecoveryReport(context, completed);
+            Logger.InfoNewline($"IL recovery: {LastRecoveryReport.EmittedMethodCount} emitted without detected degradation, " +
+                              $"{LastRecoveryReport.UnresolvedMethodCount} unresolved, {LastRecoveryReport.ExcludedMethodCount} excluded; " +
+                              $"{LastRecoveryReport.InputMethodCount} input methods. Behavioral validation has not run.", "DllOutput");
+            if (completed && RequireCompleteRecovery)
+                LastRecoveryReport.EnsureComplete();
+        }
+    }
 
-        return base.BuildAssemblies(context);
+    protected void BeginRecoveryReport(ApplicationAnalysisContext context)
+    {
+        _methodResults.Clear();
+        LastRecoveryReport = null;
+        // The base class's old "successfully decompiled" counter is deliberately not used.
+        TotalMethodCount = SuccessfulMethodCount = 0;
+        _inputTypeCount = context.AllTypes.Count(t => t.Definition != null);
+        RegisterMethods(context);
+    }
+
+    private void RegisterMethods(ApplicationAnalysisContext context)
+    {
+        foreach (var assembly in context.Assemblies)
+        foreach (var type in assembly.Types)
+        foreach (var method in type.Methods)
+        {
+            if (_methodResults.ContainsKey(method))
+                continue;
+            _methodResults.TryAdd(method, new MethodRecoveryResult(_methodResults.Count,
+                assembly.Name, type.FullName, method.Name, method.FullNameWithSignature, method.Token,
+                method.Definition != null, method.UnderlyingPointer != 0,
+                MethodRecoveryDisposition.NotProcessed, ["Method was not processed."]));
+        }
+    }
+
+    protected RecoveryReport CreateRecoveryReport(ApplicationAnalysisContext context, bool completed)
+        => new(_methodResults.Values, _inputTypeCount, context.UnityVersion.ToString(),
+            context.Binary.InstructionSetId.ToString(), completed);
+
+    private void Record(MethodAnalysisContext method, MethodRecoveryDisposition disposition, params string[] reasons)
+        => _methodResults[method] = _methodResults[method].WithDisposition(disposition, reasons.Concat(method.AnalysisWarnings));
+
+    public static bool IsReferenceAssembly(string assemblyName)
+    {
+        var name = assemblyName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? assemblyName[..^4] : assemblyName;
+        return name is "mscorlib" or "netstandard" or "System" or "UnityEngine" ||
+               name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
+               name.StartsWith("Unity.", StringComparison.Ordinal) ||
+               name.StartsWith("System.", StringComparison.Ordinal);
     }
 
     protected override void FillMethodBody(MethodDefinition methodDefinition, MethodAnalysisContext methodContext)
     {
-        var module = methodDefinition.DeclaringModule!;
-        var moduleName = module.Name!.ToString();
-        var shouldSkip = moduleName.StartsWith("UnityEngine.") || moduleName.StartsWith("Unity.") ||
-                         moduleName.StartsWith("System.") || moduleName == "System" ||
-                         moduleName.StartsWith("mscorlib");
-
-        if (!methodDefinition.IsManagedMethodWithBody())
-            return;
-
-        methodDefinition.CilMethodBody = new();
-        var instructions = methodDefinition.CilMethodBody.Instructions;
-
-        if (shouldSkip)
-        {
-            FillMethodBodyWithStub(methodDefinition);
-            return;
-        }
-
         try
         {
-            Interlocked.Increment(ref TotalMethodCount);
+            if (methodContext is InjectedMethodAnalysisContext)
+            {
+                if (methodDefinition.IsManagedMethodWithBody())
+                    FillMethodBodyWithStub(methodDefinition);
+                Record(methodContext, MethodRecoveryDisposition.ExcludedInjectedMethod, "Injected method has no original player body to recover.");
+                return;
+            }
+
+            if (!methodDefinition.IsManagedMethodWithBody())
+            {
+                Record(methodContext, MethodRecoveryDisposition.NoManagedBody, "Declaration does not require a managed body (abstract, external, or runtime-provided).");
+                return;
+            }
+
+            if (IsReferenceAssembly(methodContext.DeclaringType!.DeclaringAssembly.Name))
+            {
+                FillMethodBodyWithStub(methodDefinition);
+                Record(methodContext, MethodRecoveryDisposition.ExcludedReferenceAssembly, "Reference assembly body excluded from application recovery; emitted body is a stub.");
+                return;
+            }
+
+            if (methodContext.UnderlyingPointer == 0)
+            {
+                FillMethodBodyWithStub(methodDefinition);
+                Record(methodContext, MethodRecoveryDisposition.NoNativeBody, "No native body address is available; emitted body is a stub.");
+                return;
+            }
+
+            if (MethodAnalysisContext.MaxMethodSizeBytes != -1 && methodContext.RawBytes.Length > MethodAnalysisContext.MaxMethodSizeBytes)
+            {
+                FillMethodBodyWithStub(methodDefinition);
+                Record(methodContext, MethodRecoveryDisposition.SkippedMethodSize, "Native body exceeds the configured analysis size limit; emitted body is a stub.");
+                return;
+            }
 
             methodContext.Analyze();
 
             if (methodContext.ConvertedIsil.Count == 0)
+            {
                 FillMethodBodyWithStub(methodDefinition);
-            else
-                IlGenerator.GenerateIl(methodContext, methodDefinition);
+                Record(methodContext, MethodRecoveryDisposition.EmptyAnalysis, "Native body produced no analyzed instructions; emitted body is a stub.");
+                return;
+            }
 
-            //WriteControlFlowGraph(methodContext, Path.Combine(Environment.CurrentDirectory, "Cpp2IL", "bin", "Debug", "net9.0", "cpp2il_out", "cfg"));
-
-            Interlocked.Increment(ref SuccessfulMethodCount);
+            IlGenerator.GenerateIl(methodContext, methodDefinition);
+            Record(methodContext, methodContext.AnalysisWarnings.Count == 0
+                    ? MethodRecoveryDisposition.Emitted : MethodRecoveryDisposition.Partial,
+                methodContext.AnalysisWarnings.Count == 0
+                    ? "Managed IL emitted without detected degradation; behavior remains unverified."
+                    : "Managed IL emitted with unresolved analysis warnings.");
         }
         catch (Exception e)
         {
@@ -83,10 +185,12 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 Logger.WarnNewline($"Skipping {methodContext.FullName}: {e.Message}");
             else
                 Logger.ErrorNewline($"Decompiling {methodContext.FullName} failed: {detail}");
-            
-            methodDefinition.CilMethodBody = new();
-            instructions = methodDefinition.CilMethodBody.Instructions;
 
+            Record(methodContext, MethodRecoveryDisposition.Failed, e.GetType().Name + ": " + detail);
+            methodDefinition.CilMethodBody = new();
+            var instructions = methodDefinition.CilMethodBody.Instructions;
+
+            var module = methodDefinition.DeclaringModule!;
             var factory = module.CorLibTypeFactory;
             var exceptionCtor = factory.CorLibScope
                 .CreateTypeReference("System", "Exception")
@@ -96,8 +200,10 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             instructions.Add(CilOpCodes.Newobj, exceptionCtor);
             instructions.Add(CilOpCodes.Throw);
         }
-
-        methodContext.ReleaseAnalysisData();
+        finally
+        {
+            methodContext.ReleaseAnalysisData();
+        }
     }
 
     public static void WriteControlFlowGraph(MethodAnalysisContext method, string outputPath)

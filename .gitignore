@@ -19,3 +19,6 @@ artifacts/
 
 # Local tools, private inputs, and recovery/build evidence.
 /Files/
+
+# Python validation harness caches.
+__pycache__/

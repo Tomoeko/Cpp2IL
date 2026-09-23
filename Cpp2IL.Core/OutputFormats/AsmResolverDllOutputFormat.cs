@@ -41,7 +41,7 @@ public abstract class AsmResolverDllOutputFormat : Cpp2IlOutputFormat
             methodDefinition.ReplaceMethodBodyWithMinimalImplementation();
     }
 
-    public sealed override void DoOutput(ApplicationAnalysisContext context, string outputRoot)
+    public override void DoOutput(ApplicationAnalysisContext context, string outputRoot)
     {
         var ret = BuildAssemblies(context);
 

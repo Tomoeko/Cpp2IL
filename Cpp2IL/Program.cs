@@ -559,6 +559,9 @@ internal static class Program
         result.OutputRootDirectory = options.OutputRootDir;
 
         result.LowMemoryMode = options.LowMemoryMode;
+        result.StrictRecovery = options.StrictRecovery;
+        result.UnitySourceAssemblies = options.UnitySourceAssemblies.ToList();
+        result.UnityReferenceDirectories = options.UnityReferenceDirectories.ToList();
 
         // if(string.IsNullOrEmpty(options.OutputFormatId))      // throw new SoftException("No output format specified, so nothing to do!");
 

@@ -23,7 +23,7 @@ Baseline inspection: repository revision `b5ad444` on `development`.
 | Build setup | Current projects/CI use .NET 10; `global.json` selects the test runner without pinning an SDK | Establish the actual local baseline; do not rely on stale README versions |
 | CI | The existing test/publish job is restricted to the upstream repository | Fork build status alone must not be presented as test evidence |
 
-The older local recovery tool supplies investigation ideas only. Its outputs and plans are not evidence that this fork can compile or reproduce behavior. No Unity run, native player rebuild, or test suite execution is claimed by this documentation checkpoint.
+The older local recovery tool supplies investigation ideas only. Its outputs and plans are not evidence that this fork can compile or reproduce behavior. The baseline observations above describe the inspected starting revision; implementation evidence is recorded below.
 
 ## Acceptance model
 
@@ -45,7 +45,14 @@ Report total input methods and types, methods with native bodies, emitted bodies
 
 ## Milestone 0 — Reproducible baseline and truthful reporting
 
-Status: in progress. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests pass. Four existing package warnings concern the prerelease Disarm dependency. Exact-target fixture and recovery reporting work is underway. Private baseline logs are retained locally.
+Status: in progress. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests passed. The expanded core suite passes 117 tests. The offline parser suite passes three local cases and explicitly skips five optional external samples. Four existing package warnings concern the prerelease Disarm dependency. Private baseline logs are retained locally.
+
+Implemented evidence:
+
+- Recovery reports retain every input method, distinguish exclusions and failures, and reject detected incomplete recovery in strict mode. Labels and stack depth are checked separately from typed IL verification and behavior. Regression cases reject missing values and unsupported operations rather than inventing defaults.
+- A synthetic assembly with three authored methods and one implicit constructor builds in the supplied exact Windows editor. Its original Windows x64 IL2CPP Release player passes 81 independent integer boundary/overflow input pairs. Actual settings are nondevelopment, `NET_Unity_4_8`, Low stripping, OptimizeSpeed, MSVC 14.29.30133 and Windows SDK 10.0.19041.0. This is original-fixture evidence, not recovered-source evidence.
+- The fresh-project harness records editor compilation, editor behavior, native build and player behavior independently. It refuses empty behavioral reports, stale output and timed-out processes even if they later exit successfully. Private player loading also succeeds; metadata-only stubs remain explicitly unverified behavior.
+- Fork CI now runs the offline suites, and publishing stays restricted to the original repository. No remote workflow or push was performed.
 
 - Confirm the local .NET SDK, package restore, repository build, and relevant existing tests. Distinguish infrastructure failures from code failures. Record a working SDK baseline and resolve stale build guidance when justified.
 - Inventory the supplied editor, Windows IL2CPP support, Wine environment and native toolchain. Record versions and usable host/target combinations locally; do not infer the original player's compiler flags from a directory name.
@@ -58,7 +65,7 @@ Exit evidence: reproducible commands and settings; an honest feature/error inven
 
 ## Milestone 1 — One complete recovery path
 
-Status: pending milestone 0.
+Status: in progress. The `cs_unity` exporter uses recovered CIL and pinned ICSharpCode.Decompiler 9.1.0.7988, explicit target references and selected application assemblies. Synthetic IL tests protect source syntax, reference isolation and assembly boundaries. Exact editor validation of regenerated player-only source is the next gate; source generation alone does not satisfy this milestone.
 
 - Choose a tiny vertical slice with constants, arithmetic, a conditional, a field read/write and a direct managed call. Build it through the exact target, recover it, regenerate source, compile in Unity, rebuild and compare observable results.
 - Audit the slice's metadata resolution, calling convention, lifting and IL generation. Remove guessed-value and unsupported-operation substitutions from its verified path. Check stack balance/types and control-flow joins explicitly.
@@ -104,7 +111,7 @@ Exit evidence per feature: a targeted regression where needed, valid output, exa
 
 ## Milestone 4 — Unity project and build verification
 
-Status: pending a working source path; the harness begins in milestone 1.
+Status: harness implemented and validated on the original synthetic fixture. Recovered-source compilation, rebuild and behavior remain pending. Script/asset bindings are not reconstructed by the current code-only exporter.
 
 - Expand the minimal exporter to a deterministic application-source/project layout, assembly references, packages, platform defines and required helpers. Identify dependencies that player metadata cannot reconstruct and require explicit local configuration for them.
 - Compile in a fresh project with the supplied Unity 2021.3.35f1 editor. Use its documented [batch mode and editor entry-point arguments](https://docs.unity3d.com/2021.3/Documentation/Manual/EditorCommandLineArguments.html); validate completion and generated outputs as well as process status. Do not suppress compiler errors or use stale assemblies to pass.
@@ -131,4 +138,4 @@ Exit evidence: increasing coverage on controlled and independent inputs, explain
 
 After each coherent implementation change, run checks appropriate to its risk, review the staged diff for private information, make a local checkpoint commit, and update the relevant milestone with a short sanitized evidence summary. Keep raw logs and long investigation trails out of this roadmap. Only the user pushes.
 
-Support claims must state the exact tested profile and corpus, declaration fidelity, source compilation and native-build results, behavioral coverage, and unresolved counts. There is currently no measured near-1:1 accuracy result or verified recovered Unity project for this fork at this documentation checkpoint.
+Support claims must state the exact tested profile and corpus, declaration fidelity, source compilation and native-build results, behavioral coverage, and unresolved counts. There is currently no measured near-1:1 accuracy result or verified recovered Unity project. The successful exact-target player described above is the original synthetic fixture.

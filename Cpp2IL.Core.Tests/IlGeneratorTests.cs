@@ -8,6 +8,7 @@ using AsmResolver.PE.DotNet.Metadata.Tables;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.OutputFormats;
 using ReflectionMethodAttributes = System.Reflection.MethodAttributes;
 
 namespace Cpp2IL.Core.Tests;
@@ -25,6 +26,7 @@ public class IlGeneratorTests
     public void StaticCall_DoesNotLoadMethodInfoOperand()
     {
         var appContext = Cpp2IlApi.CurrentAppContext!;
+        _ = new AsmResolverDllOutputFormatEmpty().BuildAssemblies(appContext);
         var systemObject = appContext.SystemTypes.SystemObjectType;
         var systemVoid = appContext.SystemTypes.SystemVoidType;
         var systemInt = appContext.SystemTypes.SystemInt32Type;
@@ -43,8 +45,8 @@ public class IlGeneratorTests
             ReflectionMethodAttributes.Public | ReflectionMethodAttributes.Static,
             [systemInt, systemInt]);
 
-        var x = new LocalVariable("x", new Register(null, "x"));
-        var y = new LocalVariable("y", new Register(null, "y"));
+        var x = new LocalVariable("x", new Register(null, "x"), systemInt);
+        var y = new LocalVariable("y", new Register(null, "y"), systemInt);
 
         var instructions = new List<Instruction>
         {

@@ -23,4 +23,8 @@ public class Cpp2IlRuntimeArgs
     public string OutputRootDirectory = null!;
 
     public bool LowMemoryMode;
+
+    public bool StrictRecovery;
+    public List<string> UnitySourceAssemblies = [];
+    public List<string> UnityReferenceDirectories = [];
 }

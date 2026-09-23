@@ -48,6 +48,15 @@ public class CommandLineArgs
     [Option("output-to", HelpText = "Root directory to output to. Defaults to cpp2il_out in the current working directory.")]
     public string OutputRootDir { get; set; } = Path.GetFullPath("cpp2il_out");
 
+    [Option("strict-recovery", HelpText = "Reject recovery output when a selected application method is incomplete. This does not certify behavioral equivalence.")]
+    public bool StrictRecovery { get; set; }
+
+    [Option("unity-source-assemblies", Separator = ',', HelpText = "Comma-separated exact application assembly names to emit as Unity C# source.")]
+    public IEnumerable<string> UnitySourceAssemblies { get; set; } = new List<string>();
+
+    [Option("unity-reference-dir", HelpText = "Directories containing the exact Unity, framework and package reference assemblies for source emission.")]
+    public IEnumerable<string> UnityReferenceDirectories { get; set; } = new List<string>();
+
     //Flags
 
     [Option("verbose", HelpText = "Enable Verbose Logging.")]

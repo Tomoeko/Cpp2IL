@@ -42,6 +42,8 @@
         <!--Needed for DLL output-->
         <PackageReference Include="AsmResolver.DotNet" Version="6.0.1" />
         <PackageReference Include="AssetRipper.CIL" Version="1.3.2" />
+        <!--MIT; netstandard2.0; C# output is constrained to Unity's supported syntax.-->
+        <PackageReference Include="ICSharpCode.Decompiler" Version="9.1.0.7988" />
         
         <!--For ARM64 dissassembly-->
         <PackageReference Include="Disarm" Version="2022.1.0-master.117" />

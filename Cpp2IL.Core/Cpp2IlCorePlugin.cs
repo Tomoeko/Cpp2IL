@@ -44,6 +44,7 @@ public class Cpp2IlCorePlugin : Cpp2IlPlugin
         OutputFormatRegistry.Register<AsmResolverDllOutputFormatThrowNull>();
         OutputFormatRegistry.Register<AsmResolverDllOutputFormatIlRecovery>();
         OutputFormatRegistry.Register<DiffableCsOutputFormat>();
+        OutputFormatRegistry.Register<UnityCsOutputFormat>();
         OutputFormatRegistry.Register<IsilDumpOutputFormat>();
         OutputFormatRegistry.Register<WasmMappingOutputFormat>();
         OutputFormatRegistry.Register<WasmNameSectionOutputFormat>();

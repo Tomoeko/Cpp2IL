@@ -16,6 +16,13 @@ build artifacts if you want to do something yourself with IL2CPP metadata, and i
 link above will take you to the documentation for LibCpp2IL.
 
 ## Decompiler
+
+This fork is developing source recovery for Unity **2021.3.35f1 Windows x64 Release IL2CPP**.
+The initial `cs_unity` output emits C# from recovered IL with explicit target references;
+it does not yet establish complete Unity compilation or behavioral fidelity for arbitrary players.
+See [source output usage](docs/unity-source-output.md), the [exact-version validation harness](Validation/README.md),
+and the [roadmap](ROADMAP.md). Recovery reports distinguish emitted, partial, failed, skipped, and excluded methods.
+`--strict-recovery` rejects detected gaps; it is separate from Unity compilation and behavioral verification.
 The decompiled CIL is pretty messy right now, the next thing is probably pattern matching to convert il2cpp specific stuff into C#
 (generic ISIL should be converted into more C# specific ISIL, new object, throw, etc. instructions should be added to ISIL),
 but most of the times it's at least possible to see what the method does.
@@ -121,7 +128,7 @@ If you do not wish for the output to be coloured, set the Environment Variable `
 
 ## Credits
 
-This application is built primarily using .NET 9.0, but a .NET Framework 4.7.2 build is also published for legacy purposes.
+This application is built primarily using .NET 10.0, but a .NET Framework 4.7.2 build is also published for legacy purposes.
 
 It uses the following libraries, for which I am very thankful:
 
