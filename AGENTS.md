@@ -4,7 +4,7 @@
 
 Recover accurate, readable C# from **Unity 2021.3.35f1, Windows x64, Release IL2CPP** builds, and verify that the generated code compiles in that exact Unity version. Aim for near 1:1 observable behavior and preservation of recoverable managed structure.
 
-The initial checkpoint is documentation only. After creating and locally committing this file and `ROADMAP.md`, stop for the user's confirmation. Do not begin roadmap implementation until the user confirms these files. That confirmation releases this initial gate; it does not create a recurring approval requirement for routine implementation work.
+The user has confirmed this file and `ROADMAP.md` and authorized implementation of the full roadmap. The initial documentation gate is released. Continue routine implementation, validation and local checkpoint commits without recurring approval requests.
 
 Read `ROADMAP.md` before choosing work. Keep its status and evidence current. Other versions and architectures are secondary; preserve existing functionality where practical without expanding the initial target.
 
@@ -60,7 +60,7 @@ Read `ROADMAP.md` before choosing work. Keep its status and evidence current. Ot
 
 ## Validation discipline
 
-The inspected project files and CI use .NET 10. `global.json` selects Microsoft Testing Platform but currently does not pin an SDK. Establish and record a working SDK/package baseline before changing dependencies. The README's older .NET version references are not the authority.
+The project files and CI use .NET 10. `global.json` pins the validated SDK baseline to 10.0.107 with patch roll-forward and selects Microsoft Testing Platform. Record the actual SDK/package baseline when changing dependencies. The README's older .NET version references are not the authority.
 
 Existing repository-wide commands, to run from the repository root when appropriate:
 

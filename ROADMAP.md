@@ -4,7 +4,7 @@
 
 Produce accurate, readable C# from **Unity 2021.3.35f1 Windows x64 Release IL2CPP** player inputs. Generated source must compile in the supplied exact editor, and recovered behavior must be verified against controlled source/build pairs. Near 1:1 means preservation of recoverable managed structure and observable behavior; it does not promise reproduction of erased source text or byte-identical native binaries.
 
-The initial deliverable is this roadmap and `AGENTS.md`. **Implementation awaits the user's confirmation of these files.** All implementation milestones below are pending; the inspection findings are not a build or recovery certification.
+The user has confirmed this roadmap and `AGENTS.md` and authorized full implementation. Milestone 0 is in progress. Inspection findings and repository test results are not a recovered-project certification.
 
 Windows x64 is the initial platform. Other Unity versions, architectures, obfuscation variants, and full asset/scene reconstruction are outside the first delivery. Existing cross-platform support should remain usable where practical. Assets are not prerequisites for a code-only recovery milestone; serialization and scene compatibility require separate evidence when claimed.
 
@@ -45,7 +45,7 @@ Report total input methods and types, methods with native bodies, emitted bodies
 
 ## Milestone 0 — Reproducible baseline and truthful reporting
 
-Status: pending confirmation.
+Status: in progress. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests pass. Four existing package warnings concern the prerelease Disarm dependency. Exact-target fixture and recovery reporting work is underway. Private baseline logs are retained locally.
 
 - Confirm the local .NET SDK, package restore, repository build, and relevant existing tests. Distinguish infrastructure failures from code failures. Record a working SDK baseline and resolve stale build guidance when justified.
 - Inventory the supplied editor, Windows IL2CPP support, Wine environment and native toolchain. Record versions and usable host/target combinations locally; do not infer the original player's compiler flags from a directory name.
