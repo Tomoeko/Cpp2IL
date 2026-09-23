@@ -319,7 +319,56 @@ internal sealed class MetadataImage : IDisposable
 internal sealed class TypeNames(MetadataReader primary, string[] references) :
     ISignatureTypeProvider<string, object?>, ICustomAttributeTypeProvider<string>, IDisposable
 {
-    private readonly Dictionary<string, MetadataImage> _references = new(StringComparer.Ordinal);
+    private readonly Dictionary<AssemblyIdentity, MetadataImage> _references = new();
+    private sealed record AssemblyIdentity(string Name, Version Version, string Culture, string PublicKeyToken);
+    private static string Token(MetadataReader reader, BlobHandle handle, bool fullKey)
+    {
+        var bytes = reader.GetBlobBytes(handle);
+        if (fullKey && bytes.Length != 0)
+            bytes = SHA1.HashData(bytes)[^8..].Reverse().ToArray();
+        return Convert.ToHexString(bytes);
+    }
+    private static AssemblyIdentity Identity(MetadataReader reader)
+    {
+        var assembly = reader.GetAssemblyDefinition();
+        return new(reader.GetString(assembly.Name), assembly.Version, reader.GetString(assembly.Culture), Token(reader, assembly.PublicKey, true));
+    }
+    private static AssemblyIdentity Identity(MetadataReader reader, AssemblyReferenceHandle handle)
+    {
+        var assembly = reader.GetAssemblyReference(handle);
+        return new(reader.GetString(assembly.Name), assembly.Version, reader.GetString(assembly.Culture),
+            Token(reader, assembly.PublicKeyOrToken, (assembly.Flags & System.Reflection.AssemblyFlags.PublicKey) != 0));
+    }
+    private AssemblyIdentity ReferencedIdentity(string name)
+    {
+        if (name == Assembly(primary))
+            return Identity(primary);
+        var identities = primary.AssemblyReferences.Select(handle => Identity(primary, handle)).Where(i => i.Name == name).Distinct().ToArray();
+        if (identities.Length != 1)
+            throw new BadImageFormatException("Enum reference requires one declared assembly identity: " + name);
+        return identities[0];
+    }
+    private MetadataReader Resolve(AssemblyIdentity identity)
+    {
+        if (identity == Identity(primary))
+            return primary;
+        if (_references.TryGetValue(identity, out var resolved))
+            return resolved.Reader;
+        if (identity.Name.IndexOfAny(['/', '\\']) >= 0)
+            throw new BadImageFormatException("Enum assembly identity contains a path separator.");
+        var matches = new List<string>();
+        foreach (var path in references.Select(directory => Path.Combine(directory, identity.Name + ".dll")).Where(File.Exists).Distinct())
+        {
+            using var image = new MetadataImage(path);
+            if (Identity(image.Reader) == identity)
+                matches.Add(path);
+        }
+        if (matches.Count != 1)
+            throw new BadImageFormatException("Enum reference requires exactly one explicit identity match: " + identity.Name);
+        resolved = new MetadataImage(matches[0]);
+        _references.Add(identity, resolved);
+        return resolved.Reader;
+    }
     private static string Assembly(MetadataReader reader) => reader.GetString(reader.GetAssemblyDefinition().Name);
     private static string DefinitionName(MetadataReader reader, TypeDefinitionHandle handle)
     {
@@ -394,12 +443,15 @@ internal sealed class TypeNames(MetadataReader primary, string[] references) :
     public string GetTypeFromSerializedName(string name) => "serialized:" + name;
     public PrimitiveTypeCode GetUnderlyingEnumType(string type)
     {
+        AssemblyIdentity? serializedIdentity = null;
         if (type.StartsWith("serialized:", StringComparison.Ordinal))
         {
             var serialized = type["serialized:".Length..];
             var comma = serialized.IndexOf(',');
-            var assemblyName = comma < 0 ? Assembly(primary) :
-                new System.Reflection.AssemblyName(serialized[(comma + 1)..].Trim()).Name;
+            var qualified = comma < 0 ? null : new System.Reflection.AssemblyName(serialized[(comma + 1)..].Trim());
+            var assemblyName = qualified?.Name ?? Assembly(primary);
+            if (qualified?.Version != null)
+                serializedIdentity = new(assemblyName, qualified.Version, qualified.CultureName ?? "", Convert.ToHexString(qualified.GetPublicKeyToken() ?? []));
             type = "[" + assemblyName + "]" + (comma < 0 ? serialized : serialized[..comma]).Trim();
         }
         if (type.StartsWith("valuetype:", StringComparison.Ordinal))
@@ -408,18 +460,7 @@ internal sealed class TypeNames(MetadataReader primary, string[] references) :
         if (!type.StartsWith('[') || close < 2) throw new BadImageFormatException("Cannot resolve enum type: " + type);
         var assembly = type[1..close];
         var name = type[(close + 1)..];
-        var reader = primary;
-        if (assembly != Assembly(primary))
-        {
-            if (!_references.TryGetValue(assembly, out var image))
-            {
-                var matches = references.Select(directory => Path.Combine(directory, assembly + ".dll")).Where(File.Exists).Distinct().ToArray();
-                if (matches.Length != 1) throw new BadImageFormatException("Enum reference requires one explicit assembly: " + assembly);
-                image = new MetadataImage(matches[0]);
-                _references.Add(assembly, image);
-            }
-            reader = image.Reader;
-        }
+        var reader = Resolve(serializedIdentity ?? ReferencedIdentity(assembly));
         foreach (var handle in reader.TypeDefinitions)
         {
             if (DefinitionName(reader, handle) != name) continue;

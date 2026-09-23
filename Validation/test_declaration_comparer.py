@@ -2,8 +2,10 @@
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
+from xml.sax.saxutils import escape
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,10 +63,14 @@ def main():
     with tempfile.TemporaryDirectory(dir=scratch) as name:
         work = Path(name)
 
-        def compile_case(label, source):
+        def compile_case(label, source, assembly_reference=None):
             folder = work / label
             folder.mkdir()
-            (folder / "Fixture.csproj").write_text(PROJECT)
+            project = PROJECT
+            if assembly_reference is not None:
+                project = project.replace("</Project>", '<ItemGroup><Reference Include="Synthetic.EnumReference"><HintPath>' +
+                                          escape(str(assembly_reference)) + '</HintPath></Reference></ItemGroup></Project>')
+            (folder / "Fixture.csproj").write_text(project)
             (folder / "Fixture.cs").write_text(source)
             run(["dotnet", "build", str(folder / "Fixture.csproj"), "-c", "Release", "--nologo", "-v", "quiet"])
             return folder / "bin/Release/net10.0/DeclarationFixtureTest.dll"
@@ -96,7 +102,51 @@ def main():
                                   "/attributes", "/generic/0", "/parameter:2/constant"):
             assert any(expected_fragment in key for key in keys), expected_fragment
         assert report["diagnostics"] == []
+
+        def compile_enum_reference(label, version, culture=""):
+            folder = work / label
+            folder.mkdir()
+            (folder / "Reference.csproj").write_text('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>'
+                '<TargetFramework>net10.0</TargetFramework><AssemblyName>Synthetic.EnumReference</AssemblyName>'
+                '<AssemblyVersion>' + version + '</AssemblyVersion></PropertyGroup></Project>')
+            (folder / "Enum.cs").write_text('[assembly: System.Reflection.AssemblyCulture("' + culture + '")]\n'
+                                          'namespace EnumLibrary { public enum Choice { Ready = 7 } }')
+            run(["dotnet", "build", str(folder / "Reference.csproj"), "-c", "Release", "--nologo", "-v", "quiet"])
+            return folder / "bin/Release/net10.0/Synthetic.EnumReference.dll"
+
+        enum_v1 = compile_enum_reference("enum-v1", "1.0.0.0")
+        enum_v2 = compile_enum_reference("enum-v2", "2.0.0.0")
+        enum_culture = compile_enum_reference("enum-culture", "1.0.0.0", "fr")
+        external = compile_case("external-enum", SOURCE + '''
+public sealed class EnumMarkerAttribute : Attribute
+{
+    public EnumMarkerAttribute(EnumLibrary.Choice value) { }
+}
+[EnumMarker(EnumLibrary.Choice.Ready), Choice((object)EnumLibrary.Choice.Ready)]
+public sealed class ExternalEnumCase { }
+''', enum_v1)
+
+        def compare_external(label, enum_references, expected):
+            output = work / label
+            command = ["dotnet", str(DLL), "--oracle", str(external), "--candidate", str(external),
+                       "--reference-dir", str(Path(runtime_reference).parent), "--output", str(output)]
+            for reference in enum_references:
+                command += ["--reference-dir", str(reference.parent)]
+            run(command, expected)
+            return json.loads((output / "report.json").read_text())
+
+        for index, ordering in enumerate(([enum_v1, enum_v2, enum_culture], [enum_culture, enum_v2, enum_v1])):
+            assert compare_external("enum-mixed-" + str(index), ordering, 0)["diagnostics"] == []
+        for index, invalid in enumerate((enum_v2, enum_culture)):
+            rejected = compare_external("enum-wrong-" + str(index), [invalid], 1)
+            assert any("exactly one explicit identity match" in item for item in rejected["diagnostics"])
+        duplicate = work / "enum-duplicate" / enum_v1.name
+        duplicate.parent.mkdir()
+        shutil.copyfile(enum_v1, duplicate)
+        rejected = compare_external("enum-duplicate-comparison", [enum_v1, duplicate], 1)
+        assert any("exactly one explicit identity match" in item for item in rejected["diagnostics"])
         print("Declaration comparison checks passed: self, body exclusion, overloaded attribute constructor, six declaration mutations.")
+        print("Enum references: exact version/culture selection in both directory orders; wrong identities and duplicate exact matches rejected.")
 
 
 if __name__ == "__main__":
