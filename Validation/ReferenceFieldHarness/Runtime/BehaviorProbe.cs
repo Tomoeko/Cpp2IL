@@ -62,6 +62,20 @@ namespace RecoveryValidation
                 { "sameOuterPrefix", ReferenceEquals(outer.Prefix, outerPrefix) },
                 { "sameOuterSuffix", ReferenceEquals(outer.Suffix, outerSuffix) }
             });
+            outer.Inner = box;
+            box.Payload = (object)int.MinValue;
+            RecordObject(observations, "object-direct-boxed", box, box.Payload, false);
+            RecordObject(observations, "object-nested-boxed", outer, box.Payload, true);
+            box.Payload = new string('o', 3);
+            RecordObject(observations, "object-direct-string", box, box.Payload, false);
+            RecordObject(observations, "object-nested-string", outer, box.Payload, true);
+            box.Payload = null;
+            RecordObject(observations, "object-direct-null-value", box, null, false);
+            RecordObject(observations, "object-nested-null-value", outer, null, true);
+            RecordObject(observations, "object-direct-null-owner", null, null, false);
+            outer.Inner = null;
+            RecordObject(observations, "object-nested-null-inner", outer, null, true);
+            RecordObject(observations, "object-nested-null-outer", null, null, true);
             var sharedBoxPrefix = new[] { -31 };
             var sharedBoxSuffix = new[] { 37 };
             var sharedOuterPrefix = new[] { -41 };
@@ -115,9 +129,13 @@ namespace RecoveryValidation
             => RecordCall(observations, kind, expected,
                 () => nested ? ((SharedOuter)owner).ReadInner() : ReferenceReads.ReadShared((SharedBox)owner));
 
-        private static void RecordCall(List<object> observations, string kind, string expected, Func<string> read)
+        private static void RecordObject(List<object> observations, string kind, object owner, object expected, bool nested)
+            => RecordCall(observations, kind, expected,
+                () => nested ? ((ReferenceOuter)owner).ReadObjectInner() : ReferenceReads.ReadObject((ReferenceBox)owner));
+
+        private static void RecordCall(List<object> observations, string kind, object expected, Func<object> read)
         {
-            string result = null;
+            object result = null;
             var sameReference = false;
             var exception = "none";
             try

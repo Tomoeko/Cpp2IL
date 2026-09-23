@@ -5,13 +5,13 @@ using Iced.Intel;
 
 namespace Cpp2IL.Core.Tests.Isil;
 
-public class X86StringFieldReadProofTests
+public class X86ReferenceFieldReadProofTests
 {
     [Test]
     public void ExactDirectAndNestedReferenceReadsRetainTheirFieldOffsets()
     {
-        var direct = X86StringFieldReadProof.TryProveShape(Body(false));
-        var nested = X86StringFieldReadProof.TryProveShape(Body(true));
+        var direct = X86ReferenceFieldReadProof.TryProveShape(Body(false));
+        var nested = X86ReferenceFieldReadProof.TryProveShape(Body(true));
         Assert.Multiple(() =>
         {
             Assert.That(direct, Is.Not.Null);
@@ -59,7 +59,7 @@ public class X86StringFieldReadProofTests
             case "prefix": instruction.HasLockPrefix = true; break;
         }
         body[position] = instruction;
-        Assert.That(X86StringFieldReadProof.TryProveShape(body), Is.Null);
+        Assert.That(X86ReferenceFieldReadProof.TryProveShape(body), Is.Null);
     }
 
     private static List<Instruction> Body(bool nested)

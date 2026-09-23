@@ -28,6 +28,15 @@ def observations():
                      "outerSuffix": [-19, -23], "sameBoxPrefix": True,
                      "sameBoxSuffix": True, "sameOuterPrefix": True,
                      "sameOuterSuffix": True})
+    for label, value in (("boxed", -(1 << 31)), ("string", "ooo"),
+                         ("null-value", None)):
+        for prefix in ("object-direct", "object-nested"):
+            expected.append({"kind": prefix + "-" + label, "result": value,
+                             "sameReference": True, "exception": "none"})
+    for kind in ("object-direct-null-owner", "object-nested-null-inner",
+                 "object-nested-null-outer"):
+        expected.append({"kind": kind, "result": None, "sameReference": False,
+                         "exception": "System.NullReferenceException"})
     expected.append({"kind": "shared-constructors", "boxCreated": True,
                      "outerCreated": True})
     for kind in ("shared-direct-value", "shared-nested-value"):
@@ -56,6 +65,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Reference-field behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 10,
+    return {"status": "passed", "observations": len(expected), "methods": 12,
             "platform": report["platform"], "profile": "reference-field",
-            "scope": "direct and one-level nested string-field reads with null owners; not whole-program equivalence"}
+            "scope": "direct and one-level nested string/object field reads with null owners; not whole-program equivalence"}

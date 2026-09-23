@@ -11,6 +11,7 @@ namespace ReferenceFieldFixture
         public int[] Prefix5;
         public string Text;
         public int[] Suffix;
+        public object Payload;
     }
 
     public sealed class DerivedBox : ReferenceBox
@@ -32,6 +33,12 @@ namespace ReferenceFieldFixture
         public string ReadInner()
         {
             return Inner.Text;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public object ReadObjectInner()
+        {
+            return Inner.Payload;
         }
     }
 
@@ -66,6 +73,12 @@ namespace ReferenceFieldFixture
         public static string Read(ReferenceBox box)
         {
             return box.Text;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static object ReadObject(ReferenceBox box)
+        {
+            return box.Payload;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

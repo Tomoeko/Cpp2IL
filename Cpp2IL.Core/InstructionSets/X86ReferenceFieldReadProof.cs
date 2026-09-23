@@ -14,10 +14,10 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Binds an exact x64 null diamond to an ordinary string-field load. One preceding
+/// Binds an exact x64 null diamond to an ordinary string/object field load. One preceding
 /// reference-field load is allowed, but no intervening effects or alternative exits are.
 /// </summary>
-internal static class X86StringFieldReadProof
+internal static class X86ReferenceFieldReadProof
 {
     internal sealed record Proof(FieldAnalysisContext Field, FieldAnalysisContext? ReceiverField,
         ulong LoadIp);
@@ -36,9 +36,11 @@ internal static class X86StringFieldReadProof
             method.IsVirtual || method.Name is ".ctor" or ".cctor" ||
             method.Name != method.DefaultName || method.IsVoid ||
             method.OverrideReturnType != null ||
-            !ReferenceEquals(method.ReturnType, app.SystemTypes.SystemStringType) ||
-            definition.RawReturnType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_STRING,
-                NumMods: 0, Byref: 0, Pinned: 0 } ||
+            definition.RawReturnType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawReturn ||
+            !(rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_STRING &&
+              ReferenceEquals(method.ReturnType, app.SystemTypes.SystemStringType) ||
+              rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_OBJECT &&
+              ReferenceEquals(method.ReturnType, app.SystemTypes.SystemObjectType)) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             method.GenericParameters.Count != 0 ||
@@ -93,14 +95,14 @@ internal static class X86StringFieldReadProof
 
         var fields = box.Fields.Where(field => !field.IsStatic &&
             field.Offset == shape.FieldOffset &&
-            ReferenceEquals(field.FieldType, app.SystemTypes.SystemStringType) &&
-            field.BackingData?.Field.RawFieldType is { Type: Il2CppTypeEnum.IL2CPP_TYPE_STRING,
-                NumMods: 0, Byref: 0, Pinned: 0 }).ToArray();
-        if (fields is not [{ } stringField] || stringField.Name != stringField.DefaultName)
+            ReferenceEquals(field.FieldType, method.ReturnType) &&
+            field.BackingData?.Field.RawFieldType is { NumMods: 0, Byref: 0, Pinned: 0 } rawField &&
+            rawField.Type == rawReturn.Type).ToArray();
+        if (fields is not [{ } referenceField] || referenceField.Name != referenceField.DefaultName)
             return null;
         var receiver = new IsilLocalVariable("native-receiver", new IsilRegister(null,
             shape.ReceiverOffset is null ? "rcx" : "rax"), box);
-        var access = new IsilFieldReference(stringField, receiver, (int)stringField.Offset);
+        var access = new IsilFieldReference(referenceField, receiver, (int)referenceField.Offset);
         if (!NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access))
             return null;
 
@@ -108,7 +110,7 @@ internal static class X86StringFieldReadProof
         if (X86RuntimeNullThrowProof.TryIdentify(app, call.NearBranchTarget) == null ||
             X86CallerExceptionRegionProof.Check(method, body, new HashSet<ulong> { call.IP }) != null)
             return null;
-        return new Proof(stringField, receiverField, shape.LoadIp);
+        return new Proof(referenceField, receiverField, shape.LoadIp);
     }
 
     internal static Shape? TryProveShape(IReadOnlyList<Instruction> body)
