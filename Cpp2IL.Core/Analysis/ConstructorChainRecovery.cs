@@ -88,14 +88,19 @@ internal static class ConstructorChainRecovery
     internal static bool TryProveShape(IReadOnlyList<Iced.Intel.Instruction> body,
         ulong methodStart, int byteLength, ulong objectConstructorPointer)
     {
-        if (body is not [var clear, var jump] || byteLength <= 0 ||
-            clear.IP != methodStart || jump.IP != clear.NextIP ||
-            jump.NextIP - methodStart != (ulong)byteLength ||
+        if (body.Count < 2 || byteLength <= 0)
+            return false;
+        var clear = body[0];
+        var jump = body[1];
+        if (clear.IP != methodStart || jump.IP != clear.NextIP ||
+            jump.NextIP - methodStart > (ulong)byteLength ||
             objectConstructorPointer == 0 ||
             !X86InstructionSet.TargetsOutsideMethod(objectConstructorPointer,
                 methodStart, byteLength))
             return false;
-        foreach (var instruction in body)
+        // The unconditional external tail jump ends the reachable thunk. Metadata method
+        // spans can include padding and an unrelated following native function.
+        foreach (var instruction in body.Take(2))
             if (instruction.IsInvalid || instruction.CodeSize != CodeSize.Code64 ||
                 instruction.HasLockPrefix || instruction.HasRepPrefix ||
                 instruction.HasRepnePrefix || instruction.SegmentPrefix != NativeRegister.None)

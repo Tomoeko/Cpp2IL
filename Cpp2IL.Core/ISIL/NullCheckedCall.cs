@@ -32,7 +32,7 @@ internal static class NullCheckedCall
             !(instruction.Operands.Count == expected + 1 && instruction.Operands[expected] is Immediate { Value: 0 }))
             return false;
         if (instruction.Operands[receiverIndex] is not LocalVariable value ||
-            !ReferenceEquals(value.Type, owner))
+            !HasUnchangedReferenceBase(value.Type, owner))
             return false;
         if (instruction.OpCode == OpCode.Call &&
             (instruction.Operands[1] is not LocalVariable result || candidate.IsVoid ||
@@ -59,6 +59,21 @@ internal static class NullCheckedCall
         !type.IsValueType && !type.IsInterface && !type.IsGenericInstance && type.GenericParameters.Count == 0 &&
         (type.Type is Il2CppTypeEnum.IL2CPP_TYPE_CLASS or Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or Il2CppTypeEnum.IL2CPP_TYPE_STRING) &&
         type.Attributes == type.DefaultAttributes && ReferenceEquals(type.BaseType, type.DefaultBaseType);
+
+    private static bool HasUnchangedReferenceBase(TypeAnalysisContext? receiver, TypeAnalysisContext owner)
+    {
+        // A nonvirtual call to a base method still uses the derived receiver's null check.
+        // Follow only original, ordinary class inheritance; changed bases or cycles are not evidence.
+        var seen = new System.Collections.Generic.HashSet<TypeAnalysisContext>();
+        for (var type = receiver; type != null && seen.Add(type); type = type.BaseType)
+        {
+            if (!IsReferenceClass(type))
+                return false;
+            if (ReferenceEquals(type, owner))
+                return true;
+        }
+        return false;
+    }
 
     private static bool IsOrdinaryValue(TypeAnalysisContext type) =>
         IsReferenceClass(type) || IsBoundedArrayReference(type) || IsNumeric(type);

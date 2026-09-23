@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 
 namespace ArrayCallFixture
 {
-    public sealed class ArrayEcho
+    public class ArrayEcho
     {
         public int Calls;
 
@@ -14,10 +14,21 @@ namespace ArrayCallFixture
         }
     }
 
+    public sealed class DerivedEcho : ArrayEcho
+    {
+    }
+
     public static class ArrayCalls
     {
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static int[] Forward(ArrayEcho echo, int[] values)
+        {
+            return echo.Echo(values);
+        }
+
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static int[] ForwardDerived(DerivedEcho echo, int[] values)
         {
             return echo.Echo(values);
         }

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using AsmResolver.DotNet;
 using AsmResolver.DotNet.Code.Cil;
+using AsmResolver.DotNet.Signatures;
 using AsmResolver.PE.DotNet.Cil;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Graphs;
@@ -44,6 +45,53 @@ public partial class IlGeneratorParameterTests
             "The target deliberately does not dereference this; ordinary call would wrongly enter it for null.");
         var instance = Activator.CreateInstance(runtime.Type);
         Assert.That(method.Invoke(null, [instance, 11]), Is.EqualTo(isVoid ? 91 : 18));
+        Assert.That(runtime.Type.GetField("InvocationCount")!.GetValue(null), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void DerivedReceiverCanRetainBaseCallNullFailure()
+    {
+        var derivedDefinition = new TypeDefinition("Synthetic", "Derived", AsmResolver.PE.DotNet.Metadata.Tables.TypeAttributes.Public | AsmResolver.PE.DotNet.Metadata.Tables.TypeAttributes.Class,
+            _type);
+        _module.TopLevelTypes.Add(derivedDefinition);
+        var derived = new InjectedTypeAnalysisContext(_typeContext.DeclaringAssembly, "Synthetic", "Derived",
+            _typeContext, System.Reflection.TypeAttributes.Public | System.Reflection.TypeAttributes.Class);
+        derived.PutExtraData("AsmResolverType", derivedDefinition);
+        var fixture = CreateNullGuard(false, false, derived);
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.EqualTo(1));
+        Assert.That(fixture.Call.CallSemantics, Is.EqualTo(CallSemantics.NullCheckedInstance));
+        derived.BaseType = _app.SystemTypes.SystemObjectType;
+        Assert.That(() => IlGenerator.GenerateIl(fixture.Context, fixture.Definition),
+            Throws.TypeOf<DecompilerException>().With.Message.Contains("Null-checked invocation"));
+        derived.OverrideBaseType = null;
+        SsaForm.Remove(fixture.Context);
+        CopyCoalescer.Run(fixture.Context);
+        Simplifier.Simplify(fixture.Context);
+        CallArgumentTrimmer.Run(fixture.Context);
+        DeadCodeEliminator.Run(fixture.Context);
+        LocalVariables.RemoveUnused(fixture.Context);
+        IlGenerator.GenerateIl(fixture.Context, fixture.Definition);
+        Assert.That(fixture.Definition.CilMethodBody!.Instructions.Count(i => i.OpCode == CilOpCodes.Callvirt), Is.EqualTo(1));
+
+        AddDefaultConstructor();
+        var derivedConstructor = new MethodDefinition(".ctor", AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.Public |
+            AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.SpecialName |
+            AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.RuntimeSpecialName,
+            MethodSignature.CreateInstance(_module.CorLibTypeFactory.Void));
+        derivedDefinition.Methods.Add(derivedConstructor);
+        derivedConstructor.CilMethodBody = new CilMethodBody();
+        derivedConstructor.CilMethodBody.Instructions.Add(CilOpCodes.Ldarg_0);
+        derivedConstructor.CilMethodBody.Instructions.Add(CilOpCodes.Call,
+            _type.Methods.Single(method => method.Name == ".ctor"));
+        derivedConstructor.CilMethodBody.Instructions.Add(CilOpCodes.Ret);
+
+        using var runtime = Load();
+        var method = runtime.Type.GetMethod("Guarded")!;
+        Assert.That(Assert.Throws<TargetInvocationException>(() => method.Invoke(null, [null, 11]))!.InnerException,
+            Is.TypeOf<NullReferenceException>());
+        Assert.That(runtime.Type.GetField("InvocationCount")!.GetValue(null), Is.EqualTo(0));
+        var instance = Activator.CreateInstance(runtime.Type.Assembly.GetType("Synthetic.Derived")!);
+        Assert.That(method.Invoke(null, [instance, 11]), Is.EqualTo(18));
         Assert.That(runtime.Type.GetField("InvocationCount")!.GetValue(null), Is.EqualTo(1));
     }
 
@@ -391,11 +439,11 @@ public partial class IlGeneratorParameterTests
 
     private (InjectedMethodAnalysisContext Context, MethodDefinition Definition, LocalVariable[] Parameters,
         InjectedMethodAnalysisContext Target, Instruction Call, Instruction Comparison, Instruction NullThrow)
-        CreateNullGuard(bool notEqual, bool isVoid)
+        CreateNullGuard(bool notEqual, bool isVoid, TypeAnalysisContext? receiverType = null)
     {
         var target = AddReceiverIndependentTarget(isVoid);
         var (context, definition, parameters) = CreateMethod("Guarded", _app.SystemTypes.SystemInt32Type,
-            [_typeContext, _app.SystemTypes.SystemInt32Type]);
+            [receiverType ?? _typeContext, _app.SystemTypes.SystemInt32Type]);
         var condition = NullGuardLocal("condition", 1210, _app.SystemTypes.SystemBooleanType);
         var result = NullGuardLocal("result", 1211, _app.SystemTypes.SystemInt32Type);
         var comparison = new Instruction(0, notEqual ? OpCode.CheckNotEqual : OpCode.CheckEqual, condition, parameters[0], Imm(0))

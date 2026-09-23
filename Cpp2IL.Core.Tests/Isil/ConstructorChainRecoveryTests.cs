@@ -15,12 +15,24 @@ public class ConstructorChainRecoveryTests
             body[1].NearBranchTarget), Is.True);
     }
 
+    [Test]
+    public void SharedTailThunkCanEndBeforeAnOverestimatedMetadataSpan()
+    {
+        var body = Body();
+        var padded = Convert.FromHexString("CCCC");
+        var decoder = Decoder.Create(64, new ByteArrayCodeReader(padded), body[1].NextIP);
+        body.Add(decoder.Decode());
+        body.Add(decoder.Decode());
+        Assert.That(ConstructorChainRecovery.TryProveShape(body, 0x1000, 9,
+            body[1].NearBranchTarget), Is.True);
+    }
+
     [TestCase("wrong-clear-register")]
     [TestCase("wrong-clear-source")]
     [TestCase("call-instead-of-tail")]
     [TestCase("wrong-target")]
     [TestCase("target-inside-body")]
-    [TestCase("wrong-length")]
+    [TestCase("truncated-span")]
     [TestCase("locked-instruction")]
     public void NeighboringNativeBodiesDoNotProveAConstructorChain(string defect)
     {
@@ -36,7 +48,7 @@ public class ConstructorChainRecoveryTests
             case "call-instead-of-tail": instruction.Code = Code.Call_rel32_64; break;
             case "wrong-target": target++; break;
             case "target-inside-body": target = body[1].IP; break;
-            case "wrong-length": length++; break;
+            case "truncated-span": length--; break;
             case "locked-instruction": instruction.HasLockPrefix = true; break;
         }
         body[defect is "wrong-clear-register" or "wrong-clear-source" or

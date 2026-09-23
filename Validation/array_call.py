@@ -14,6 +14,10 @@ def observations():
     for kind in ("null-receiver-values", "null-receiver-null-array"):
         expected.append({"kind": kind, "result": None, "sameReference": False,
                          "exception": "System.NullReferenceException", "callsAfter": None})
+    expected.append({"kind": "derived-values", "result": [-(1 << 31), 0, (1 << 31) - 1],
+                     "sameReference": True, "exception": "none", "callsAfter": 1})
+    expected.append({"kind": "derived-null-receiver", "result": None, "sameReference": False,
+                     "exception": "System.NullReferenceException", "callsAfter": None})
     return expected
 
 
@@ -26,6 +30,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Array-call behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 3,
+    return {"status": "passed", "observations": len(expected), "methods": 5,
             "platform": report["platform"], "profile": "array-call",
-            "scope": "array identity and contents across an instance call with null receivers; not whole-program equivalence"}
+            "scope": "array identity and contents across base and derived instance calls with null receivers; not whole-program equivalence"}
