@@ -43,7 +43,7 @@ internal static class X86StringFieldReadProof
             method.ImplAttributes != method.DefaultImplAttributes ||
             method.GenericParameters.Count != 0 ||
             method.UnderlyingPointer == 0 || body[0].IP != method.UnderlyingPointer ||
-            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method))
+            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method, requireUniqueBinding: false))
             return null;
 
         TypeAnalysisContext box;

@@ -40,10 +40,36 @@ namespace ReferenceFieldFixture
         public long Marker;
     }
 
+    public class SharedBox
+    {
+        public int[] Prefix;
+        public string Text;
+        public int[] Suffix;
+    }
+
+    public class SharedOuter
+    {
+        public int[] Prefix;
+        public SharedBox Inner;
+        public int[] Suffix;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public string ReadInner()
+        {
+            return Inner.Text;
+        }
+    }
+
     public static class ReferenceReads
     {
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static string Read(ReferenceBox box)
+        {
+            return box.Text;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static string ReadShared(SharedBox box)
         {
             return box.Text;
         }

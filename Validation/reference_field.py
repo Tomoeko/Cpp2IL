@@ -28,6 +28,22 @@ def observations():
                      "outerSuffix": [-19, -23], "sameBoxPrefix": True,
                      "sameBoxSuffix": True, "sameOuterPrefix": True,
                      "sameOuterSuffix": True})
+    expected.append({"kind": "shared-constructors", "boxCreated": True,
+                     "outerCreated": True})
+    for kind in ("shared-direct-value", "shared-nested-value"):
+        expected.append({"kind": kind, "result": "ssss", "sameReference": True,
+                         "exception": "none"})
+    for kind in ("shared-direct-null-value", "shared-nested-null-value"):
+        expected.append({"kind": kind, "result": None, "sameReference": True,
+                         "exception": "none"})
+    for kind in ("shared-direct-null-owner", "shared-nested-null-inner",
+                 "shared-nested-null-outer"):
+        expected.append({"kind": kind, "result": None, "sameReference": False,
+                         "exception": "System.NullReferenceException"})
+    expected.append({"kind": "shared-neighbors", "boxPrefix": [-31],
+                     "boxSuffix": [37], "outerPrefix": [-41], "outerSuffix": [43],
+                     "sameBoxPrefix": True, "sameBoxSuffix": True,
+                     "sameOuterPrefix": True, "sameOuterSuffix": True})
     return expected
 
 
@@ -40,6 +56,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Reference-field behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 6,
+    return {"status": "passed", "observations": len(expected), "methods": 10,
             "platform": report["platform"], "profile": "reference-field",
             "scope": "direct and one-level nested string-field reads with null owners; not whole-program equivalence"}

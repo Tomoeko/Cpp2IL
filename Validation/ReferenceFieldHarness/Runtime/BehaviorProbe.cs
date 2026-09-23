@@ -62,6 +62,43 @@ namespace RecoveryValidation
                 { "sameOuterPrefix", ReferenceEquals(outer.Prefix, outerPrefix) },
                 { "sameOuterSuffix", ReferenceEquals(outer.Suffix, outerSuffix) }
             });
+            var sharedBoxPrefix = new[] { -31 };
+            var sharedBoxSuffix = new[] { 37 };
+            var sharedOuterPrefix = new[] { -41 };
+            var sharedOuterSuffix = new[] { 43 };
+            var sharedBox = new SharedBox
+            {
+                Prefix = sharedBoxPrefix, Suffix = sharedBoxSuffix,
+                Text = new string('s', 4)
+            };
+            var sharedOuter = new SharedOuter
+            {
+                Prefix = sharedOuterPrefix, Inner = sharedBox, Suffix = sharedOuterSuffix
+            };
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "shared-constructors" }, { "boxCreated", sharedBox != null },
+                { "outerCreated", sharedOuter != null }
+            });
+            RecordShared(observations, "shared-direct-value", sharedBox, sharedBox.Text, false);
+            RecordShared(observations, "shared-nested-value", sharedOuter, sharedBox.Text, true);
+            sharedBox.Text = null;
+            RecordShared(observations, "shared-direct-null-value", sharedBox, null, false);
+            RecordShared(observations, "shared-nested-null-value", sharedOuter, null, true);
+            RecordShared(observations, "shared-direct-null-owner", null, null, false);
+            sharedOuter.Inner = null;
+            RecordShared(observations, "shared-nested-null-inner", sharedOuter, null, true);
+            RecordShared(observations, "shared-nested-null-outer", null, null, true);
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "shared-neighbors" },
+                { "boxPrefix", sharedBox.Prefix }, { "boxSuffix", sharedBox.Suffix },
+                { "outerPrefix", sharedOuter.Prefix }, { "outerSuffix", sharedOuter.Suffix },
+                { "sameBoxPrefix", ReferenceEquals(sharedBox.Prefix, sharedBoxPrefix) },
+                { "sameBoxSuffix", ReferenceEquals(sharedBox.Suffix, sharedBoxSuffix) },
+                { "sameOuterPrefix", ReferenceEquals(sharedOuter.Prefix, sharedOuterPrefix) },
+                { "sameOuterSuffix", ReferenceEquals(sharedOuter.Suffix, sharedOuterSuffix) }
+            });
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -71,13 +108,21 @@ namespace RecoveryValidation
         }
 
         private static void Record(List<object> observations, string kind, object owner, string expected, bool nested)
+            => RecordCall(observations, kind, expected,
+                () => nested ? ((ReferenceOuter)owner).ReadInner() : ReferenceReads.Read((ReferenceBox)owner));
+
+        private static void RecordShared(List<object> observations, string kind, object owner, string expected, bool nested)
+            => RecordCall(observations, kind, expected,
+                () => nested ? ((SharedOuter)owner).ReadInner() : ReferenceReads.ReadShared((SharedBox)owner));
+
+        private static void RecordCall(List<object> observations, string kind, string expected, Func<string> read)
         {
             string result = null;
             var sameReference = false;
             var exception = "none";
             try
             {
-                result = nested ? ((ReferenceOuter)owner).ReadInner() : ReferenceReads.Read((ReferenceBox)owner);
+                result = read();
                 sameReference = ReferenceEquals(result, expected);
             }
             catch (Exception error) { exception = error.GetType().FullName; }

@@ -329,6 +329,11 @@ internal static class RuntimeNullGuardCoalescer
     }
 
     internal static bool HasUnchangedNativeSignature(MethodAnalysisContext target)
+        => HasUnchangedNativeSignature(target, requireUniqueBinding: true);
+
+    // A proof that binds the entire native body to this method's own metadata may
+    // accept linker-folded code. Ordinary call targets still require one owner.
+    internal static bool HasUnchangedNativeSignature(MethodAnalysisContext target, bool requireUniqueBinding)
     {
         if (target.Definition is not { GenericContainer: null } definition ||
             target.DeclaringType?.Definition is not { GenericContainer: null } owner ||
@@ -338,7 +343,8 @@ internal static class RuntimeNullGuardCoalescer
             definition.RawReturnType is not { NumMods: 0, Byref: 0, Pinned: 0 } ||
             target.UnderlyingPointer == 0 ||
             !target.AppContext.MethodsByAddress.TryGetValue(target.UnderlyingPointer, out var binding) ||
-            binding.Count != 1 || !ReferenceEquals(binding[0], target))
+            !binding.Any(method => ReferenceEquals(method, target)) ||
+            (requireUniqueBinding && binding.Count != 1))
             return false;
         for (var index = 0; index < target.Parameters.Count; index++)
             if (!ReferenceEquals(target.Parameters[index].Definition, definition.InternalParameterData![index]) ||

@@ -37,6 +37,16 @@ public class RuntimeNullGuardNativeBindingTests
             Reject(() => rawReturn.Pinned = 1, () => rawReturn.Pinned = 0);
             var binding = app.MethodsByAddress[target.UnderlyingPointer];
             Reject(() => binding.Add(target), () => binding.RemoveAt(binding.Count - 1));
+            binding.Add(target);
+            try
+            {
+                Assert.That(RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(target), Is.False);
+                Assert.That(RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(target, requireUniqueBinding: false), Is.True);
+                rawReturn.Pinned = 1;
+                try { Assert.That(RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(target, requireUniqueBinding: false), Is.False); }
+                finally { rawReturn.Pinned = 0; }
+            }
+            finally { binding.RemoveAt(binding.Count - 1); }
             var moved = new MethodAnalysisContext(target.Definition, app.SystemTypes.SystemObjectType);
             Assert.That(RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(moved), Is.False);
 
