@@ -20,6 +20,9 @@ public static partial class IlGenerator
                 !ReferenceEquals(target.AppContext, context.AppContext))
                 throw new DecompilerException("Null-checked invocation marker requires a bound nonvirtual reference-instance call with unchanged signature and pure arguments");
         }
+        foreach (var fieldRead in context.NullCheckedFieldReads)
+            if (!fieldRead.IsValidFor(context))
+                throw new DecompilerException("Null-checked field read marker requires its unchanged instance field and receiver");
     }
 
     private static void ValidateNullCheckedParameterTypes(Instruction call, EmissionLocals locals)

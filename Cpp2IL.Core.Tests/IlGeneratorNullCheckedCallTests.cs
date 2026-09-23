@@ -48,6 +48,63 @@ public partial class IlGeneratorParameterTests
     }
 
     [Test]
+    public void CoalescedFieldReadRetainsNullFailureAndTheLoadedValue()
+    {
+        var fixture = CreateFieldNullGuard();
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.EqualTo(1));
+        Assert.That(fixture.Context.NullCheckedFieldReads, Has.Count.EqualTo(1));
+        Assert.That(fixture.Context.ControlFlowGraph!.Instructions.Any(i => i.OpCode == OpCode.RuntimeNullThrow), Is.False);
+        SsaForm.Remove(fixture.Context);
+        CopyCoalescer.Run(fixture.Context);
+        Simplifier.Simplify(fixture.Context);
+        DeadCodeEliminator.Run(fixture.Context);
+        LocalVariables.RemoveUnused(fixture.Context);
+        IlGenerator.GenerateIl(fixture.Context, fixture.Definition);
+        Assert.That(fixture.Definition.CilMethodBody!.Instructions.Count(i => i.OpCode == CilOpCodes.Ldfld), Is.EqualTo(1));
+        AddDefaultConstructor();
+        using var runtime = Load();
+        var method = runtime.Type.GetMethod("GuardedField")!;
+        Assert.That(Assert.Throws<TargetInvocationException>(() => method.Invoke(null, [null]))!.InnerException,
+            Is.TypeOf<NullReferenceException>());
+        var instance = Activator.CreateInstance(runtime.Type)!;
+        runtime.Type.GetField("Value")!.SetValue(instance, -17);
+        Assert.That(method.Invoke(null, [instance]), Is.EqualTo(-17));
+    }
+
+    [TestCase("receiver")]
+    [TestCase("offset")]
+    [TestCase("static-field")]
+    [TestCase("parameter-type")]
+    [TestCase("removed-load")]
+    public void FieldNullGuardProofMustSurviveUntilEmission(string mutation)
+    {
+        var fixture = CreateFieldNullGuard();
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.EqualTo(1));
+        var access = (FieldReference)fixture.Load.Operands[1];
+        switch (mutation)
+        {
+            case "receiver": access.Local = new LocalVariable("other", fixture.Receiver.Register.Copy(2), _typeContext); break;
+            case "offset": access.Offset++; break;
+            case "static-field": access.Field.Attributes |= System.Reflection.FieldAttributes.Static; break;
+            case "parameter-type": fixture.Context.Parameters[0].ParameterType = _app.SystemTypes.SystemObjectType; break;
+            case "removed-load": fixture.Context.ControlFlowGraph!.FindBlockByInstruction(fixture.Load)!.Instructions.Remove(fixture.Load); break;
+        }
+        Assert.That(() => IlGenerator.GenerateIl(fixture.Context, fixture.Definition),
+            Throws.TypeOf<DecompilerException>().With.Message.Contains("Null-checked field read marker"));
+    }
+
+    [Test]
+    public void FieldNullGuardDoesNotMoveAnEarlierEffectAcrossTheNullFailure()
+    {
+        var fixture = CreateFieldNullGuard();
+        var block = fixture.Context.ControlFlowGraph!.FindBlockByInstruction(fixture.Load)!;
+        block.Instructions.Insert(0, new Instruction(-1, OpCode.Move,
+            new FieldReference(fixture.Field, fixture.Receiver, 16), Imm(1)));
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.Zero);
+        Assert.That(fixture.Context.ControlFlowGraph.Instructions, Does.Contain(fixture.NullThrow));
+    }
+
+    [Test]
     public void CoalescedLoopRetainsZeroIterationNullBypassAndLoopCarriedArgument()
     {
         var target = AddReceiverIndependentTarget(false);
@@ -298,6 +355,34 @@ public partial class IlGeneratorParameterTests
             : [comparison, branch, call, returned, throwing]);
         context.Locals.AddRange([condition, result]);
         return (context, definition, parameters, target, call, comparison, throwing);
+    }
+
+    private (InjectedMethodAnalysisContext Context, MethodDefinition Definition, LocalVariable Receiver,
+        InjectedFieldAnalysisContext Field, Instruction Load, Instruction NullThrow) CreateFieldNullGuard()
+    {
+        var fieldDefinition = new FieldDefinition("Value", FieldAttributes.Public, _module.CorLibTypeFactory.Int32);
+        _type.Fields.Add(fieldDefinition);
+        var field = new InjectedFieldAnalysisContext("Value", _app.SystemTypes.SystemInt32Type,
+            System.Reflection.FieldAttributes.Public, _typeContext, 16);
+        field.PutExtraData("AsmResolverField", fieldDefinition);
+        _typeContext.Fields.Add(field);
+        var (context, definition, parameters) = CreateMethod("GuardedField", _app.SystemTypes.SystemInt32Type,
+            [_typeContext]);
+        var condition = NullGuardLocal("condition", 1240, _app.SystemTypes.SystemBooleanType);
+        var result = NullGuardLocal("result", 1241, _app.SystemTypes.SystemInt32Type);
+        var comparison = new Instruction(0, OpCode.CheckEqual, condition, parameters[0], Imm(0))
+            { IntegerBitWidth = 64 };
+        var load = new Instruction(3, OpCode.Move, result, new FieldReference(field, parameters[0], 16));
+        var throwing = new Instruction(5, OpCode.RuntimeNullThrow, new StringLiteral("synthetic-proof"));
+        context.ControlFlowGraph = new([
+            comparison,
+            new Instruction(1, OpCode.ConditionalJump, throwing, condition),
+            load,
+            new Instruction(4, OpCode.Return, result),
+            throwing,
+        ]);
+        context.Locals.AddRange([condition, result]);
+        return (context, definition, parameters[0], field, load, throwing);
     }
 
     private InjectedMethodAnalysisContext AddReceiverIndependentTarget(bool isVoid)

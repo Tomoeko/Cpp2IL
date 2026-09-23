@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.ISIL;
@@ -11,12 +12,45 @@ using LibCpp2IL.PE;
 namespace Cpp2IL.Core.Analysis;
 
 /// <summary>
-/// Replaces an exact runtime null-check diamond with an invocation that retains the check.
+/// Replaces an exact runtime null-check diamond with a managed operation that retains the check.
 /// Runs in SSA after typed copy propagation. It does not reconstruct exception allocation.
 /// </summary>
 internal static class RuntimeNullGuardCoalescer
 {
     private const string SetOptionAttribute = "Unity.IL2CPP.CompilerServices.Il2CppSetOptionAttribute";
+
+    internal sealed record FieldReadEvidence(Instruction Load, FieldReference Access, LocalVariable Receiver,
+        FieldAnalysisContext Field, TypeAnalysisContext Owner, TypeAnalysisContext ValueType, int Offset,
+        FieldAttributes Attributes, bool RequireNativeBinding)
+    {
+        internal bool IsValidFor(MethodAnalysisContext method)
+        {
+            if (method.ControlFlowGraph?.Instructions.Contains(Load) != true ||
+                Load is not { OpCode: OpCode.Move, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct,
+                    Operands: [LocalVariable destination, FieldReference access] } ||
+                !ReferenceEquals(access, Access) || !ReferenceEquals(access.Local, Receiver) ||
+                !ReferenceEquals(access.Field, Field) || !ReferenceEquals(Receiver.Type, Owner) ||
+                !ReferenceEquals(Field.DeclaringType, Owner) || !ReferenceEquals(Field.FieldType, ValueType) ||
+                !ReferenceEquals(destination.Type, ValueType) || Field.Attributes != Attributes ||
+                Field.IsStatic || access.Offset != Offset || Field.Offset != Offset ||
+                RequireNativeBinding && !HasUnchangedNativeField(access))
+                return false;
+            if (!method.ParameterLocals.Contains(Receiver))
+                return true;
+            if (Receiver.IsThis)
+                return !method.IsStatic && ReferenceEquals(method.DeclaringType, Owner);
+            var skipThis = method.IsStatic ? 0 : 1;
+            var matches = Enumerable.Range(0, method.Parameters.Count).Where(index =>
+                index + skipThis < method.ParameterOperands.Count &&
+                method.ParameterOperands[index + skipThis] is Register register &&
+                register.Number == Receiver.Register.Number && Receiver.Register.Version == -1).ToArray();
+            if (matches.Length != 1)
+                return false;
+            var parameter = method.Parameters[matches[0]];
+            return !parameter.IsRef && ReferenceEquals(parameter.ParameterType, Owner) &&
+                   ReferenceEquals(parameter.DefaultParameterType, Owner);
+        }
+    }
 
     public static int Run(MethodAnalysisContext method)
     {
@@ -28,20 +62,23 @@ internal static class RuntimeNullGuardCoalescer
         {
             OpCode: OpCode.RuntimeNullThrow, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct,
             Operands: [RuntimeNullThrowEvidence evidence],
-        } && evidence.IsValidFor(method.AppContext), HasUnchangedNativeSignature);
+        } && evidence.IsValidFor(method.AppContext), HasUnchangedNativeSignature,
+            HasUnchangedNativeField, true);
     }
 
     // Graph-only tests supply an intrinsic predicate and explicit injected managed signatures.
     // Production additionally requires native helper evidence and original metadata binding.
     internal static int Run(MethodAnalysisContext method, Func<Instruction, bool> provesRuntimeNullThrow)
-        => RunCore(method, provesRuntimeNullThrow, _ => true);
+        => RunCore(method, provesRuntimeNullThrow, _ => true, _ => true, false);
 
     private static int RunCore(MethodAnalysisContext method, Func<Instruction, bool> provesRuntimeNullThrow,
-        Func<MethodAnalysisContext, bool> provesNativeTarget)
+        Func<MethodAnalysisContext, bool> provesNativeTarget,
+        Func<FieldReference, bool> provesNativeField, bool requireNativeFieldBinding)
     {
         var graph = method.ControlFlowGraph!;
         var changed = 0;
-        while (TryRewriteOne(method, graph, provesRuntimeNullThrow, provesNativeTarget))
+        while (TryRewriteOne(method, graph, provesRuntimeNullThrow, provesNativeTarget,
+                   provesNativeField, requireNativeFieldBinding))
         {
             changed++;
             graph.RemoveUnreachableBlocks();
@@ -52,7 +89,8 @@ internal static class RuntimeNullGuardCoalescer
     }
 
     private static bool TryRewriteOne(MethodAnalysisContext method, ISILControlFlowGraph graph,
-        Func<Instruction, bool> provesRuntimeNullThrow, Func<MethodAnalysisContext, bool> provesNativeTarget)
+        Func<Instruction, bool> provesRuntimeNullThrow, Func<MethodAnalysisContext, bool> provesNativeTarget,
+        Func<FieldReference, bool> provesNativeField, bool requireNativeFieldBinding)
     {
         var definitions = new Dictionary<LocalVariable, (Block Block, Instruction Instruction)>();
         foreach (var block in graph.Blocks)
@@ -90,12 +128,18 @@ internal static class RuntimeNullGuardCoalescer
             var other = guard.Successors.Single(successor => !ReferenceEquals(successor, taken));
             var nullEntry = comparison.OpCode == OpCode.CheckEqual ? taken : other;
             var callEntry = comparison.OpCode == OpCode.CheckEqual ? other : taken;
-            if (!NullArmIsExclusive(nullEntry, guard) || !TryCall(callEntry, guard, receiver, out var call))
+            if (!NullArmIsExclusive(nullEntry, guard) ||
+                !TryGuardedOperation(callEntry, guard, receiver, out var operation, out var fieldAccess))
                 continue;
 
-            // Neither the call nor its argument setup moves. The null input now takes the same
-            // pure setup path, and callvirt performs the runtime check at the original invocation.
-            call.CallSemantics = CallSemantics.NullCheckedInstance;
+            // Neither the operation nor its pure setup moves. The null input takes the same
+            // path, where callvirt or ldfld performs the receiver check.
+            if (fieldAccess == null)
+                operation.CallSemantics = CallSemantics.NullCheckedInstance;
+            else
+                method.NullCheckedFieldReads.Add(new FieldReadEvidence(operation, fieldAccess, receiver,
+                    fieldAccess.Field, fieldAccess.Field.DeclaringType, fieldAccess.Field.FieldType,
+                    fieldAccess.Offset, fieldAccess.Field.Attributes, requireNativeFieldBinding));
             branch.OpCode = OpCode.Jump;
             branch.SetOperands(callEntry);
             guard.Successors.Remove(nullEntry);
@@ -137,9 +181,11 @@ internal static class RuntimeNullGuardCoalescer
             }
         }
 
-        bool TryCall(Block entry, Block predecessor, LocalVariable receiver, out Instruction call)
+        bool TryGuardedOperation(Block entry, Block predecessor, LocalVariable receiver,
+            out Instruction operation, out FieldReference? fieldAccess)
         {
-            call = null!;
+            operation = null!;
+            fieldAccess = null;
             var seen = new HashSet<Block> { predecessor };
             while (true)
             {
@@ -158,8 +204,21 @@ internal static class RuntimeNullGuardCoalescer
                             !ReferenceEquals(calledReceiver, receiver) ||
                             OperandEffects.ReadLocals(instruction).Any(local => !Available(local, entry, instruction)))
                             return false;
-                        call = instruction;
+                        operation = instruction;
                         return true; // Instructions after this invocation are untouched.
+                    }
+                    if (instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                            Operands: [LocalVariable fieldDestination, FieldReference access] } &&
+                        ReferenceEquals(access.Local, receiver) &&
+                        receiver.Type != null && NullCheckedCall.IsReferenceClass(receiver.Type) &&
+                        ReferenceEquals(access.Field.DeclaringType, receiver.Type) &&
+                        !access.Field.IsStatic && access.Offset >= 0 && access.Offset == access.Field.Offset &&
+                        ReferenceEquals(fieldDestination.Type, access.Field.FieldType) &&
+                        provesNativeField(access))
+                    {
+                        operation = instruction;
+                        fieldAccess = access;
+                        return true; // The first effect is the managed field read and null check.
                     }
                     if (instruction.OpCode == OpCode.Nop && instruction.IntegerBitWidth == 0 && instruction.Operands.Count == 0)
                         continue;
@@ -209,6 +268,16 @@ internal static class RuntimeNullGuardCoalescer
                 target.Parameters[index].Definition?.RawType is not { NumMods: 0, Byref: 0, Pinned: 0 })
                 return false;
         return true;
+    }
+
+    private static bool HasUnchangedNativeField(FieldReference access)
+    {
+        var field = access.Field;
+        var owner = field.DeclaringType;
+        return field.Name == field.DefaultName &&
+               ReferenceEquals(field.FieldType, owner.AppContext.SystemTypes.SystemInt32Type) &&
+               owner.Fields.Contains(field) && NullCheckedCall.IsReferenceClass(owner) &&
+               NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, 32);
     }
 
     private static bool HasOutputOptions(MethodAnalysisContext method)
