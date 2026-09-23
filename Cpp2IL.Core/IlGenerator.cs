@@ -558,9 +558,9 @@ public static partial class IlGenerator
                 // operands are coerced to the (float) result type. A no-op when they already match.
                 var floatConversion = FloatArithmeticConversion(instruction);
 
-                if (instruction.IntegerBitWidth == 8 && instruction.OpCode is OpCode.CheckEqual or OpCode.CheckNotEqual)
+                if (instruction.IntegerBitWidth is 8 or 16 && instruction.OpCode is OpCode.CheckEqual or OpCode.CheckNotEqual)
                 {
-                    // The preflight proved one captured byte field compared only with zero.
+                    // The preflight proved one captured byte/word field compared only with zero.
                     // Both signed and unsigned managed extensions preserve that predicate.
                     LoadOperand(instruction.Operands[1], method, locals);
                     LoadOperand(instruction.Operands[2], method, locals);

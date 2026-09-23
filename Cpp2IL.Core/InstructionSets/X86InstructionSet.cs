@@ -60,6 +60,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
             return integerExtension;
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
+        var shiftCountExtensions = X86ShiftCountExtensionProof.Find(context, nativeInstructions);
         var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);
         if (metadataGuard != null)
             context.PutExtraData("X86MetadataLiteralGuardProof", metadataGuard);
@@ -67,7 +68,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         {
             if (metadataGuard?.RemovedAddresses.Contains(instruction.IP) == true)
                 continue;
-            ConvertInstructionStatement(instruction, instructions, addresses, context, singleWidthDividends.Contains(instruction.IP));
+            ConvertInstructionStatement(instruction, instructions, addresses, context,
+                singleWidthDividends.Contains(instruction.IP), shiftCountExtensions.Contains(instruction.IP));
         }
 
         X86BodyBoundary.AppendFallthroughFailure(instructions);
@@ -205,10 +207,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         (RflagsBits.ZF, "ZF"), (RflagsBits.SF, "SF"), (RflagsBits.OF, "OF"),
     ];
 
-    private void ConvertInstructionStatement(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend = false)
+    private void ConvertInstructionStatement(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend = false, bool shiftCountExtension = false)
     {
         var first = instructions.Count;
-        ConvertInstructionStatementCore(instruction, instructions, addresses, context, singleWidthDividend);
+        ConvertInstructionStatementCore(instruction, instructions, addresses, context, singleWidthDividend, shiftCountExtension);
 
         // CALL itself does not change RFLAGS, but the ABI does not preserve status flags across
         // its opaque callee. Tail jumps have no returning continuation in the current method.
@@ -266,7 +268,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         }
     }
 
-    private void ConvertInstructionStatementCore(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend)
+    private void ConvertInstructionStatementCore(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend, bool shiftCountExtension)
     {
         var callNoReturn = false;
         int operandSize;
@@ -314,6 +316,15 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertScalarFloatOperand(instruction, 1, instruction.Mnemonic == Mnemonic.Movss, context));
                 break;
             case Mnemonic.Movzx:
+                if (shiftCountExtension)
+                {
+                    // The source is a proved Int32 parameter (possibly explicitly masked),
+                    // and the result is read only through CL by 32/64-bit register shifts.
+                    Add(instruction.IP, ISIL.OpCode.IntegerExtend, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1),
+                        Imm(8), Imm(32), Imm(0));
+                    break;
+                }
+                goto case Mnemonic.Movsx;
             case Mnemonic.Movsx:
             case Mnemonic.Movsxd:
             case Mnemonic.Cbw:
@@ -322,7 +333,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Cwd:
                 // Treating extension as Move loses source truncation, signedness and the
                 // different upper-bit effects of 16/32/64-bit destination writes. Only the
-                // separate closed-method proof may lower a supported extension sequence.
+                // separate native proofs may lower a supported extension sequence.
                 Add(instruction.IP, ISIL.OpCode.NotImplemented,
                     new ISIL.StringLiteral("Integer extension requires proved source bits and destination register semantics: " + FormatInstruction(instruction)));
                 break;
@@ -792,17 +803,20 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Test:
             case Mnemonic.Cmp:
                 operandSize = (instruction.Op0Kind == OpKind.Register ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize()) * 8;
-                if (instruction.Mnemonic == Mnemonic.Cmp && operandSize == 8 && instruction.Op0Kind == OpKind.Memory &&
-                    instruction.Op1Kind == OpKind.Immediate8 && instruction.Immediate8 == 0 &&
+                var narrowZero = operandSize == 8 && instruction.Op1Kind == OpKind.Immediate8 && instruction.Immediate8 == 0 ||
+                                 operandSize == 16 && (instruction.Op1Kind == OpKind.Immediate8to16 && instruction.Immediate8to16 == 0 ||
+                                                       instruction.Op1Kind == OpKind.Immediate16 && instruction.Immediate16 == 0);
+                if (instruction.Mnemonic == Mnemonic.Cmp && narrowZero && instruction.Op0Kind == OpKind.Memory &&
                     instruction.MemoryBase.GetSize() == 8 && instruction.MemoryBase != Register.RIP && instruction.MemoryIndex == Register.None &&
                     instruction.SegmentPrefix == Register.None && !instruction.HasLockPrefix)
                 {
-                    // Zero/nonzero is invariant under signed or unsigned byte extension. Keep
+                    // Zero/nonzero is invariant under signed or unsigned narrow extension. Keep
                     // the read width until metadata proves a matching instance field at emission.
                     // Other flag consumers receive unresolved assignments from the common clobber
                     // path; this does not admit partial registers or drop volatile barrier calls.
-                    var capturedByte = CaptureComparisonOperand(instruction.IP, ConvertOperand(instruction, 0), "COMPARE_BYTE", 8);
-                    Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), capturedByte, Imm(0)).IntegerBitWidth = 8;
+                    var capturedNarrow = CaptureComparisonOperand(instruction.IP, ConvertOperand(instruction, 0),
+                        operandSize == 8 ? "COMPARE_BYTE" : "COMPARE_WORD", operandSize);
+                    Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), capturedNarrow, Imm(0)).IntegerBitWidth = operandSize;
                     break;
                 }
                 if (operandSize is not (32 or 64))

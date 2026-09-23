@@ -5,59 +5,70 @@ using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
+using LibCpp2IL;
 using LibCpp2IL.BinaryStructures;
 using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core.Analysis;
 
 /// <summary>
-/// Proves a captured byte-sized field read is used only as a zero/nonzero comparison.
+/// Proves a captured byte- or word-sized field read is used only as a zero/nonzero comparison.
 /// This does not model partial registers, signed ordering, arrays, or unknown native memory.
 /// </summary>
 internal static class NarrowFieldEqualityProof
 {
     public static void Validate(MethodAnalysisContext context)
     {
-        if (!context.ControlFlowGraph!.Instructions.Any(i => i.IntegerBitWidth == 8 &&
+        if (!context.ControlFlowGraph!.Instructions.Any(i => i.IntegerBitWidth is 8 or 16 &&
                 i.OpCode is OpCode.Move or OpCode.CheckEqual or OpCode.CheckNotEqual))
             return;
-        if (context.AppContext.Binary is not PE { PointerSizeBytes: 8 } || context.AppContext.UnityVersion.ToString() != "2021.3.35f1")
-            throw new DecompilerException("Native byte field equality requires the supported Windows x64 Unity profile");
-        Validate(context.ControlFlowGraph, HasUnchangedByteFieldLayout);
+        if (context.AppContext.Binary is not PE { PointerSizeBytes: 8 } ||
+            context.AppContext.Binary.InstructionSetId != DefaultInstructionSets.X86_64 ||
+            context.AppContext.UnityVersion.ToString() != "2021.3.35f1")
+            throw new DecompilerException("Native narrow field equality requires the supported Windows x64 Unity profile");
+        Validate(context.ControlFlowGraph, HasUnchangedFieldLayout);
     }
 
     internal static void Validate(ISILControlFlowGraph graph, Func<FieldReference, bool> isExactByteField)
+        => Validate(graph, (field, width) => width == 8 && isExactByteField(field));
+
+    internal static void Validate(ISILControlFlowGraph graph, Func<FieldReference, int, bool> isExactField)
     {
         var instructions = graph.Instructions;
-        var narrow = instructions.Where(i => i.IntegerBitWidth == 8).ToArray();
+        var narrow = instructions.Where(i => i.IntegerBitWidth is 8 or 16).ToArray();
         if (narrow.Length == 0)
             return;
         var mutable = OperandEffects.LocalsWithMutableStorage(instructions);
         foreach (var instruction in narrow)
         {
+            var widthName = instruction.IntegerBitWidth == 8 ? "byte" : "word";
             if (instruction is { OpCode: OpCode.Move, Operands: [LocalVariable captured, FieldReference field] })
             {
-                if (!isExactByteField(field) || !ReferenceEquals(captured.Type, field.Field.FieldType) ||
+                if (!isExactField(field, instruction.IntegerBitWidth) || !ReferenceEquals(captured.Type, field.Field.FieldType) ||
                     mutable.Contains(captured) || instructions.Count(i => ReferenceEquals(i.Destination, captured)) != 1)
-                    throw new DecompilerException("Native byte capture requires an unchanged, uniquely assigned byte-sized instance field; absent modifier counts do not prove nonvolatile semantics");
+                    throw new DecompilerException($"Native {widthName} capture requires an unchanged, uniquely assigned {widthName}-sized instance field; absent modifier counts do not prove nonvolatile semantics");
                 continue;
             }
             if (instruction.OpCode is not (OpCode.CheckEqual or OpCode.CheckNotEqual) ||
                 instruction.Operands is not [_, LocalVariable value, Immediate { Value: 0 }])
-                throw new DecompilerException("Native byte comparison supports only proved field equality against zero");
+                throw new DecompilerException($"Native {widthName} comparison supports only proved field equality against zero");
 
             var definitions = narrow.Where(i => ReferenceEquals(i.Destination, value)).ToArray();
             if (definitions is not [{ OpCode: OpCode.Move, Operands: [_, FieldReference] } capture] ||
+                capture.IntegerBitWidth != instruction.IntegerBitWidth ||
                 !graph.Blocks.Any(block => block.Instructions.IndexOf(capture) is var definitionIndex && definitionIndex >= 0 &&
                     block.Instructions.IndexOf(instruction) > definitionIndex))
-                throw new DecompilerException("Native byte equality requires a preceding field capture in the same block");
+                throw new DecompilerException($"Native {widthName} equality requires a preceding field capture of the same width in the same block");
         }
     }
 
     // This proves storage width/layout only. Exact-target controls demonstrate that NumMods=0
-    // can hide modreq(IsVolatile). The lifter admits only a direct byte-memory CMP with zero;
+    // can hide modreq(IsVolatile). The lifter admits only a direct byte/word-memory CMP with zero;
     // separate loads, barrier calls and register TEST forms retain their own unresolved effects.
     internal static bool HasUnchangedByteFieldLayout(FieldReference reference)
+        => HasUnchangedFieldLayout(reference, 8);
+
+    internal static bool HasUnchangedFieldLayout(FieldReference reference, int width)
     {
         var field = reference.Field;
         var owner = field.DeclaringType;
@@ -65,7 +76,7 @@ internal static class NarrowFieldEqualityProof
             (field.Attributes & (FieldAttributes.Literal | FieldAttributes.HasFieldMarshal)) != 0 ||
             field.BackingData?.Field.RawFieldType is not { NumMods: 0, Byref: 0, Pinned: 0 } ||
             !ReferenceEquals(field.FieldType, field.DefaultFieldType) ||
-            field.FieldType.Type is not (Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN or Il2CppTypeEnum.IL2CPP_TYPE_I1 or Il2CppTypeEnum.IL2CPP_TYPE_U1) ||
+            !HasExactStorageWidth(field.FieldType, width) ||
             field.Offset < 2 * owner.AppContext.Binary.PointerSizeBytes || field.Offset != field.DefaultOffset || reference.Offset != field.Offset ||
             !ReferenceEquals(reference.Local.Type, owner) || owner.IsValueType || owner.IsEnumType ||
             owner is GenericInstanceTypeAnalysisContext || owner.GenericParameters.Count != 0 ||
@@ -87,12 +98,22 @@ internal static class NarrowFieldEqualityProof
                 var size = StorageSize(other.FieldType, owner.AppContext.Binary.PointerSizeBytes);
                 if (other.Attributes != other.DefaultAttributes || !ReferenceEquals(other.FieldType, other.DefaultFieldType) ||
                     other.Offset < 0 || other.Offset != other.DefaultOffset || size <= 0 ||
-                    other.Offset <= field.Offset && field.Offset - (long)other.Offset < size)
+                    StorageRangesOverlap(field.Offset, width / 8, other.Offset, size))
                     return false;
             }
         }
         return true;
     }
+
+    internal static bool HasExactStorageWidth(TypeAnalysisContext type, int width) => width switch
+    {
+        8 => type.Type is Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN or Il2CppTypeEnum.IL2CPP_TYPE_I1 or Il2CppTypeEnum.IL2CPP_TYPE_U1,
+        16 => type.Type is Il2CppTypeEnum.IL2CPP_TYPE_I2 or Il2CppTypeEnum.IL2CPP_TYPE_U2 or Il2CppTypeEnum.IL2CPP_TYPE_CHAR,
+        _ => false,
+    };
+
+    internal static bool StorageRangesOverlap(long firstOffset, long firstSize, long secondOffset, long secondSize)
+        => firstOffset < secondOffset + secondSize && secondOffset < firstOffset + firstSize;
 
     private static long StorageSize(TypeAnalysisContext type, int pointerSize) => type.Type switch
     {

@@ -30,8 +30,16 @@ four methods, and three fields with no lost identities. Player-only inspection
 confirms all three predicates use a direct word-sized comparison with a
 sign-extended eight-bit zero immediate followed by `SETE`.
 
-No recovered-code compilation, typed-IL, or behavioral pass has been recorded for
-this fixture yet. It is independent of the larger unresolved narrow-comparison
-fixture. Support for packed or overlapping layout,
-volatile/barrier sequences, indexed or address-size-overridden memory, partial
-register arithmetic, and nonzero or ordered comparisons is outside this scope.
+Player-only strict recovery now emits all four selected methods without detected
+degradation. The recovered assembly passed typed IL verification, and both its
+declarations and the rebuilt player's declarations match the original shipped
+assembly under the independent comparer projection, with no stripping losses.
+The generated C# compiled in the supplied Windows editor and rebuilt as a Windows
+x64 Release IL2CPP player. Recovered editor and native-player runs each passed all
+786,438 observations, with predicate and field-preservation counts kept separate.
+
+This fixture is independent of the larger unresolved narrow-comparison fixture.
+Support for packed or overlapping layout, volatile/barrier sequences, indexed or
+address-size-overridden memory, partial register arithmetic, and nonzero or
+ordered comparisons is outside this scope. The exhaustive input result applies
+to these three predicates and declared fields, not to arbitrary 16-bit operations.
