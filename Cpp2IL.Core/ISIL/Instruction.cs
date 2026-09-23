@@ -95,6 +95,7 @@ public class Instruction : IOperand
         switch (OpCode)
         {
             case OpCode.Move:
+            case OpCode.UnresolvedValue:
             case OpCode.Phi:
             case OpCode.Add:
             case OpCode.Subtract:

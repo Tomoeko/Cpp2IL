@@ -70,6 +70,15 @@ public static class IlGenerator
 
     public static void GenerateIl(MethodAnalysisContext context, MethodDefinition definition)
     {
+        // Diagnose retained lifting failures before local typing. An unsupported operation
+        // often also leaves its result untyped; that secondary error must not hide the cause.
+        var unsupported = context.ControlFlowGraph!.Instructions.Where(i =>
+            i.OpCode is OpCode.Invalid or OpCode.NotImplemented or OpCode.Interrupt or OpCode.UnresolvedValue or OpCode.Phi).ToArray();
+        if (unsupported.Length != 0)
+            throw new DecompilerException($"Unsupported instructions ({unsupported.Length}): " +
+                string.Join("; ", unsupported.Take(12).Select(i => i.ToString())) +
+                (unsupported.Length > 12 ? "; additional failures omitted" : ""));
+
         // Native return registers can remain live even when metadata identifies a void callee.
         // There is no managed value to store in that case. Check before constructor fusion can
         // erase the call, otherwise InitializeLocals would silently supply a fabricated zero.
@@ -291,6 +300,7 @@ public static class IlGenerator
             case OpCode.Invalid:
             case OpCode.NotImplemented:
             case OpCode.Interrupt:
+            case OpCode.UnresolvedValue:
                 throw new DecompilerException($"Unsupported instruction: {instruction}");
 
             case OpCode.Nop:

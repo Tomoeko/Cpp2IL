@@ -135,4 +135,10 @@ public enum OpCode
     CheckLessOrEqualUnsigned,
     /// <summary>Unsigned integer comparison: op 2 is greater than or equal to op 3.</summary>
     CheckGreaterOrEqualUnsigned,
+
+    /// <summary>
+    /// Defines op 1 with a value whose semantics are not recovered; op 2 is a diagnostic string.
+    /// May be removed only when the definition is unused. A surviving definition cannot emit IL.
+    /// </summary>
+    UnresolvedValue,
 }

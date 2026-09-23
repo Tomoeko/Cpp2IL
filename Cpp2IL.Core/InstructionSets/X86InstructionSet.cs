@@ -192,14 +192,81 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         return (dataReferences, callTargets);
     }
 
-    internal List<ISIL.Instruction> GetIsilFromInstruction(Instruction instruction)
+    internal List<ISIL.Instruction> GetIsilFromInstruction(Instruction instruction, MethodAnalysisContext? context = null)
     {
         var instructions = new List<ISIL.Instruction>();
-        ConvertInstructionStatement(instruction, instructions, [], null!);
+        ConvertInstructionStatement(instruction, instructions, [], context!);
         return instructions;
     }
 
+    private static readonly (RflagsBits Flag, string Name)[] StatusFlags =
+    [
+        (RflagsBits.CF, "CF"), (RflagsBits.PF, "PF"), (RflagsBits.AF, "AF"),
+        (RflagsBits.ZF, "ZF"), (RflagsBits.SF, "SF"), (RflagsBits.OF, "OF"),
+    ];
+
     private void ConvertInstructionStatement(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context)
+    {
+        var first = instructions.Count;
+        ConvertInstructionStatementCore(instruction, instructions, addresses, context);
+
+        // CALL itself does not change RFLAGS, but the ABI does not preserve status flags across
+        // its opaque callee. Tail jumps have no returning continuation in the current method.
+        var opaqueCall = instruction.Mnemonic == Mnemonic.Call;
+        var modified = opaqueCall
+            ? RflagsBits.CF | RflagsBits.PF | RflagsBits.AF | RflagsBits.ZF | RflagsBits.SF | RflagsBits.OF
+            : instruction.RflagsModified;
+        if (modified == RflagsBits.None)
+            return;
+
+        var emittedFlags = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = first; index < instructions.Count; index++)
+        {
+            var emitted = instructions[index];
+            if (emitted.OpCode is ISIL.OpCode.Invalid or ISIL.OpCode.NotImplemented)
+                return; // The operation already rejects recovery independently of its flag results.
+            if (emitted.Destination is ISIL.Register destination)
+                emittedFlags.Add(destination.Name);
+        }
+
+        var conditionalFlags = instruction.Mnemonic is Mnemonic.Shl or Mnemonic.Sal or Mnemonic.Shr or Mnemonic.Sar
+            or Mnemonic.Shld or Mnemonic.Shrd or Mnemonic.Rol or Mnemonic.Ror or Mnemonic.Rcl or Mnemonic.Rcr;
+        if (conditionalFlags)
+        {
+            // Immediate counts can prove that no flags change. A variable count can be zero,
+            // so never treat its "cleared" flag metadata as an unconditional constant.
+            var countIndex = instruction.OpCount - 1;
+            if (countIndex > 0 && instruction.GetOpKind(countIndex).IsImmediate())
+            {
+                var width = instruction.Op0Kind == OpKind.Register ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize();
+                if ((instruction.GetImmediate(countIndex) & (width == 8 ? 63UL : 31UL)) == 0)
+                    modified = RflagsBits.None;
+            }
+        }
+
+        foreach (var (flag, name) in StatusFlags)
+        {
+            if ((modified & flag) == 0 || emittedFlags.Contains(name))
+                continue;
+            var destination = new ISIL.Register(null, name);
+            ISIL.Instruction definition;
+            if (!opaqueCall && !conditionalFlags && (instruction.RflagsCleared & flag) != 0)
+                definition = new(instructions.Count, ISIL.OpCode.Move, destination, Imm(0));
+            else if (!opaqueCall && !conditionalFlags && (instruction.RflagsSet & flag) != 0)
+                definition = new(instructions.Count, ISIL.OpCode.Move, destination, Imm(1));
+            else
+            {
+                var reason = opaqueCall ? $"Opaque call does not preserve {name}."
+                    : (instruction.RflagsUndefined & flag) != 0 ? $"Native {instruction.Mnemonic} leaves {name} undefined."
+                    : $"Native {instruction.Mnemonic} {name} result is not recovered.";
+                definition = new(instructions.Count, ISIL.OpCode.UnresolvedValue, destination, new ISIL.StringLiteral(reason));
+            }
+            addresses.Add(instruction.IP);
+            instructions.Add(definition);
+        }
+    }
+
+    private void ConvertInstructionStatementCore(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context)
     {
         var callNoReturn = false;
         int operandSize;

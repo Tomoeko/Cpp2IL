@@ -69,6 +69,20 @@ public class IlRecoverySafetyTests
             Throws.TypeOf<DecompilerException>().With.Message.Contains("Local type is unresolved"));
     }
 
+    [TestCase(OpCode.NotImplemented)]
+    [TestCase(OpCode.UnresolvedValue)]
+    public void LiftingFailureIsDiagnosedBeforeItsUnknownResultType(OpCode opcode)
+    {
+        var local = new LocalVariable("unknown", new Register(null, "unknown"));
+        var (context, definition) = CreateMethod(
+            [new(0, opcode, local, new StringLiteral("Synthetic flag value is unresolved")), new(1, OpCode.Return)]);
+        context.Locals.Add(local);
+
+        Assert.That(() => IlGenerator.GenerateIl(context, definition),
+            Throws.TypeOf<DecompilerException>().With.Message.Contains("Synthetic flag value is unresolved"));
+        Assert.That(definition.CilMethodBody, Is.Null, "Preflight failure must not leave a partially generated body.");
+    }
+
     [Test]
     public void UnresolvedNativeStoreCannotBeDiscarded()
     {

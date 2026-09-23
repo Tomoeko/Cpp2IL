@@ -111,6 +111,11 @@ public class X86ComparisonTests
         };
         foreach (var instruction in code)
         {
+            if (instruction.OpCode == OpCode.UnresolvedValue)
+            {
+                values.Remove(((Register)instruction.Destination!).Name);
+                continue; // A later read of this unmodelled flag must fail through Read above.
+            }
             if (instruction.OpCode == OpCode.Nop)
                 continue;
             if (instruction.OpCode == OpCode.ConditionalJump)

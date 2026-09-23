@@ -73,7 +73,7 @@ public static class DeadCodeEliminator
     {
         var pureOperation = instruction.OpCode switch
         {
-            OpCode.Move or OpCode.Phi
+            OpCode.Move or OpCode.Phi or OpCode.UnresolvedValue
                 or OpCode.Add or OpCode.Subtract or OpCode.Multiply
                 or OpCode.ShiftLeft or OpCode.ShiftRight
                 or OpCode.And or OpCode.Or or OpCode.Xor
