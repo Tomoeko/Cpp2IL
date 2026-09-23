@@ -61,6 +61,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(exceptionRegionFailure))];
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
             return integerExtension;
+        if (X86ScalarTruncationProof.TryLift(context, nativeInstructions) is { } scalarTruncation)
+            return scalarTruncation;
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
         var shiftCountExtensions = X86ShiftCountExtensionProof.Find(context, nativeInstructions);
         var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);

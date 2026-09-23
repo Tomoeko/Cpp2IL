@@ -239,6 +239,7 @@ public static class LocalVariables
         SeedMethodInfoTypes(method);
         SeedComparisonResults(method);
         SeedIntegerExtensions(method);
+        SeedFloatingTruncations(method);
         SeedFloatLiterals(method);
 
         // Everywhere there's a CallVoid after a Newobj, we can resolve the constructor call.
@@ -419,6 +420,13 @@ public static class LocalVariables
         foreach (var instruction in method.ControlFlowGraph!.Instructions)
             if (IntegerExtension.TryGet(instruction, out var extension))
                 SetTypeIfUnknown((LocalVariable)instruction.Operands[0], extension.ResultType(method.AppContext.SystemTypes));
+    }
+
+    private static void SeedFloatingTruncations(MethodAnalysisContext method)
+    {
+        foreach (var instruction in method.ControlFlowGraph!.Instructions)
+            if (FloatTruncation.TryGet(instruction, out var conversion))
+                SetTypeIfUnknown((LocalVariable)instruction.Operands[0], conversion.ResultType(method.AppContext.SystemTypes));
     }
 
     // A single propagation sweep over every move and phi. Returns whether it filled in any type.

@@ -162,4 +162,11 @@ public enum OpCode
     /// Widths and signedFlag are Immediate operands; IntegerBitWidth remains zero.
     /// </summary>
     IntegerExtend,
+
+    /// <summary>
+    /// Truncate binary64 to a signed integer, yielding MIN for NaN or out-of-range input:
+    /// destination, source, sourceBits (64), resultBits (32/64). IntegerBitWidth remains zero.
+    /// Models result bits under masked floating exceptions, not MXCSR status/control effects.
+    /// </summary>
+    FloatTruncateSigned,
 }

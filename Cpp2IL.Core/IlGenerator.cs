@@ -517,6 +517,10 @@ public static partial class IlGenerator
                 EmitFloatingComparison(instruction, method, locals);
                 break;
 
+            case OpCode.FloatTruncateSigned:
+                EmitFloatingTruncation(instruction, method, locals);
+                break;
+
             case OpCode.IntegerExtend:
                 EmitIntegerExtension(instruction, method, locals);
                 break;
