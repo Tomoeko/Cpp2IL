@@ -11,10 +11,9 @@ namespace Cpp2IL.Core.Analysis;
 /// <c>cmp</c>/<c>test</c> produces all of CF/OF/SF/ZF/PF plus scratch temporaries, but the branch
 /// that follows only consumes one of them.
 ///
-/// Must run while the graph is still in SSA form (every local is assigned exactly once), so that a
-/// global use count of zero is sufficient to prove a definition dead. Instructions are turned into
-/// nops rather than spliced out; the structural cleanup happens later, out of SSA, where it is safe
-/// for phi nodes.
+/// Uses global read counts. In SSA, a zero count identifies one dead definition; after SSA removal,
+/// a read conservatively keeps every definition of that local. Instructions are turned into nops
+/// rather than spliced out so that control-flow and phi structure remain intact.
 /// </summary>
 public static class DeadCodeEliminator
 {
@@ -35,7 +34,7 @@ public static class DeadCodeEliminator
             {
                 foreach (var instruction in block.Instructions)
                 {
-                    if (!IsRemovable(instruction.OpCode))
+                    if (!IsRemovable(instruction))
                         continue;
 
                     // Only definitions of a register local are candidates. Stores have a memory or
@@ -74,12 +73,17 @@ public static class DeadCodeEliminator
     private static IEnumerable<LocalVariable> UsedLocals(Instruction instruction)
     {
         var destination = instruction.Destination as LocalVariable;
+        var destinationIndex = instruction.OpCode is OpCode.Call or OpCode.IndirectCall ? 1 : 0;
 
-        foreach (var operand in instruction.Operands)
+        for (var index = 0; index < instruction.Operands.Count; index++)
         {
+            var operand = instruction.Operands[index];
+            if (index == destinationIndex && ReferenceEquals(operand, destination))
+                continue;
+
             switch (operand)
             {
-                case LocalVariable local when !ReferenceEquals(local, destination):
+                case LocalVariable local:
                     yield return local;
                     break;
                 case MemoryOperand memory:
@@ -121,18 +125,34 @@ public static class DeadCodeEliminator
     }
 
     /// <summary>
-    /// Opcodes with no side effects, so removing a never-read result is safe. Calls, stores,
-    /// returns and branches are intentionally excluded.
+    /// Removing an unused result must preserve exceptions and initialization side effects too.
+    /// A normally pure opcode may still evaluate a memory/field/array operand that can throw.
     /// </summary>
-    private static bool IsRemovable(OpCode opCode) =>
-        opCode switch
+    private static bool IsRemovable(Instruction instruction)
+    {
+        var pureOperation = instruction.OpCode switch
         {
             OpCode.Move or OpCode.Phi
-                or OpCode.Add or OpCode.Subtract or OpCode.Multiply or OpCode.Divide or OpCode.Modulo
+                or OpCode.Add or OpCode.Subtract or OpCode.Multiply
                 or OpCode.ShiftLeft or OpCode.ShiftRight
                 or OpCode.And or OpCode.Or or OpCode.Xor
-                or OpCode.Not or OpCode.Negate=> true,
+                or OpCode.Not or OpCode.Negate => true,
             >= OpCode.CheckEqual and <= OpCode.CheckLessOrEqual => true,
             _ => false
         };
+        if (!pureOperation)
+            return false;
+
+        // These opcodes define operand zero. Be conservative about all other operand kinds:
+        // instance reads can fault, static reads can initialize a class, and even taking an
+        // array element's address can throw. Divide/remainder also remain until proven safe.
+        for (var index = 1; index < instruction.Operands.Count; index++)
+        {
+            if (instruction.Operands[index] is not (LocalVariable or Register or Immediate
+                or FloatLiteral or DoubleLiteral or StringLiteral or AddressOf { Target: LocalVariable }))
+                return false;
+        }
+
+        return true;
+    }
 }

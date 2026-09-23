@@ -98,4 +98,88 @@ public class DeadCodeEliminationTests
         Assert.That(Live(graph).Any(i => i.OpCode == OpCode.Move && ReferenceEquals(i.Operands[0], index)), Is.True,
             "index definition is used inside the array operands and must survive");
     }
+
+    [TestCase(OpCode.Divide)]
+    [TestCase(OpCode.Modulo)]
+    public void KeepsUnusedPotentiallyThrowingArithmetic(OpCode operation)
+    {
+        var value = new LocalVariable("value", new Register(null, "value"));
+        var computation = new Instruction(0, operation, value, Imm(10), Imm(0));
+        var graph = new ISILControlFlowGraph([computation, new(1, OpCode.Return)]);
+
+        DeadCodeEliminator.Run(graph);
+
+        Assert.That(computation.OpCode, Is.EqualTo(operation), "Discarding a result must not discard divide-by-zero behavior.");
+    }
+
+    [Test]
+    public void CountsSourceOccurrenceWhenAnInstructionAlsoWritesTheSameLocal()
+    {
+        // The pipeline also invokes DCE after SSA removal. Losing this definition would replace
+        // the dividend with an initialized zero and remove the signed division overflow.
+        var value = new LocalVariable("value", new Register(null, "value"));
+        var initial = new Instruction(0, OpCode.Move, value, Imm(int.MinValue));
+        var division = new Instruction(1, OpCode.Divide, value, value, Imm(-1));
+        var graph = new ISILControlFlowGraph([initial, division, new(2, OpCode.Return)]);
+
+        DeadCodeEliminator.Run(graph);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(initial.OpCode, Is.EqualTo(OpCode.Move));
+            Assert.That(division.OpCode, Is.EqualTo(OpCode.Divide));
+        });
+    }
+
+    [TestCase(OpCode.Move)]
+    [TestCase(OpCode.Add)]
+    public void KeepsUnusedInstructionsThatEvaluatePotentiallyThrowingLoads(OpCode operation)
+    {
+        var receiver = new LocalVariable("receiver", new Register(null, "receiver"));
+        var index = new LocalVariable("index", new Register(null, "index"));
+        var dead = new LocalVariable("dead", new Register(null, "dead"));
+        IOperand[] sources = [new MemoryOperand(receiver, index), new ArrayAccess(receiver, index),
+            new ArrayLength(receiver), new AddressOf(new ArrayAccess(receiver, index))];
+
+        foreach (var source in sources)
+        {
+            var receiverDefinition = new Instruction(0, OpCode.Move, receiver, Imm(0));
+            var indexDefinition = new Instruction(1, OpCode.Move, index, Imm(0));
+            var computation = operation == OpCode.Move
+                ? new Instruction(2, operation, dead, source)
+                : new Instruction(2, operation, dead, source, Imm(1));
+            var graph = new ISILControlFlowGraph([receiverDefinition, indexDefinition, computation, new(3, OpCode.Return)]);
+
+            DeadCodeEliminator.Run(graph);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(computation.OpCode, Is.EqualTo(operation), $"Evaluation of {source.GetType().Name} must be preserved.");
+                Assert.That(receiverDefinition.OpCode, Is.EqualTo(OpCode.Move), "The receiver/address feeding a retained load is still read.");
+            });
+        }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void KeepsUnusedFieldReadIncludingStaticInitialization(bool isStatic)
+    {
+        Cpp2IlApi.ResetInternalState();
+        var app = TestGameLoader.LoadSimple2019Game();
+        var type = app.InjectAssembly("DeadCodeFixture").InjectType("Fixture", "Fields",
+            app.SystemTypes.SystemObjectType, System.Reflection.TypeAttributes.Public);
+        var attributes = System.Reflection.FieldAttributes.Public;
+        if (isStatic)
+            attributes |= System.Reflection.FieldAttributes.Static;
+        var field = type.InjectFieldContext("Value", app.SystemTypes.SystemInt32Type, attributes);
+        var receiver = new LocalVariable("receiver", new Register(null, "receiver"));
+        var dead = new LocalVariable("dead", new Register(null, "dead"));
+        var load = new Instruction(0, OpCode.Move, dead, new FieldReference(field, receiver, 0));
+        var graph = new ISILControlFlowGraph([load, new(1, OpCode.Return)]);
+
+        DeadCodeEliminator.Run(graph);
+
+        Assert.That(load.OpCode, Is.EqualTo(OpCode.Move),
+            isStatic ? "A static read may trigger class initialization." : "An instance read may throw for a null receiver.");
+    }
 }
