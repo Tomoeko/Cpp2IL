@@ -86,7 +86,7 @@ internal static class X86RuntimeNullThrowProof
         => app.Binary is PE { PointerSizeBytes: 8 } pe && pe.InstructionSetId == DefaultInstructionSets.X86_64 &&
            app.UnityVersion.ToString() == "2021.3.35f1";
 
-    internal static MethodAnalysisContext? BindIdentity(ApplicationAnalysisContext app)
+    internal static MethodAnalysisContext? BindIdentity(ApplicationAnalysisContext app, string exceptionTypeName = "NullReferenceException")
     {
         var corlib = app.SystemTypes.SystemObjectType.DeclaringAssembly;
         if (corlib.Definition == null || corlib.Name != corlib.DefaultName || corlib.DefaultName != "mscorlib" ||
@@ -95,7 +95,7 @@ internal static class X86RuntimeNullThrowProof
             !(corlib.PublicKey ?? []).SequenceEqual(corlib.DefaultPublicKey ?? []) ||
             !(corlib.PublicKeyToken ?? []).SequenceEqual(corlib.DefaultPublicKeyToken ?? []))
             return null;
-        var types = corlib.Types.Where(t => t.Name == "NullReferenceException" && t.Namespace == "System").ToArray();
+        var types = corlib.Types.Where(t => t.Name == exceptionTypeName && t.Namespace == "System").ToArray();
         if (types is not [var type] || type.DeclaringType != null ||
             type.Definition is not { GenericContainer: null, DeclaringType: null } ||
             type.Name != type.DefaultName || type.Namespace != type.DefaultNamespace ||
