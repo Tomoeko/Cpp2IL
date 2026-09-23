@@ -15,47 +15,10 @@ public static class MetadataResolver
 {
     public static void ResolveAll(MethodAnalysisContext method)
     {
-        ResolveStringLiteralAccessors(method);
         ResolveCalls(method);
         ResolveGetter(method);
         ResolveMetadataUsages(method);
     }
-
-    private static void ResolveStringLiteralAccessors(MethodAnalysisContext method)
-    {
-        var libContext = method.AppContext.LibCpp2IlContext;
-
-        var definitions = new Dictionary<LocalVariable, Instruction>();
-        foreach (var instruction in method.ControlFlowGraph!.Instructions)
-            if (instruction.Destination is LocalVariable destination)
-                definitions[destination] = instruction;
-
-        foreach (var instruction in method.ControlFlowGraph.Instructions)
-        {
-            if (instruction.OpCode != OpCode.Call || instruction.Operands[1] is not LocalVariable result)
-                continue;
-
-            for (var i = 2; i < instruction.Operands.Count; i++)
-            {
-                if (LiteralSlotAddress(instruction.Operands[i], definitions) is not { } address
-                    || libContext.GetLiteralByAddress(address) is not { } literal)
-                    continue;
-
-                instruction.OpCode = OpCode.Move;
-                instruction.SetOperands(result, new StringLiteral(literal));
-                break;
-            }
-        }
-    }
-
-    private static ulong? LiteralSlotAddress(IOperand operand, Dictionary<LocalVariable, Instruction> definitions) =>
-        operand switch
-        {
-            Immediate immediate => immediate.UnsignedValue,
-            LocalVariable local when definitions.TryGetValue(local, out var definition)
-                && definition is { OpCode: OpCode.Move, Operands: [_, Immediate immediate] } => immediate.UnsignedValue,
-            _ => null,
-        };
 
     /// <summary>
     /// Resolves <c>Move local, [absoluteAddress]</c> loads of IL2CPP metadata-usage globals into a
@@ -214,12 +177,9 @@ public static class MetadataResolver
             {
                 HandleKeyFunction(method.AppContext, callInstruction, target, keyFunctionAddresses);
 
-                if (target == keyFunctionAddresses.il2cpp_codegen_initialize_runtime_metadata_inline
-                    && callInstruction is { OpCode: OpCode.Call, Operands: [_, var initResult, var handle, ..] })
-                {
-                    callInstruction.OpCode = OpCode.Move;
-                    callInstruction.SetOperands(initResult, handle);
-                }
+                // Keep initialization calls explicit. A metadata argument or a known helper
+                // name does not prove that its return value is the handle, or that its effects
+                // can be dropped. Native guard proofs run before this resolution stage.
 
                 continue;
             }
