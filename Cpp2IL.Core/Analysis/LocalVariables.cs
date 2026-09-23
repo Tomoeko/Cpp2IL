@@ -427,7 +427,7 @@ public static class LocalVariables
                 case OpCode.Add or OpCode.Subtract or OpCode.Multiply:
                     changed |= PropagateArithmetic(instruction, method);
                     break;
-                case OpCode.Divide or OpCode.Modulo:
+                case OpCode.Divide or OpCode.Modulo or OpCode.DivideUnsigned or OpCode.ModuloUnsigned:
                     changed |= PropagateArithmetic(instruction, method) || PropagateIntegerResult(instruction, method);
                     break;
                 case OpCode.And or OpCode.Or or OpCode.Xor or OpCode.Not or OpCode.Negate

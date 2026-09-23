@@ -527,10 +527,18 @@ public static class IlGenerator
             case OpCode.Multiply:
             case OpCode.Divide:
             case OpCode.Modulo:
+            case OpCode.DivideUnsigned:
+            case OpCode.ModuloUnsigned:
 
             case OpCode.And:
             case OpCode.Or:
             case OpCode.Xor:
+                if (instruction.OpCode is OpCode.DivideUnsigned or OpCode.ModuloUnsigned && instruction.IntegerBitWidth is not (32 or 64))
+                    throw new DecompilerException("Unsigned division requires an established 32/64-bit native width");
+                if (instruction.OpCode is OpCode.Divide or OpCode.Modulo or OpCode.DivideUnsigned or OpCode.ModuloUnsigned &&
+                    instruction.IntegerBitWidth != 0 && IntegerStackWidth(DestinationType(instruction.Operands[0])) != instruction.IntegerBitWidth)
+                    throw new DecompilerException("Native division destination width does not match its recovered managed type");
+
                 // klass pointer read => GetType
                 if (instruction.OpCode is OpCode.CheckEqual or OpCode.CheckNotEqual
                     && TryEmitExactTypeComparison(instruction, method, locals))
@@ -589,6 +597,8 @@ public static class IlGenerator
                     case OpCode.Multiply: instructions.Add(CilOpCodes.Mul); break;
                     case OpCode.Divide: instructions.Add(CilOpCodes.Div); break;
                     case OpCode.Modulo: instructions.Add(CilOpCodes.Rem); break;
+                    case OpCode.DivideUnsigned: instructions.Add(CilOpCodes.Div_Un); break;
+                    case OpCode.ModuloUnsigned: instructions.Add(CilOpCodes.Rem_Un); break;
 
                     case OpCode.And: instructions.Add(CilOpCodes.And); break;
                     case OpCode.Or: instructions.Add(CilOpCodes.Or); break;

@@ -144,4 +144,9 @@ public enum OpCode
 
     /// <summary>Logical right shift: op 1 = op 2 shifted by op 3 with zero fill.</summary>
     ShiftRightUnsigned,
+
+    /// <summary>Unsigned integer quotient: op1 = op2 / op3; requires an established native width.</summary>
+    DivideUnsigned,
+    /// <summary>Unsigned integer remainder: op1 = op2 % op3; requires an established native width.</summary>
+    ModuloUnsigned,
 }

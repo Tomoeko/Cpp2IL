@@ -56,8 +56,17 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var instructions = new List<ISIL.Instruction>();
         var addresses = new List<ulong>();
 
-        foreach (var instruction in X86Utils.Iterate(context))
-            ConvertInstructionStatement(instruction, instructions, addresses, context);
+        var nativeInstructions = X86Utils.Iterate(context).ToArray();
+        var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
+        var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);
+        if (metadataGuard != null)
+            context.PutExtraData("X86MetadataLiteralGuardProof", metadataGuard);
+        foreach (var instruction in nativeInstructions)
+        {
+            if (metadataGuard?.RemovedAddresses.Contains(instruction.IP) == true)
+                continue;
+            ConvertInstructionStatement(instruction, instructions, addresses, context, singleWidthDividends.Contains(instruction.IP));
+        }
 
         // Add return if the function doesn't end with one already
         if (instructions.Count > 0 && instructions[^1].OpCode != ISIL.OpCode.Return)
@@ -205,10 +214,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         (RflagsBits.ZF, "ZF"), (RflagsBits.SF, "SF"), (RflagsBits.OF, "OF"),
     ];
 
-    private void ConvertInstructionStatement(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context)
+    private void ConvertInstructionStatement(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend = false)
     {
         var first = instructions.Count;
-        ConvertInstructionStatementCore(instruction, instructions, addresses, context);
+        ConvertInstructionStatementCore(instruction, instructions, addresses, context, singleWidthDividend);
 
         // CALL itself does not change RFLAGS, but the ABI does not preserve status flags across
         // its opaque callee. Tail jumps have no returning continuation in the current method.
@@ -266,7 +275,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         }
     }
 
-    private void ConvertInstructionStatementCore(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context)
+    private void ConvertInstructionStatementCore(Instruction instruction, List<ISIL.Instruction> instructions, List<ulong> addresses, MethodAnalysisContext context, bool singleWidthDividend)
     {
         var callNoReturn = false;
         int operandSize;
@@ -334,11 +343,11 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 break;
             case Mnemonic.Cdq: // EDX:EAX := sign-extend EAX
                 Add(instruction.IP, ISIL.OpCode.ShiftRight, new ISIL.Register(null, X86Utils.GetRegisterName(Register.EDX)),
-                    new ISIL.Register(null, X86Utils.GetRegisterName(Register.EAX)), Imm(31));
+                    new ISIL.Register(null, X86Utils.GetRegisterName(Register.EAX)), Imm(31)).IntegerBitWidth = 32;
                 break;
             case Mnemonic.Cqo: // RDX:RAX := sign-extend RAX
                 Add(instruction.IP, ISIL.OpCode.ShiftRight, new ISIL.Register(null, X86Utils.GetRegisterName(Register.RDX)),
-                    new ISIL.Register(null, X86Utils.GetRegisterName(Register.RAX)), Imm(63));
+                    new ISIL.Register(null, X86Utils.GetRegisterName(Register.RAX)), Imm(63)).IntegerBitWidth = 64;
                 break;
             case Mnemonic.Lea:
                 var destination = ConvertOperand(instruction, 0);
@@ -521,12 +530,16 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 {
                     var divisorSize = instruction.Op0Kind == OpKind.Register ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize();
 
-                    // the 8-bit form puts the remainder in AH, which we can't deal with
-                    if (divisorSize is not (2 or 4 or 8))
-                        goto default;
+                    if (instruction.Op0Kind != OpKind.Register || divisorSize is not (4 or 8) || !singleWidthDividend)
+                    {
+                        Add(instruction.IP, ISIL.OpCode.NotImplemented,
+                            new ISIL.StringLiteral("Native integer division requires a register divisor and a proved 32/64-bit single-width dividend"));
+                        break;
+                    }
 
-                    // The real dividend is the D:A register pair, but every compiler sets D up with cdq/cqo or
-                    // an xor immediately beforehand, so in reality it's just rax
+                    // The decoded basic-block proof established zero or matching sign extension
+                    // in the high half. Snapshot the divisor before overwriting either output;
+                    // it may itself use RAX/RDX. Memory divisors still require read-width proof.
                     var quotient = new ISIL.Register(null, X86Utils.GetRegisterName(Register.RAX));
                     var remainder = new ISIL.Register(null, X86Utils.GetRegisterName(Register.RDX));
 
@@ -535,8 +548,13 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
                     Add(instruction.IP, ISIL.OpCode.Move, dividend, quotient);
                     Add(instruction.IP, ISIL.OpCode.Move, divisor, ConvertOperand(instruction, 0));
-                    Add(instruction.IP, ISIL.OpCode.Divide, quotient, dividend, divisor);
-                    Add(instruction.IP, ISIL.OpCode.Modulo, remainder, dividend, divisor);
+                    var signedDivision = instruction.Mnemonic == Mnemonic.Idiv;
+                    Add(instruction.IP, signedDivision ? ISIL.OpCode.Divide : ISIL.OpCode.DivideUnsigned,
+                        quotient, dividend, divisor).IntegerBitWidth = divisorSize * 8;
+                    // Keep the quotient even when only the remainder is used: IDIV traps on
+                    // signed quotient overflow, whereas a managed remainder alone need not.
+                    Add(instruction.IP, signedDivision ? ISIL.OpCode.Modulo : ISIL.OpCode.ModuloUnsigned,
+                        remainder, dividend, divisor).IntegerBitWidth = divisorSize * 8;
                     break;
                 }
             case Mnemonic.Mulss:

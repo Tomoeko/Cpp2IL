@@ -101,6 +101,8 @@ public class DeadCodeEliminationTests
 
     [TestCase(OpCode.Divide)]
     [TestCase(OpCode.Modulo)]
+    [TestCase(OpCode.DivideUnsigned)]
+    [TestCase(OpCode.ModuloUnsigned)]
     public void KeepsUnusedPotentiallyThrowingArithmetic(OpCode operation)
     {
         var value = new LocalVariable("value", new Register(null, "value"));
