@@ -24,6 +24,7 @@ import byte_fields
 import float_comparison
 import integer_extensions
 import loop_calls
+import reference_null
 import scalar_truncation
 import xmm_spill
 import word_fields
@@ -41,6 +42,7 @@ PROFILES = {
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 3},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
+    "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "scalar-truncation": {"assembly": "ScalarTruncationFixture", "source": VALIDATION / "ScalarTruncationFixture", "methods": 2},
     "loop-calls": {"assembly": "LoopCallFixture", "source": VALIDATION / "LoopCallFixture", "methods": 4},
@@ -84,6 +86,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return static_field_getter.verify(path, stage, VERSION)
     if profile == "reference-field":
         return reference_field.verify(path, stage, VERSION)
+    if profile == "reference-null":
+        return reference_null.verify(path, stage, VERSION)
     if profile == "field-guard":
         return field_guard.verify(path, stage, VERSION)
     if profile == "scalar-truncation":
@@ -379,7 +383,7 @@ def copy_sources(source, destination):
 def copy_harness(profile, destination):
     if profile == "arithmetic":
         return copy_sources(VALIDATION / "Harness", destination)
-    harness = {"catch-divide": "CatchDivideHarness", "exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "enum-passthrough": "EnumPassthroughHarness", "static-field-getter": "StaticFieldGetterHarness", "reference-field": "ReferenceFieldHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "xmm-spill": "XmmSpillHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
+    harness = {"catch-divide": "CatchDivideHarness", "exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "enum-passthrough": "EnumPassthroughHarness", "static-field-getter": "StaticFieldGetterHarness", "reference-field": "ReferenceFieldHarness", "reference-null": "ReferenceNullHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "xmm-spill": "XmmSpillHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
                "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
     copied = copy_sources(VALIDATION / harness, destination)
     for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):
@@ -436,6 +440,21 @@ def isolate_player(player, destination):
     return manifest
 
 
+def resolved_package_lock_sha256(project):
+    """Hash Unity's resolved package graph without exposing package details."""
+    lock = project / "Packages" / "packages-lock.json"
+    if not lock.is_file():
+        raise ValueError("Explicit package manifest run did not produce a Unity package lock file")
+    data = lock.read_bytes()
+    try:
+        contents = json.loads(data.decode("utf-8"))
+    except (UnicodeError, ValueError) as error:
+        raise ValueError("Unity package lock file is not valid UTF-8 JSON") from error
+    if not isinstance(contents, dict) or not isinstance(contents.get("dependencies"), dict):
+        raise ValueError("Unity package lock file has no resolved dependency graph")
+    return hashlib.sha256(data).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--editor", type=Path, required=True, help="Supplied Unity editor executable")
@@ -446,6 +465,8 @@ def main():
                         help="Independent selected-assembly fixture contract")
     parser.add_argument("--source-dir", type=Path,
                         help="Replacement source must expose the selected profile's API and assembly")
+    parser.add_argument("--package-manifest", type=Path,
+                        help="Explicit Unity Packages/manifest.json to copy into the fresh project")
     parser.add_argument("--run-dir", type=Path, required=True, help="New directory under this repository's ignored Files/")
     parser.add_argument("--stage", choices=["compile", "build", "run"], default="compile",
                         help="run builds and executes; build also compiles; every invocation uses a fresh project")
@@ -456,6 +477,9 @@ def main():
         args.source_dir = profile["source"]
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    package_manifest = args.package_manifest.expanduser().resolve() if args.package_manifest else None
+    if package_manifest is not None and not package_manifest.is_file():
+        parser.error("--package-manifest must name an existing file")
     editor = args.editor.expanduser().resolve()
     if not editor.is_file():
         parser.error("--editor must name an existing executable")
@@ -532,7 +556,15 @@ def main():
         (project / "Packages").mkdir()
         (project / "Reports").mkdir()
         (project / "ProjectSettings" / "ProjectVersion.txt").write_text("m_EditorVersion: " + VERSION + "\n", encoding="utf-8")
-        write_json(project / "Packages" / "manifest.json", {"dependencies": {}})
+        project_manifest = project / "Packages" / "manifest.json"
+        if package_manifest is None:
+            write_json(project_manifest, {"dependencies": {}})
+        else:
+            shutil.copyfile(package_manifest, project_manifest)
+            receipt["packageManifest"] = {
+                "provenance": "explicit-auxiliary",
+                "sha256": hashlib.sha256(project_manifest.read_bytes()).hexdigest(),
+            }
         receipt["sourceFiles"] = copy_sources(args.source_dir.resolve(), project / "Assets" / profile["assembly"])
         receipt["harnessFiles"] = copy_harness(args.profile, project / "Assets" / "Validation")
         prefix_command = [args.wine, str(editor)] if args.wine else [str(editor)]
@@ -583,6 +615,8 @@ def main():
                 if outcome["timedOut"] or outcome["exitCode"] != 0:
                     raise RuntimeError("Native player process failed")
                 behavior_stage(report_path, "playerBehavior", "player")
+        if package_manifest is not None:
+            receipt["packageManifest"]["resolvedLockSha256"] = resolved_package_lock_sha256(project)
         receipt["status"] = "passed"
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyError) as error:
         receipt["status"] = "failed"

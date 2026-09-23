@@ -94,7 +94,7 @@ internal static class NullCheckedCall
         IsBoundedArrayReference(leftArray) && IsBoundedArrayReference(rightArray) &&
         ReferenceEquals(leftArray.ElementType, rightArray.ElementType);
 
-    private static bool IsBoundedArrayReference(TypeAnalysisContext type) =>
+    internal static bool IsBoundedArrayReference(TypeAnalysisContext type) =>
         type is SzArrayTypeAnalysisContext array &&
         !array.ElementType.IsGenericInstance && array.ElementType.GenericParameters.Count == 0 &&
         array.ElementType.Type is

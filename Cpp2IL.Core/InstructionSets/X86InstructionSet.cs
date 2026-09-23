@@ -67,6 +67,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return QualifyExceptionRegions(integerExtension);
         if (X86ScalarTruncationProof.TryLift(context, nativeInstructions) is { } scalarTruncation)
             return QualifyExceptionRegions(scalarTruncation);
+        var referenceNullReturn = X86ReferenceNullReturnProof.IsApplicable(context, nativeInstructions);
         var booleanReturnSelfTests = X86BooleanReturnSelfTestProof.Find(context, nativeInstructions);
         var nonvolatileXmmTraffic = X86NonvolatileXmmStackProof.Find(context, nativeInstructions);
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
@@ -84,7 +85,17 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             if (metadataGuard?.RemovedAddresses.Contains(instruction.IP) == true)
                 continue;
             var firstLiftedIndex = instructions.Count;
-            if (booleanReturnSelfTests.Contains(instruction.IP))
+            if (referenceNullReturn && instruction.IP == context.UnderlyingPointer)
+            {
+                // This complete leaf uses only ZF from TEST. Keep the original
+                // managed reference as the zero predicate's operand; integer
+                // flag arithmetic would turn it into an invalid managed scalar.
+                addresses.Add(instruction.IP);
+                instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.CheckEqual,
+                    new ISIL.Register(null, "ZF"), new ISIL.Register(null, "rcx"), Imm(0))
+                    { IntegerBitWidth = 64 });
+            }
+            else if (booleanReturnSelfTests.Contains(instruction.IP))
             {
                 // The adjacent managed call defines a Boolean result in AL. Only its zero
                 // predicate is proved; native RAX's unused upper bits and TEST's PF/SF are
@@ -111,7 +122,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         }
 
         if (X86CallerExceptionRegionProof.Check(context, nativeInstructions, noReturnCalls) is { } exceptionRegionFailure)
-            return [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(exceptionRegionFailure))];
+            return [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(
+                X86TerminalBoundsThrowDiagnostic.TryClassify(context, nativeInstructions,
+                    noReturnCalls, exceptionRegionFailure) ?? exceptionRegionFailure))];
         X86BodyBoundary.AppendFallthroughFailure(instructions);
 
         // fix branches

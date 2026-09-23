@@ -10,11 +10,12 @@ import shutil
 import subprocess
 import sys
 
-from run_fixture import ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process, write_json
+from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process,
+                         write_json, resolved_package_lock_sha256)
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
-    "catch-divide", "exception-regions", "array-access", "array-call", "enum-passthrough", "static-field-getter", "reference-field", "field-guard", "scalar-truncation", "loop-calls", "word-fields", "integer-extensions", "byte-fields",
+    "catch-divide", "exception-regions", "array-access", "array-call", "enum-passthrough", "static-field-getter", "reference-field", "reference-null", "field-guard", "scalar-truncation", "loop-calls", "word-fields", "integer-extensions", "byte-fields",
     "float-comparisons", "xmm-spill", "components", "metadata-literal", "division", "arithmetic", "integers", "scalar-structs", "shifts",
 )}
 PLAYER_FILES = ("GameAssembly.dll", "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat")
@@ -31,7 +32,7 @@ def managed_oracle(run_directory, assembly):
     return path
 
 
-def checked_baseline(directory, profile):
+def checked_baseline(directory, profile, expected_manifest_sha256=None):
     receipt = json.loads((directory / "receipt.json").read_text(encoding="utf-8"))
     if receipt.get("status") != "passed" or receipt.get("sourceKind") != "synthetic-baseline":
         raise ValueError("Baseline must be a successful original synthetic fixture run")
@@ -45,6 +46,18 @@ def checked_baseline(directory, profile):
         raise ValueError("Baseline native build does not match the required profile")
     if receipt["stages"]["playerBehavior"].get("status") != "passed":
         raise ValueError("Baseline must have passed its native behavior checks")
+    recorded_manifest = receipt.get("packageManifest")
+    if expected_manifest_sha256 is None:
+        if recorded_manifest is not None:
+            raise ValueError("Baseline has an explicit package manifest but this round trip does not")
+    elif (not isinstance(recorded_manifest, dict) or
+          recorded_manifest.get("provenance") != "explicit-auxiliary" or
+          recorded_manifest.get("sha256") != expected_manifest_sha256 or
+          digest(directory / "project/Packages/manifest.json") != expected_manifest_sha256):
+        raise ValueError("Baseline package manifest does not match the explicit auxiliary input")
+    if expected_manifest_sha256 is not None and (
+            recorded_manifest.get("resolvedLockSha256") != resolved_package_lock_sha256(directory / "project")):
+        raise ValueError("Baseline resolved package lock differs from its build receipt")
     files = {item["path"]: item for item in receipt["playerInputs"]}
     for relative in PLAYER_FILES:
         if digest(directory / "player-input" / relative) != files[relative]["sha256"]:
@@ -63,6 +76,8 @@ def main():
     parser.add_argument("--il-reference-dir", action="append", type=Path,
                         help="Explicit ILVerify reference set; defaults to --reference-dir. Source/declaration resolution keeps the full source set.")
     parser.add_argument("--baseline-run", type=Path, help="Reuse a verified original synthetic baseline; otherwise build it")
+    parser.add_argument("--package-manifest", type=Path,
+                        help="Explicit Unity Packages/manifest.json for both original and recovered builds")
     parser.add_argument("--install-ilverify", action="store_true")
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=600, help="Per child-stage deadline in seconds")
@@ -78,11 +93,30 @@ def main():
         parser.error("--run-dir must be ignored by Git")
     if args.timeout <= 0 or not args.cpp2il.is_file():
         parser.error("Provide a positive timeout and an existing built Cpp2IL.dll")
+    package_manifest = args.package_manifest.expanduser().resolve() if args.package_manifest else None
+    if package_manifest is not None:
+        if not package_manifest.is_file() or not 0 < package_manifest.stat().st_size <= 1024 * 1024:
+            parser.error("--package-manifest must name a nonempty file of at most 1 MiB")
+        try:
+            if not isinstance(json.loads(package_manifest.read_text(encoding="utf-8")), dict):
+                raise ValueError()
+        except (UnicodeError, ValueError):
+            parser.error("--package-manifest must contain a UTF-8 JSON object")
     directory.mkdir(parents=True)
     receipt = {"schemaVersion": 1, "status": "running", "scope": assembly, "profile": args.profile,
                "unityVersion": VERSION, "recoveryInputs": "isolated player binary and metadata only",
                "declarationFidelity": "unverified", "scriptAssetBindings": "out_of_scope",
                "stages": {}, "commands": []}
+    manifest_snapshot = None
+    manifest_sha256 = None
+    if package_manifest is not None:
+        auxiliary = directory / "auxiliary"
+        auxiliary.mkdir()
+        manifest_snapshot = auxiliary / "manifest.json"
+        shutil.copyfile(package_manifest, manifest_snapshot)
+        manifest_sha256 = digest(manifest_snapshot)
+        receipt["recoveryInputs"] = "isolated player binary and metadata; explicit package manifest auxiliary input"
+        receipt["packageManifest"] = {"provenance": "explicit-auxiliary", "sha256": manifest_sha256}
     # Snapshot the built tool and its adjacent managed dependencies so a concurrent repository
     # build cannot change the recovery implementation halfway through a validation run.
     tool_directory = directory / "tool"
@@ -116,13 +150,19 @@ def main():
     try:
         baseline = args.baseline_run.expanduser().resolve() if args.baseline_run else directory / "baseline"
         if not args.baseline_run:
-            run("baseline", fixture_command + ["--run-dir", str(baseline)], args.timeout * 2 + 30)
-        original = checked_baseline(baseline, args.profile)
+            baseline_manifest = ["--package-manifest", str(manifest_snapshot)] if manifest_snapshot else []
+            run("baseline", fixture_command + baseline_manifest + ["--run-dir", str(baseline)], args.timeout * 2 + 30)
+        original = checked_baseline(baseline, args.profile, manifest_sha256)
+        baseline_lock_sha256 = (original["packageManifest"]["resolvedLockSha256"]
+                                if manifest_sha256 is not None else None)
+        if baseline_lock_sha256 is not None:
+            receipt["packageManifest"]["resolvedLockSha256"] = baseline_lock_sha256
         receipt["baselineReceipt"] = {"path": str(baseline / "receipt.json"), "sha256": digest(baseline / "receipt.json")}
         receipt["stages"]["original"] = original["stages"]
 
-        # Only these two shipped inputs reach the recovery command. No source, generated C++,
-        # application managed oracle, debug symbols or analysis database is supplied.
+        # These are the only shipped player inputs to recovery. An optional package manifest
+        # is a separate, explicit source-export input. No source, generated C++, application
+        # managed oracle, debug symbols or analysis database is supplied.
         player = directory / "recovery-input"
         receipt["inputFiles"] = []
         for relative in PLAYER_FILES:
@@ -138,10 +178,13 @@ def main():
         if any((Path(path) / (assembly + ".dll")).exists() for path in references + il_references):
             raise ValueError("Reference directories must not contain the original application assembly")
         recovered = directory / "recovered"
-        run("recovery", [args.dotnet, str(tool), "--force-binary-path", str(player / PLAYER_FILES[0]),
-                         "--force-metadata-path", str(player / PLAYER_FILES[1]), "--force-unity-version", VERSION,
-                         "--output-as", "cs_unity", "--unity-source-assemblies", assembly,
-                         "--unity-reference-dir", *references, "--strict-recovery", "--output-to", str(recovered)])
+        recovery_command = [args.dotnet, str(tool), "--force-binary-path", str(player / PLAYER_FILES[0]),
+                            "--force-metadata-path", str(player / PLAYER_FILES[1]), "--force-unity-version", VERSION,
+                            "--output-as", "cs_unity", "--unity-source-assemblies", assembly,
+                            "--unity-reference-dir", *references, "--strict-recovery", "--output-to", str(recovered)]
+        if manifest_snapshot is not None:
+            recovery_command += ["--unity-package-manifest", str(manifest_snapshot)]
+        run("recovery", recovery_command)
         report = json.loads((recovered / "source-recovery-report.json").read_text(encoding="utf-8"))
         methods = [method for method in report["Methods"] if method["AssemblyName"] == assembly]
         if not report["AnalysisCompleted"] or len(methods) != expected_methods or any(method["Disposition"] != "Emitted" for method in methods):
@@ -150,6 +193,11 @@ def main():
         emission = json.loads((project / "source-emission-report.json").read_text(encoding="utf-8"))
         if emission["SourceGeneration"] != "generated" or emission["Diagnostics"]:
             raise ValueError("Source emission did not complete without diagnostics")
+        if manifest_sha256 is not None:
+            if (emission.get("PackageManifestProvenance") != "explicit-auxiliary" or
+                    digest(project / "Packages/manifest.json") != manifest_sha256):
+                raise ValueError("Recovered project did not preserve the explicit package manifest")
+            receipt["packageManifest"]["dependencyCount"] = emission["PackageDependencyCount"]
         receipt["stages"]["recovery"] = {"status": "passed", "inputMethods": report["InputMethodCount"],
                                            "selectedMethods": len(methods), "selectedUnresolved": 0}
 
@@ -201,11 +249,22 @@ def main():
         compare_declarations("recoveredDeclarations", project / "RecoveredManaged" / (assembly + ".dll"))
 
         replacement = directory / "replacement"
-        run("replacement", fixture_command + ["--source-dir", str(project / "Assets/Recovered" / assembly),
-                                              "--run-dir", str(replacement)], args.timeout * 2 + 30)
+        replacement_manifest = (["--package-manifest", str(project / "Packages/manifest.json")]
+                                if manifest_sha256 is not None else [])
+        run("replacement", fixture_command + replacement_manifest +
+            ["--source-dir", str(project / "Assets/Recovered" / assembly),
+             "--run-dir", str(replacement)], args.timeout * 2 + 30)
         rebuilt = json.loads((replacement / "receipt.json").read_text(encoding="utf-8"))
         if rebuilt["status"] != "passed" or rebuilt["sourceKind"] != "replacement-source":
             raise ValueError("Recovered-source fixture did not pass its independent gates")
+        if manifest_sha256 is not None:
+            replacement_packages = rebuilt.get("packageManifest", {})
+            if (replacement_packages.get("sha256") != manifest_sha256 or
+                    digest(replacement / "project/Packages/manifest.json") != manifest_sha256):
+                raise ValueError("Fresh replacement project did not use the recovered package manifest")
+            if (replacement_packages.get("resolvedLockSha256") != baseline_lock_sha256 or
+                    resolved_package_lock_sha256(replacement / "project") != baseline_lock_sha256):
+                raise ValueError("Original and recovered projects resolved different package locks")
         settings = ("unityVersion", "target", "backend", "compilerConfiguration", "apiCompatibility", "stripping",
                     "codeGeneration", "stripEngineCode", "scriptingDefineSymbols", "development")
         if any(original["stages"]["nativeBuild"][key] != rebuilt["stages"]["nativeBuild"][key] for key in settings):
@@ -224,6 +283,10 @@ def main():
         for item in receipt["comparisonToolFiles"]:
             if digest(comparison_directory / item["path"]) != item["sha256"]:
                 raise ValueError("Declaration comparer snapshot changed during validation")
+        if manifest_sha256 is not None and digest(manifest_snapshot) != manifest_sha256:
+            raise ValueError("Explicit package manifest snapshot changed during validation")
+        if baseline_lock_sha256 is not None and resolved_package_lock_sha256(baseline / "project") != baseline_lock_sha256:
+            raise ValueError("Baseline resolved package lock changed during validation")
         receipt["status"] = "passed"
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         receipt["status"] = "failed"

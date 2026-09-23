@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 import run_fixture
+import run_roundtrip
 
 
 class HarnessBoundaries(unittest.TestCase):
@@ -17,6 +18,23 @@ class HarnessBoundaries(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+
+    def baseline_receipt(self):
+        player_inputs = []
+        for relative in run_roundtrip.PLAYER_FILES:
+            path = self.root / "player-input" / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"synthetic player input")
+            player_inputs.append({"path": relative, "sha256": run_roundtrip.digest(path)})
+        return {
+            "status": "passed", "sourceKind": "synthetic-baseline", "profile": "arithmetic",
+            "stages": {"nativeBuild": {"unityVersion": run_fixture.VERSION,
+                                       "target": "StandaloneWindows64", "backend": "IL2CPP",
+                                       "compilerConfiguration": "Release", "development": False,
+                                       "errors": 0, "result": "Succeeded"},
+                       "playerBehavior": {"status": "passed"}},
+            "playerInputs": player_inputs,
+        }
 
     def test_source_copy_excludes_managed_oracles(self):
         source = self.root / "source"
@@ -45,6 +63,36 @@ class HarnessBoundaries(unittest.TestCase):
                                       "platform": "WindowsEditor", "observations": []}))
         with self.assertRaisesRegex(ValueError, "independent integer oracle"):
             run_fixture.verify_behavior(report, "editor")
+
+    def test_explicit_manifest_baseline_requires_unchanged_resolved_lock(self):
+        project = self.root / "project"
+        packages = project / "Packages"
+        packages.mkdir(parents=True)
+        manifest = packages / "manifest.json"
+        manifest.write_text('{"dependencies":{"com.example.fixture":"1.0.0"}}', encoding="utf-8")
+        lock = packages / "packages-lock.json"
+        lock.write_text('{"dependencies":{"com.example.fixture":{"version":"1.0.0"}}}', encoding="utf-8")
+        manifest_hash = run_roundtrip.digest(manifest)
+        lock_hash = run_fixture.resolved_package_lock_sha256(project)
+
+        receipt = self.baseline_receipt()
+        receipt["packageManifest"] = {"provenance": "explicit-auxiliary", "sha256": manifest_hash,
+                                      "resolvedLockSha256": lock_hash}
+        (self.root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+        self.assertEqual(run_roundtrip.checked_baseline(self.root, "arithmetic", manifest_hash), receipt)
+
+        lock.write_text('{"dependencies":{"com.example.fixture":{"version":"1.0.1"}}}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "resolved package lock differs"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic", manifest_hash)
+
+        lock.unlink()
+        with self.assertRaisesRegex(ValueError, "did not produce a Unity package lock"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic", manifest_hash)
+
+    def test_default_baseline_does_not_require_package_lock(self):
+        receipt = self.baseline_receipt()
+        (self.root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+        self.assertEqual(run_roundtrip.checked_baseline(self.root, "arithmetic"), receipt)
 
     @unittest.skipIf(os.name == "nt", "POSIX signal-exit regression")
     def test_deadline_is_not_success_when_child_handles_termination(self):

@@ -564,6 +564,9 @@ public static partial class IlGenerator
                     && TryEmitExactTypeComparison(instruction, method, locals))
                     break;
 
+                if (TryEmitReferenceNullComparison(instruction, method, locals))
+                    break;
+
                 // Float arithmetic on a promoted integer operand needs an explicit conversion, so both
                 // operands are coerced to the (float) result type. A no-op when they already match.
                 var floatConversion = FloatArithmeticConversion(instruction);
