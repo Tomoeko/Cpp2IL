@@ -34,14 +34,17 @@ public class StackAnalyzer
 
         analyzer._inComingState = new Dictionary<Block, StackState> { { graph.EntryBlock, new StackState() } };
 
-        analyzer.TraverseGraph(graph.EntryBlock);
+        analyzer.TraverseGraph(graph.EntryBlock, graph.ExitBlock);
 
-        // The exit block has no outgoing state if it was never reached (e.g. every path loops or
-        // throws). That's fine - just skip the end-of-method stack balance check in that case.
-        if (analyzer._outGoingState.TryGetValue(graph.ExitBlock, out var outDelta) && outDelta.Size != 0)
+        // Exit is a graph sentinel, not a native join: normal returns restore the frame,
+        // while a proved throw unwinds it. Inspect each path without merging their deltas.
+        foreach (var predecessor in graph.ExitBlock.Predecessors)
         {
-            var outText = outDelta.Size < 0 ? "-" + (-outDelta.Size).ToString("X") : outDelta.Size.ToString("X");
-            method.AddWarning($"Method ends with non empty stack ({outText}), the output could be wrong!");
+            if (predecessor.Instructions.LastOrDefault()?.OpCode == OpCode.Throw ||
+                !analyzer._outGoingState.TryGetValue(predecessor, out var outDelta) || outDelta.Size == 0)
+                continue;
+            var outText = outDelta.Size < 0 ? "-" + (-(long)outDelta.Size).ToString("X") : outDelta.Size.ToString("X");
+            method.AddWarning($"Method ends with non empty stack ({outText}) on native exit block {predecessor.ID}; the output could be wrong!");
         }
 
         analyzer.ResolveFrameAliases(graph);
@@ -91,7 +94,7 @@ public class StackAnalyzer
                 if (!aliases.TryGetValue(frameBase.Name, out var frameOffset))
                     continue;
 
-                instruction.SetOperand(i, new StackOffset((int)(frameOffset + memory.Addend - state.Size)));
+                instruction.SetOperand(i, new StackOffset(checked((int)(frameOffset + memory.Addend - state.Size))));
             }
         }
     }
@@ -130,7 +133,7 @@ public class StackAnalyzer
                         // as doing so will make the dictionary lookup impossible.
                         state ??= _instructionState[instruction].Size;
 
-                        var actual = new StackOffset(state.Value + offset.Offset);
+                        var actual = new StackOffset(checked(state.Value + offset.Offset));
                         instruction.SetOperand(i, op is AddressOf ? new AddressOf(actual) : actual);
                     }
                 }
@@ -139,7 +142,7 @@ public class StackAnalyzer
     }
 
     // Traverse the graph and calculate the stack state for each block and instruction
-    private void TraverseGraph(Block initialBlock, int initialVisitedBlockCount = 0)
+    private void TraverseGraph(Block initialBlock, Block exitBlock, int initialVisitedBlockCount = 0)
     {
         var blockLevelState = new Stack<(Block, int)>();
         blockLevelState.Push((initialBlock, initialVisitedBlockCount));
@@ -159,21 +162,11 @@ public class StackAnalyzer
 
                 if (instruction.OpCode == OpCode.ShiftStack)
                 {
-                    var offset = (int)((Immediate)instruction.Operands[0]).Value;
+                    var offset = checked((int)((Immediate)instruction.Operands[0]).Value);
                     currentState = currentState.Copy();
-                    currentState.Size += offset;
-                }
-                else if (block.Instructions[^1] == instruction && block.BlockType == BlockType.TailCall)
-                {
-                    // Tail calls clear stack
-                    currentState = currentState.Copy();
-                    currentState.Size = 0;
+                    currentState.Size = checked(currentState.Size + offset);
                 }
             }
-
-            // Tail calls clear stack
-            if (block.BlockType == BlockType.TailCall)
-                currentState.Size = 0;
 
             _outGoingState[block] = currentState;
 
@@ -185,14 +178,14 @@ public class StackAnalyzer
             // Visit successors
             foreach (var successor in block.Successors)
             {
-                // Already visited
+                if (ReferenceEquals(successor, exitBlock))
+                    continue;
+                // A real native join needs one stack position. Replacing one predecessor's
+                // delta with another silently aliases distinct slots and can oscillate in loops.
                 if (_inComingState.TryGetValue(successor, out var existingState))
                 {
                     if (existingState.Size != currentState.Size)
-                    {
-                        _inComingState[successor] = currentState.Copy();
-                        blockLevelState.Push((successor, visitedBlockCount + 1));
-                    }
+                        throw new DecompilerException("Native stack delta differs at a control-flow join");
                 }
                 else
                 {
@@ -233,5 +226,5 @@ public class StackAnalyzer
         }
     }
 
-    private static string NameForSlot(StackOffset offset) => offset.Offset < 0 ? $"stack_-{-offset.Offset:X}" : $"stack_{offset.Offset:X}";
+    private static string NameForSlot(StackOffset offset) => offset.Offset < 0 ? $"stack_-{-(long)offset.Offset:X}" : $"stack_{offset.Offset:X}";
 }
