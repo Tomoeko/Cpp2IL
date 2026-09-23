@@ -89,16 +89,18 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
 
     private void RegisterMethods(ApplicationAnalysisContext context)
     {
+        var nextIdentity = 0;
         foreach (var assembly in context.Assemblies)
         foreach (var type in assembly.Types)
         foreach (var method in type.Methods)
         {
             if (_methodResults.ContainsKey(method))
                 continue;
-            _methodResults.TryAdd(method, new MethodRecoveryResult(_methodResults.Count,
+            if (_methodResults.TryAdd(method, new MethodRecoveryResult(nextIdentity,
                 assembly.Name, type.FullName, method.Name, method.FullNameWithSignature, method.Token,
                 method.Definition != null, method.UnderlyingPointer != 0,
-                MethodRecoveryDisposition.NotProcessed, ["Method was not processed."]));
+                MethodRecoveryDisposition.NotProcessed, ["Method was not processed."])))
+                nextIdentity++;
         }
     }
 
@@ -176,6 +178,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
                     "Guarded field-argument call IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
+            if (X64GuardedEnumParameterCallRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Guarded unchanged-enum call IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 
