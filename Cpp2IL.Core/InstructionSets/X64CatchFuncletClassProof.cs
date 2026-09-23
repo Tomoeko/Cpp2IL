@@ -14,7 +14,8 @@ namespace Cpp2IL.Core.InstructionSets;
 /// </summary>
 internal static class X64CatchFuncletClassProof
 {
-    internal sealed record Evidence(TypeAnalysisContext CheckedClass, ulong MetadataSlot, ulong Funclet);
+    internal sealed record Evidence(TypeAnalysisContext CheckedClass, ulong MetadataSlot,
+        ulong Funclet, int? ConstantContinuationReturn);
 
     internal static Evidence? Find(MethodAnalysisContext method)
     {
@@ -61,7 +62,48 @@ internal static class X64CatchFuncletClassProof
             app.ResolveIl2CppType(rawType) is not { Definition: not null } checkedClass ||
             !ISIL.NullCheckedCall.IsReferenceClass(checkedClass))
             return null;
-        return new Evidence(checkedClass, slot, funclet);
+        var continuationReturn = ReferenceEquals(method.ReturnType, app.SystemTypes.SystemInt32Type)
+            ? ReadConstantContinuationReturn(pe, index, region, handler)
+            : null;
+        return new Evidence(checkedClass, slot, funclet, continuationReturn);
+    }
+
+    private static int? ReadConstantContinuationReturn(PE pe, X64UnwindProof.Index index,
+        X64UnwindProof.HandlerInfo region, X64Eh4MapProof.Handler handler)
+    {
+        if (handler.ContinuationRvas is not [var rva] ||
+            rva > ulong.MaxValue - index.ImageBase)
+            return null;
+        var continuation = index.ImageBase + rva;
+        if (continuation < region.Start || continuation >= region.End)
+            return null;
+        var length = (int)Math.Min(region.End - continuation, 32UL);
+        if (length < 11 || index.ClassifySpan(continuation, continuation + (ulong)length).Kind !=
+            X64UnwindProof.SpanKind.Unsupported)
+            return null;
+        var rawStart = pe.MapVirtualAddressToRaw(continuation, false);
+        var rawEnd = pe.MapVirtualAddressToRaw(continuation + (ulong)length - 1, false);
+        var raw = pe.GetRawBinaryContent();
+        if (rawStart < 0 || rawEnd < rawStart || rawEnd - rawStart != length - 1 || rawEnd >= raw.Length)
+            return null;
+        var decoder = Decoder.Create(64, new ByteArrayCodeReader(raw.Slice((int)rawStart, length).ToArray()), continuation);
+        var instructions = new Instruction[4];
+        for (var i = 0; i < instructions.Length; i++)
+        {
+            instructions[i] = decoder.Decode();
+            if (instructions[i].IsInvalid || instructions[i].NextIP > continuation + (ulong)length)
+                return null;
+        }
+        return instructions[0].Mnemonic == Mnemonic.Mov && instructions[0].Op0Kind == OpKind.Register &&
+               instructions[0].Op0Register == Register.EAX && instructions[0].Op1Kind == OpKind.Immediate32 &&
+               instructions[1].Mnemonic == Mnemonic.Add && instructions[1].Op0Kind == OpKind.Register &&
+               instructions[1].Op0Register == Register.RSP &&
+               instructions[1].Op1Kind is OpKind.Immediate8to64 or OpKind.Immediate32to64 &&
+               instructions[1].GetImmediate(1) == 0x30 &&
+               instructions[2].Mnemonic == Mnemonic.Pop && instructions[2].Op0Kind == OpKind.Register &&
+               instructions[2].Op0Register == Register.RBX && instructions[3].Code == Code.Retnq
+            ? unchecked((int)instructions[0].Immediate32)
+            : null;
     }
 
     internal static bool TryMatchClassCheck(IReadOnlyList<Instruction> code, ulong metadataHelper,

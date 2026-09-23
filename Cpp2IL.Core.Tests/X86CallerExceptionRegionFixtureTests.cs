@@ -73,8 +73,10 @@ public class X86CallerExceptionRegionFixtureTests
                 .SelectMany(type => type.Methods).OrderBy(method => method.Name).ToArray();
             Assert.That(methods.Select(method => method.Name),
                 Is.EqualTo(new[] { "CatchZero", "FinallyCount" }));
-            Assert.That(X64CatchFuncletClassProof.Find(methods[0])?.CheckedClass.FullName,
+            var catchProof = X64CatchFuncletClassProof.Find(methods[0]);
+            Assert.That(catchProof?.CheckedClass.FullName,
                 Is.EqualTo("System.DivideByZeroException"));
+            Assert.That(catchProof!.ConstantContinuationReturn, Is.EqualTo(-17));
             Assert.That(X64CatchFuncletClassProof.Find(methods[1]), Is.Null,
                 "A finally funclet must not be mistaken for a typed catch.");
             var handlers = methods.Select(method =>
