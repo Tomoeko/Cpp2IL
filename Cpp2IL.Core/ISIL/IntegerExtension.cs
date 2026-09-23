@@ -36,7 +36,7 @@ internal readonly record struct IntegerExtension(int SourceBits, int ResultBits,
     };
 
     // Identity checks exclude enum storage, native integers, Boolean and same-named substitutes.
-    private static int StorageBits(TypeAnalysisContext? type, SystemTypesContext types)
+    internal static int StorageBits(TypeAnalysisContext? type, SystemTypesContext types)
     {
         if (ReferenceEquals(type, types.SystemSByteType) || ReferenceEquals(type, types.SystemByteType)) return 8;
         if (ReferenceEquals(type, types.SystemInt16Type) || ReferenceEquals(type, types.SystemUInt16Type)) return 16;

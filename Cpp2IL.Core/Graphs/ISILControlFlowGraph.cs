@@ -122,10 +122,10 @@ public class ISILControlFlowGraph
             // Fully detach the block so no remaining block keeps a dangling reference to it.
             // (A reachable block can have an unreachable predecessor; leaving that reference
             // behind makes later passes such as dominator computation throw.)
-            foreach (var successor in block.Successors)
-                successor.Predecessors.Remove(block);
-            foreach (var predecessor in block.Predecessors)
-                predecessor.Successors.Remove(block);
+            foreach (var successor in block.Successors.ToArray())
+                RemoveDirectedEdge(block, successor);
+            foreach (var predecessor in block.Predecessors.ToArray())
+                RemoveDirectedEdge(predecessor, block);
 
             block.Successors.Clear();
             block.Predecessors.Clear();
@@ -188,6 +188,37 @@ public class ISILControlFlowGraph
         {
             block.Instructions.RemoveAll(i => i.OpCode == OpCode.Nop && !usedAsTarget.Contains(i));
         }
+    }
+
+    /// <summary>
+    /// A call rewritten to Throw may be inside a merged block. Split its suffix before cutting
+    /// the fallthrough edge so alternate entries survive, and keep SSA phi inputs aligned.
+    /// </summary>
+    public void NormalizeThrowTerminators()
+    {
+        var changed = false;
+        for (var index = 0; index < Blocks.Count; index++)
+        {
+            var block = Blocks[index];
+            var throwIndex = block.Instructions.FindIndex(i => i.OpCode == OpCode.Throw);
+            if (throwIndex < 0)
+                continue;
+            if (throwIndex + 1 < block.Instructions.Count)
+            {
+                SplitAndCreate(block, throwIndex + 1);
+                changed = true;
+            }
+            if (block.Successors.Count != 1 || !ReferenceEquals(block.Successors[0], ExitBlock))
+            {
+                foreach (var successor in block.Successors.ToArray())
+                    RemoveDirectedEdge(block, successor);
+                AddDirectedEdge(block, ExitBlock);
+                changed = true;
+            }
+            block.CalculateBlockType();
+        }
+        if (changed)
+            RemoveUnreachableBlocks();
     }
 
     public void RemoveEmptyBlocks()
@@ -376,7 +407,8 @@ public class ISILControlFlowGraph
                 case OpCode.Call:
                 case OpCode.CallVoid:
                 case OpCode.Return:
-                    var isReturn = instructions[i].OpCode == OpCode.Return;
+                case OpCode.Throw:
+                    var isReturn = instructions[i].OpCode is OpCode.Return or OpCode.Throw;
 
                     currentBlock.AddInstruction(instructions[i]);
 
@@ -532,6 +564,23 @@ public class ISILControlFlowGraph
     {
         from.Successors.Add(to);
         to.Predecessors.Add(from);
+    }
+
+    private static void RemoveDirectedEdge(Block from, Block to)
+    {
+        for (var index = to.Predecessors.Count - 1; index >= 0; index--)
+        {
+            if (!ReferenceEquals(to.Predecessors[index], from))
+                continue;
+            foreach (var phi in to.Instructions.Where(i => i.OpCode == OpCode.Phi))
+            {
+                if (phi.Operands.Count != to.Predecessors.Count + 1)
+                    throw new InvalidOperationException("Phi inputs do not match predecessor edges");
+                phi.RemoveOperandAt(index + 1);
+            }
+            to.Predecessors.RemoveAt(index);
+        }
+        from.Successors.RemoveAll(successor => ReferenceEquals(successor, to));
     }
 
     protected void AddBlock(Block block) => Blocks.Add(block);

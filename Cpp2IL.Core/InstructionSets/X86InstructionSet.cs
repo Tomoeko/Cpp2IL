@@ -57,6 +57,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var addresses = new List<ulong>();
 
         var nativeInstructions = X86Utils.Iterate(context).ToArray();
+        if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
+            return integerExtension;
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
         var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);
         if (metadataGuard != null)
@@ -68,18 +70,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             ConvertInstructionStatement(instruction, instructions, addresses, context, singleWidthDividends.Contains(instruction.IP));
         }
 
-        // Add return if the function doesn't end with one already
-        if (instructions.Count > 0 && instructions[^1].OpCode != ISIL.OpCode.Return)
-        {
-            var index = instructions[^1].Index + 1;
-
-            if (context.IsVoid)
-                instructions.Add(new ISIL.Instruction(index, ISIL.OpCode.Return));
-            else if (context.Definition?.RawReturnType?.Type is Il2CppTypeEnum.IL2CPP_TYPE_R4 or Il2CppTypeEnum.IL2CPP_TYPE_R8)
-                instructions.Add(new ISIL.Instruction(index, ISIL.OpCode.Return, new ISIL.Register(null, "xmm0")));
-            else
-                instructions.Add(new ISIL.Instruction(index, ISIL.OpCode.Return, new ISIL.Register(null, "rax")));
-        }
+        X86BodyBoundary.AppendFallthroughFailure(instructions);
 
         // fix branches
         for (var i = 0; i < instructions.Count; i++)
@@ -305,9 +296,6 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         switch (instruction.Mnemonic)
         {
             case Mnemonic.Mov:
-            case Mnemonic.Movzx: // For all intents and purposes we don't care about zero-extending
-            case Mnemonic.Movsx: // move with sign-extendign
-            case Mnemonic.Movsxd: // same
             case Mnemonic.Movaps: // Movaps is basically just a mov but with the potential future detail that the size is dependent on reg size
             case Mnemonic.Movups: // Movaps but unaligned
             case Mnemonic.Movd: // Mov but specifically dword
@@ -325,21 +313,18 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Movsd: // scalar double
                 Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertScalarFloatOperand(instruction, 1, instruction.Mnemonic == Mnemonic.Movss, context));
                 break;
-            case Mnemonic.Cbw: // AX := sign-extend AL
-                Add(instruction.IP, ISIL.OpCode.Move, new ISIL.Register(null, X86Utils.GetRegisterName(Register.AX)),
-                    new ISIL.Register(null, X86Utils.GetRegisterName(Register.AL)));
-                break;
-            case Mnemonic.Cwde: // EAX := sign-extend AX
-                Add(instruction.IP, ISIL.OpCode.Move, new ISIL.Register(null, X86Utils.GetRegisterName(Register.EAX)),
-                    new ISIL.Register(null, X86Utils.GetRegisterName(Register.AX)));
-                break;
-            case Mnemonic.Cdqe: // RAX := sign-extend EAX
-                Add(instruction.IP, ISIL.OpCode.Move, new ISIL.Register(null, X86Utils.GetRegisterName(Register.RAX)),
-                    new ISIL.Register(null, X86Utils.GetRegisterName(Register.EAX)));
-                break;
-            case Mnemonic.Cwd: // DX:AX := sign-extend AX
-                Add(instruction.IP, ISIL.OpCode.ShiftRight, new ISIL.Register(null, X86Utils.GetRegisterName(Register.DX)),
-                    new ISIL.Register(null, X86Utils.GetRegisterName(Register.AX)), Imm(15));
+            case Mnemonic.Movzx:
+            case Mnemonic.Movsx:
+            case Mnemonic.Movsxd:
+            case Mnemonic.Cbw:
+            case Mnemonic.Cwde:
+            case Mnemonic.Cdqe:
+            case Mnemonic.Cwd:
+                // Treating extension as Move loses source truncation, signedness and the
+                // different upper-bit effects of 16/32/64-bit destination writes. Only the
+                // separate closed-method proof may lower a supported extension sequence.
+                Add(instruction.IP, ISIL.OpCode.NotImplemented,
+                    new ISIL.StringLiteral("Integer extension requires proved source bits and destination register semantics: " + FormatInstruction(instruction)));
                 break;
             case Mnemonic.Cdq: // EDX:EAX := sign-extend EAX
                 Add(instruction.IP, ISIL.OpCode.ShiftRight, new ISIL.Register(null, X86Utils.GetRegisterName(Register.EDX)),

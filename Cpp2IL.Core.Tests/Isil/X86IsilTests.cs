@@ -74,6 +74,7 @@ public class X86IsilTests
         Add(14, OpCode.CallVoid, (ulong)0x180267A70, rcx, rdx, r8, r9);
         Add(15, OpCode.Return);
         Add(16, OpCode.Return);
+        Add(17, OpCode.Invalid, new StringLiteral("Decoded native body has an unproved fallthrough at its boundary"));
 
         Assert.That(isil.Count == instructions.Count,
             $"expected instruction count to be {instructions.Count}, but got {isil.Count}");
@@ -86,6 +87,9 @@ public class X86IsilTests
 
             Assert.True(instruction.IsStructurallyEqualTo(isil[i]), $"expected: {instruction}, but got {isil[i]}");
         }
+
+        var reachable = new Cpp2IL.Core.Graphs.ISILControlFlowGraph(isil).Instructions;
+        Assert.That(reachable, Does.Not.Contain(isil[^1]), "native returns make the boundary sentinel unreachable");
     }
     
     [Test]

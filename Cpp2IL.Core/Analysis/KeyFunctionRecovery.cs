@@ -56,6 +56,7 @@ public static class KeyFunctionRecovery
             else if (keyFunction == nameof(BaseKeyFunctionAddresses.InternalCalls_Resolve))
                 RewriteInternalCallResolve(instruction, method);
         }
+        method.ControlFlowGraph.NormalizeThrowTerminators();
     }
 
     private static void RemoveWriteBarrier(Instruction instruction)
