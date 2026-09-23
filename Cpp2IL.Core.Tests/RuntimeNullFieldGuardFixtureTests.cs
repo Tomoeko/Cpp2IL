@@ -11,8 +11,9 @@ namespace Cpp2IL.Core.Tests;
 [NonParallelizable]
 public class RuntimeNullFieldGuardFixtureTests
 {
-    [Test]
-    public void PlayerOnlyFieldReadRetainsAnImplicitNullCheckAndRejectsChangedMetadata()
+    [TestCase("Read", false)]
+    [TestCase("Write", true)]
+    public void PlayerOnlyFieldAccessRetainsAnImplicitNullCheckAndRejectsChangedMetadata(string name, bool isWrite)
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_FIELD_GUARD_FIXTURE_INPUT");
         if (string.IsNullOrEmpty(directory))
@@ -27,13 +28,14 @@ public class RuntimeNullFieldGuardFixtureTests
             Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
             var app = Cpp2IlApi.CurrentAppContext!;
             var method = app.GetAssemblyByName("FieldGuardFixture")!.Types
-                .SelectMany(type => type.Methods).Single(candidate => candidate.Name == "Read");
+                .SelectMany(type => type.Methods).Single(candidate => candidate.Name == name);
             method.Analyze();
             Assert.That(method.AnalysisWarnings, Is.Empty);
-            Assert.That(method.NullCheckedFieldReads, Has.Count.EqualTo(1));
+            Assert.That(method.NullCheckedFieldAccesses, Has.Count.EqualTo(1));
             Assert.That(method.ControlFlowGraph!.Instructions.Any(instruction => instruction.OpCode == OpCode.RuntimeNullThrow), Is.False);
-            var evidence = method.NullCheckedFieldReads[0];
+            var evidence = method.NullCheckedFieldAccesses[0];
             Assert.That(evidence.IsValidFor(method), Is.True);
+            Assert.That(evidence.StoredValue != null, Is.EqualTo(isWrite));
             var attributes = evidence.Field.Attributes;
             try
             {

@@ -1,4 +1,4 @@
-"""Independent oracle for a signed instance-field read and null receiver."""
+"""Independent oracle for signed instance-field reads, writes and null receivers."""
 
 import json
 
@@ -7,6 +7,9 @@ def observations():
     expected = [{"kind": str(value), "result": value, "exception": "none"}
                 for value in (-(1 << 31), -17, 0, 17, (1 << 31) - 1)]
     expected.append({"kind": "null", "result": None, "exception": "System.NullReferenceException"})
+    expected.extend({"kind": "write:" + str(value), "result": value, "exception": "none"}
+                    for value in (-(1 << 31), -17, 0, 17, (1 << 31) - 1))
+    expected.append({"kind": "write:null", "result": None, "exception": "System.NullReferenceException"})
     return expected
 
 
@@ -19,6 +22,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Field-guard behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 1,
+    return {"status": "passed", "observations": len(expected), "methods": 2,
             "platform": report["platform"], "profile": "field-guard",
-            "scope": "signed instance-field reads and null receivers; not whole-program equivalence"}
+            "scope": "signed instance-field reads, writes and null receivers; not whole-program equivalence"}

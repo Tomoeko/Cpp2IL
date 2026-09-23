@@ -20,4 +20,13 @@ namespace FieldGuardFixture
             return box.Value;
         }
     }
+
+    public static class FieldWrites
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void Write(FieldBox box, int value)
+        {
+            box.Value = value;
+        }
+    }
 }

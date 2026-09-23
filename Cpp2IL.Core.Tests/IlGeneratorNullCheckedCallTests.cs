@@ -52,7 +52,7 @@ public partial class IlGeneratorParameterTests
     {
         var fixture = CreateFieldNullGuard();
         Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.EqualTo(1));
-        Assert.That(fixture.Context.NullCheckedFieldReads, Has.Count.EqualTo(1));
+        Assert.That(fixture.Context.NullCheckedFieldAccesses, Has.Count.EqualTo(1));
         Assert.That(fixture.Context.ControlFlowGraph!.Instructions.Any(i => i.OpCode == OpCode.RuntimeNullThrow), Is.False);
         SsaForm.Remove(fixture.Context);
         CopyCoalescer.Run(fixture.Context);
@@ -69,6 +69,61 @@ public partial class IlGeneratorParameterTests
         var instance = Activator.CreateInstance(runtime.Type)!;
         runtime.Type.GetField("Value")!.SetValue(instance, -17);
         Assert.That(method.Invoke(null, [instance]), Is.EqualTo(-17));
+    }
+
+    [Test]
+    public void CoalescedFieldWriteRetainsNullFailureAndStoresTheValue()
+    {
+        var fixture = CreateFieldWriteNullGuard();
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.EqualTo(1));
+        Assert.That(fixture.Context.NullCheckedFieldAccesses, Has.Count.EqualTo(1));
+        Assert.That(fixture.Context.NullCheckedFieldAccesses[0].StoredValue, Is.SameAs(fixture.Value));
+        Assert.That(fixture.Context.ControlFlowGraph!.Instructions.Any(i => i.OpCode == OpCode.RuntimeNullThrow), Is.False);
+        SsaForm.Remove(fixture.Context);
+        CopyCoalescer.Run(fixture.Context);
+        Simplifier.Simplify(fixture.Context);
+        DeadCodeEliminator.Run(fixture.Context);
+        LocalVariables.RemoveUnused(fixture.Context);
+        IlGenerator.GenerateIl(fixture.Context, fixture.Definition);
+        Assert.That(fixture.Definition.CilMethodBody!.Instructions.Count(i => i.OpCode == CilOpCodes.Stfld), Is.EqualTo(1));
+        AddDefaultConstructor();
+        using var runtime = Load();
+        var method = runtime.Type.GetMethod("GuardedFieldWrite")!;
+        Assert.That(Assert.Throws<TargetInvocationException>(() => method.Invoke(null, [null, 17]))!.InnerException,
+            Is.TypeOf<NullReferenceException>());
+        var instance = Activator.CreateInstance(runtime.Type)!;
+        method.Invoke(null, [instance, -17]);
+        Assert.That(runtime.Type.GetField("Value")!.GetValue(instance), Is.EqualTo(-17));
+    }
+
+    [TestCase("stored-value")]
+    [TestCase("parameter-type")]
+    [TestCase("removed-store")]
+    public void FieldWriteProofMustSurviveUntilEmission(string mutation)
+    {
+        var fixture = CreateFieldWriteNullGuard();
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.EqualTo(1));
+        switch (mutation)
+        {
+            case "stored-value": fixture.Store.SetOperand(1, Imm(17)); break;
+            case "parameter-type": fixture.Context.Parameters[1].ParameterType = _app.SystemTypes.SystemObjectType; break;
+            case "removed-store": fixture.Context.ControlFlowGraph!.FindBlockByInstruction(fixture.Store)!.Instructions.Remove(fixture.Store); break;
+        }
+        Assert.That(() => IlGenerator.GenerateIl(fixture.Context, fixture.Definition),
+            Throws.TypeOf<DecompilerException>().With.Message.Contains("Null-checked field access marker"));
+    }
+
+    [Test]
+    public void FieldWriteNullGuardRequiresABoundStoredParameter()
+    {
+        var fixture = CreateFieldWriteNullGuard();
+        var block = fixture.Context.ControlFlowGraph!.FindBlockByInstruction(fixture.Store)!;
+        var copiedValue = NullGuardLocal("copiedValue", 1251, _app.SystemTypes.SystemInt32Type);
+        block.Instructions.Insert(0, new Instruction(2, OpCode.Move, copiedValue, fixture.Value));
+        fixture.Store.SetOperand(1, copiedValue);
+        fixture.Context.Locals.Add(copiedValue);
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.Zero);
+        Assert.That(fixture.Context.ControlFlowGraph.Instructions.Any(i => i.OpCode == OpCode.RuntimeNullThrow), Is.True);
     }
 
     [TestCase("receiver")]
@@ -90,7 +145,7 @@ public partial class IlGeneratorParameterTests
             case "removed-load": fixture.Context.ControlFlowGraph!.FindBlockByInstruction(fixture.Load)!.Instructions.Remove(fixture.Load); break;
         }
         Assert.That(() => IlGenerator.GenerateIl(fixture.Context, fixture.Definition),
-            Throws.TypeOf<DecompilerException>().With.Message.Contains("Null-checked field read marker"));
+            Throws.TypeOf<DecompilerException>().With.Message.Contains("Null-checked field access marker"));
     }
 
     [Test]
@@ -383,6 +438,31 @@ public partial class IlGeneratorParameterTests
         ]);
         context.Locals.AddRange([condition, result]);
         return (context, definition, parameters[0], field, load, throwing);
+    }
+
+    private (InjectedMethodAnalysisContext Context, MethodDefinition Definition, LocalVariable Value,
+        Instruction Store) CreateFieldWriteNullGuard()
+    {
+        var fieldDefinition = new FieldDefinition("Value", FieldAttributes.Public, _module.CorLibTypeFactory.Int32);
+        _type.Fields.Add(fieldDefinition);
+        var field = new InjectedFieldAnalysisContext("Value", _app.SystemTypes.SystemInt32Type,
+            System.Reflection.FieldAttributes.Public, _typeContext, 16);
+        field.PutExtraData("AsmResolverField", fieldDefinition);
+        _typeContext.Fields.Add(field);
+        var (context, definition, parameters) = CreateMethod("GuardedFieldWrite", _app.SystemTypes.SystemVoidType,
+            [_typeContext, _app.SystemTypes.SystemInt32Type]);
+        var condition = NullGuardLocal("condition", 1250, _app.SystemTypes.SystemBooleanType);
+        var throwing = new Instruction(5, OpCode.RuntimeNullThrow, new StringLiteral("synthetic-proof"));
+        var store = new Instruction(3, OpCode.Move, new FieldReference(field, parameters[0], 16), parameters[1]);
+        context.ControlFlowGraph = new([
+            new Instruction(0, OpCode.CheckEqual, condition, parameters[0], Imm(0)) { IntegerBitWidth = 64 },
+            new Instruction(1, OpCode.ConditionalJump, throwing, condition),
+            store,
+            new Instruction(4, OpCode.Return),
+            throwing,
+        ]);
+        context.Locals.Add(condition);
+        return (context, definition, parameters[1], store);
     }
 
     private InjectedMethodAnalysisContext AddReceiverIndependentTarget(bool isVoid)

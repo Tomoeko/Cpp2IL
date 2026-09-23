@@ -19,36 +19,49 @@ internal static class RuntimeNullGuardCoalescer
 {
     private const string SetOptionAttribute = "Unity.IL2CPP.CompilerServices.Il2CppSetOptionAttribute";
 
-    internal sealed record FieldReadEvidence(Instruction Load, FieldReference Access, LocalVariable Receiver,
+    internal sealed record FieldAccessEvidence(Instruction Operation, FieldReference Access, LocalVariable Receiver,
         FieldAnalysisContext Field, TypeAnalysisContext Owner, TypeAnalysisContext ValueType, int Offset,
-        FieldAttributes Attributes, bool RequireNativeBinding)
+        FieldAttributes Attributes, bool RequireNativeBinding, LocalVariable? StoredValue)
     {
         internal bool IsValidFor(MethodAnalysisContext method)
         {
-            if (method.ControlFlowGraph?.Instructions.Contains(Load) != true ||
-                Load is not { OpCode: OpCode.Move, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct,
-                    Operands: [LocalVariable destination, FieldReference access] } ||
-                !ReferenceEquals(access, Access) || !ReferenceEquals(access.Local, Receiver) ||
-                !ReferenceEquals(access.Field, Field) || !ReferenceEquals(Receiver.Type, Owner) ||
+            if (method.ControlFlowGraph?.Instructions.Contains(Operation) != true ||
+                Operation is not { OpCode: OpCode.Move, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct } ||
+                Operation.Operands.Count != 2 ||
+                (StoredValue == null
+                    ? Operation.Operands[0] is not LocalVariable destination ||
+                      !ReferenceEquals(destination.Type, ValueType) ||
+                      !ReferenceEquals(Operation.Operands[1], Access)
+                    : !ReferenceEquals(Operation.Operands[0], Access) ||
+                      !ReferenceEquals(Operation.Operands[1], StoredValue) ||
+                      !ReferenceEquals(StoredValue.Type, ValueType) ||
+                      !method.ParameterLocals.Contains(StoredValue) ||
+                      !UnchangedParameter(method, StoredValue, ValueType)) ||
+                !ReferenceEquals(Access.Local, Receiver) ||
+                !ReferenceEquals(Access.Field, Field) || !ReferenceEquals(Receiver.Type, Owner) ||
                 !ReferenceEquals(Field.DeclaringType, Owner) || !ReferenceEquals(Field.FieldType, ValueType) ||
-                !ReferenceEquals(destination.Type, ValueType) || Field.Attributes != Attributes ||
-                Field.IsStatic || access.Offset != Offset || Field.Offset != Offset ||
-                RequireNativeBinding && !HasUnchangedNativeField(access))
+                Field.Attributes != Attributes || Field.IsStatic || Access.Offset != Offset || Field.Offset != Offset ||
+                RequireNativeBinding && !HasUnchangedNativeField(Access))
                 return false;
-            if (!method.ParameterLocals.Contains(Receiver))
+            return UnchangedParameter(method, Receiver, Owner);
+        }
+
+        private static bool UnchangedParameter(MethodAnalysisContext method, LocalVariable local, TypeAnalysisContext type)
+        {
+            if (!method.ParameterLocals.Contains(local))
                 return true;
-            if (Receiver.IsThis)
-                return !method.IsStatic && ReferenceEquals(method.DeclaringType, Owner);
+            if (local.IsThis)
+                return !method.IsStatic && ReferenceEquals(method.DeclaringType, type);
             var skipThis = method.IsStatic ? 0 : 1;
             var matches = Enumerable.Range(0, method.Parameters.Count).Where(index =>
                 index + skipThis < method.ParameterOperands.Count &&
                 method.ParameterOperands[index + skipThis] is Register register &&
-                register.Number == Receiver.Register.Number && Receiver.Register.Version == -1).ToArray();
+                register.Number == local.Register.Number && local.Register.Version == -1).ToArray();
             if (matches.Length != 1)
                 return false;
             var parameter = method.Parameters[matches[0]];
-            return !parameter.IsRef && ReferenceEquals(parameter.ParameterType, Owner) &&
-                   ReferenceEquals(parameter.DefaultParameterType, Owner);
+            return !parameter.IsRef && ReferenceEquals(parameter.ParameterType, type) &&
+                   ReferenceEquals(parameter.DefaultParameterType, type);
         }
     }
 
@@ -129,7 +142,8 @@ internal static class RuntimeNullGuardCoalescer
             var nullEntry = comparison.OpCode == OpCode.CheckEqual ? taken : other;
             var callEntry = comparison.OpCode == OpCode.CheckEqual ? other : taken;
             if (!NullArmIsExclusive(nullEntry, guard) ||
-                !TryGuardedOperation(callEntry, guard, receiver, out var operation, out var fieldAccess))
+                !TryGuardedOperation(callEntry, guard, receiver, out var operation, out var fieldAccess,
+                    out var storedValue))
                 continue;
 
             // Neither the operation nor its pure setup moves. The null input takes the same
@@ -137,9 +151,9 @@ internal static class RuntimeNullGuardCoalescer
             if (fieldAccess == null)
                 operation.CallSemantics = CallSemantics.NullCheckedInstance;
             else
-                method.NullCheckedFieldReads.Add(new FieldReadEvidence(operation, fieldAccess, receiver,
+                method.NullCheckedFieldAccesses.Add(new FieldAccessEvidence(operation, fieldAccess, receiver,
                     fieldAccess.Field, fieldAccess.Field.DeclaringType, fieldAccess.Field.FieldType,
-                    fieldAccess.Offset, fieldAccess.Field.Attributes, requireNativeFieldBinding));
+                    fieldAccess.Offset, fieldAccess.Field.Attributes, requireNativeFieldBinding, storedValue));
             branch.OpCode = OpCode.Jump;
             branch.SetOperands(callEntry);
             guard.Successors.Remove(nullEntry);
@@ -182,10 +196,11 @@ internal static class RuntimeNullGuardCoalescer
         }
 
         bool TryGuardedOperation(Block entry, Block predecessor, LocalVariable receiver,
-            out Instruction operation, out FieldReference? fieldAccess)
+            out Instruction operation, out FieldReference? fieldAccess, out LocalVariable? storedValue)
         {
             operation = null!;
             fieldAccess = null;
+            storedValue = null;
             var seen = new HashSet<Block> { predecessor };
             while (true)
             {
@@ -219,6 +234,22 @@ internal static class RuntimeNullGuardCoalescer
                         operation = instruction;
                         fieldAccess = access;
                         return true; // The first effect is the managed field read and null check.
+                    }
+                    if (instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                            Operands: [FieldReference writeAccess, LocalVariable value] } &&
+                        ReferenceEquals(writeAccess.Local, receiver) &&
+                        receiver.Type != null && NullCheckedCall.IsReferenceClass(receiver.Type) &&
+                        ReferenceEquals(writeAccess.Field.DeclaringType, receiver.Type) &&
+                        !writeAccess.Field.IsStatic && writeAccess.Offset >= 0 &&
+                        writeAccess.Offset == writeAccess.Field.Offset &&
+                        ReferenceEquals(value.Type, writeAccess.Field.FieldType) &&
+                        method.ParameterLocals.Contains(value) && Available(value, entry, instruction) &&
+                        provesNativeField(writeAccess))
+                    {
+                        operation = instruction;
+                        fieldAccess = writeAccess;
+                        storedValue = value;
+                        return true; // The first effect is the managed field write and null check.
                     }
                     if (instruction.OpCode == OpCode.Nop && instruction.IntegerBitWidth == 0 && instruction.Operands.Count == 0)
                         continue;

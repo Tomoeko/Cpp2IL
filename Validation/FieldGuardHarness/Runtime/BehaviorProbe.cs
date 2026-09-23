@@ -14,6 +14,9 @@ namespace RecoveryValidation
             foreach (var value in new[] { int.MinValue, -17, 0, 17, int.MaxValue })
                 Record(observations, value.ToString(), new FieldBox(value));
             Record(observations, "null", null);
+            foreach (var value in new[] { int.MinValue, -17, 0, 17, int.MaxValue })
+                RecordWrite(observations, value.ToString(), new FieldBox(42), value);
+            RecordWrite(observations, "null", null, 17);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -31,6 +34,22 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordWrite(List<object> observations, string kind, FieldBox box, int value)
+        {
+            object result = null;
+            var exception = "none";
+            try
+            {
+                FieldWrites.Write(box, value);
+                result = box == null ? null : (object)box.Value;
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "write:" + kind }, { "result", result }, { "exception", exception }
             });
         }
 
