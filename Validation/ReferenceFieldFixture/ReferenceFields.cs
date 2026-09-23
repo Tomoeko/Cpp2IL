@@ -13,6 +13,24 @@ namespace ReferenceFieldFixture
         public int[] Suffix;
         public object Payload;
         public int[] Numbers;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public string ReadTextSelf()
+        {
+            return Text;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public object ReadObjectSelf()
+        {
+            return Payload;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int[] ReadArraySelf()
+        {
+            return Numbers;
+        }
     }
 
     public sealed class DerivedBox : ReferenceBox

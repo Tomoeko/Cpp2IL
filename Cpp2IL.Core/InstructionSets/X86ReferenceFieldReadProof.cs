@@ -55,19 +55,30 @@ internal static class X86ReferenceFieldReadProof
         FieldAnalysisContext? receiverField = null;
         if (shape.ReceiverOffset is null)
         {
-            if (!method.IsStatic || method.Parameters.Count != 1 ||
-                definition.parameterCount != 1 || definition.InternalParameterData?.Length != 1)
-                return null;
-            var parameter = method.Parameters[0];
-            if (parameter.Definition == null ||
-                !ReferenceEquals(parameter.Definition, definition.InternalParameterData[0]) ||
-                parameter.ParameterIndex != 0 || !ReferenceEquals(parameter.DeclaringMethod, method) ||
-                parameter.IsRef || parameter.Attributes != parameter.DefaultAttributes ||
-                parameter.OverrideParameterType != null ||
-                parameter.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
-                    NumMods: 0, Byref: 0, Pinned: 0 })
-                return null;
-            box = parameter.ParameterType;
+            if (method.IsStatic)
+            {
+                if (method.Parameters.Count != 1 || definition.parameterCount != 1 ||
+                    definition.InternalParameterData?.Length != 1)
+                    return null;
+                var parameter = method.Parameters[0];
+                if (parameter.Definition == null ||
+                    !ReferenceEquals(parameter.Definition, definition.InternalParameterData[0]) ||
+                    parameter.ParameterIndex != 0 || !ReferenceEquals(parameter.DeclaringMethod, method) ||
+                    parameter.IsRef || parameter.Attributes != parameter.DefaultAttributes ||
+                    parameter.OverrideParameterType != null ||
+                    parameter.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                        NumMods: 0, Byref: 0, Pinned: 0 })
+                    return null;
+                box = parameter.ParameterType;
+            }
+            else
+            {
+                if (method.Parameters.Count != 0 || definition.parameterCount != 0 ||
+                    (definition.InternalParameterData?.Length ?? 0) != 0 ||
+                    !ISIL.NullCheckedCall.IsReferenceClass(method.DeclaringType))
+                    return null;
+                box = method.DeclaringType;
+            }
         }
         else
         {
