@@ -14,6 +14,7 @@ from run_fixture import ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
+    "integer-extensions", "byte-fields",
     "float-comparisons", "components", "metadata-literal", "division", "arithmetic", "integers", "scalar-structs", "shifts",
 )}
 PLAYER_FILES = ("GameAssembly.dll", "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat")

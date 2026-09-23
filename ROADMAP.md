@@ -45,7 +45,7 @@ Report total input methods and types, methods with native bodies, emitted bodies
 
 ## Milestone 0 — Reproducible baseline and truthful reporting
 
-Status: complete for the initial baseline. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests passed. The expanded core suite passes 563 tests and explicitly skips three optional native-fixture checks, which pass separately with their fixtures supplied. The current net10.0 CLI builds without warnings or errors. Forty public harness checks and the declaration comparer's mutation checks pass without Unity. The offline parser suite passes three local cases and explicitly skips five optional external samples. Four existing solution-wide package warnings concern the prerelease Disarm dependency. Private baseline logs are retained locally.
+Status: complete for the initial baseline. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests passed. The expanded core suite passes 566 tests and explicitly skips three optional native-fixture checks, which pass separately with their fixtures supplied. The current net10.0 CLI builds without warnings or errors. Forty-eight public harness checks and the declaration comparer's mutation checks pass without Unity. The offline parser suite passes three local cases and explicitly skips five optional external samples. Four existing solution-wide package warnings concern the prerelease Disarm dependency. Private baseline logs are retained locally.
 
 Implemented evidence:
 

@@ -12,7 +12,9 @@ import subprocess
 import sys
 import time
 
+import byte_fields
 import float_comparison
+import integer_extensions
 
 
 VERSION = "2021.3.35f1"
@@ -20,6 +22,8 @@ ROOT = Path(__file__).resolve().parent.parent
 VALIDATION = ROOT / "Validation"
 VALUES = [-(2**31), -(2**31) + 1, -17, -1, 0, 1, 17, 2**31 - 2, 2**31 - 1]
 PROFILES = {
+    "integer-extensions": {"assembly": "IntegerExtensionFixture", "source": VALIDATION / "IntegerExtensionFixture", "methods": 12},
+    "byte-fields": {"assembly": "ByteFieldFixture", "source": VALIDATION / "ByteFieldFixture", "methods": 4},
     "float-comparisons": {"assembly": "FloatComparisonFixture", "source": VALIDATION / "FloatComparisonFixture", "methods": 12},
     "components": {"assembly": "ComponentFixture", "source": VALIDATION / "ComponentFixture", "methods": 3},
     "metadata-literal": {"assembly": "MetadataLiteralFixture", "source": VALIDATION / "MetadataLiteralFixture", "methods": 1},
@@ -42,6 +46,10 @@ def int32(value):
 
 
 def verify_behavior(path, stage, profile="arithmetic"):
+    if profile == "integer-extensions":
+        return integer_extensions.verify(path, stage, VERSION)
+    if profile == "byte-fields":
+        return byte_fields.verify(path, stage, VERSION)
     if profile == "float-comparisons":
         return float_comparison.verify(path, stage, VERSION)
     if profile == "components":
@@ -323,7 +331,7 @@ def copy_sources(source, destination):
 def copy_harness(profile, destination):
     if profile == "arithmetic":
         return copy_sources(VALIDATION / "Harness", destination)
-    harness = {"float-comparisons": "FloatComparisonHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
+    harness = {"integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
                "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
     copied = copy_sources(VALIDATION / harness, destination)
     for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):
