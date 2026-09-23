@@ -27,8 +27,10 @@ The `scalar-truncation` runner profile passes all 132 result checks in both the
 supplied Windows editor and its original Release IL2CPP player. Player-only native
 inspection confirms two methods, each containing one register `CVTTSD2SI` and a
 return. These original-build observations do not establish recovered behavior.
-Acceptance still requires strict player-only
-recovery of both methods, typed IL verification, declaration comparisons,
-exact-editor compilation and a rebuilt native player with matching observations.
+The recovered scope also passes strict player-only recovery of both methods,
+typed IL verification, both declaration comparisons with zero differences,
+exact-editor compilation and behavior, and a rebuilt native player with all 132
+matching result checks. Generated code guards NaN and out-of-range inputs before
+performing a managed conversion; it does not rely on unspecified invalid casts.
 Packed conversions, single-precision inputs, unsigned results, memory operands,
 checked casts and signaling NaNs remain separate scopes.
