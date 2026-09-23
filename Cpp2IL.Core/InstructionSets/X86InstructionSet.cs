@@ -303,13 +303,18 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Movd: // Mov but specifically dword
             case Mnemonic.Movq: // Mov but specifically qword
             case Mnemonic.Movdqa: // Movaps but multiple integers at once in theory
-            case Mnemonic.Cvtdq2ps: // Technically a convert double to single, but for analysis purposes we can just treat it as a move
-            case Mnemonic.Cvtps2pd: // same, but float to double
-            case Mnemonic.Cvtdq2pd: // int to double
-            case Mnemonic.Cvtpd2ps: // double to float
-            case Mnemonic.Cvttsd2si: // same, but double to integer
             case Mnemonic.Movdqu: // DEST[127:0] := SRC[127:0]
                 Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+                break;
+            case Mnemonic.Cvtdq2ps:
+            case Mnemonic.Cvtps2pd:
+            case Mnemonic.Cvtdq2pd:
+            case Mnemonic.Cvtpd2ps:
+            case Mnemonic.Cvttsd2si:
+                // Numeric conversion changes representation, precision, rounding or lane
+                // width. An ordinary Move cannot preserve its semantics or exceptional cases.
+                Add(instruction.IP, ISIL.OpCode.NotImplemented,
+                    new ISIL.StringLiteral("Numeric conversion requires proved width, rounding and lane semantics: " + FormatInstruction(instruction)));
                 break;
             case Mnemonic.Movss: // scalar single - as a move, but a load from a constant address is a float literal
             case Mnemonic.Movsd: // scalar double
@@ -721,6 +726,13 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 }
 
             case Mnemonic.Call:
+                if (instruction.CodeSize == CodeSize.Code64 &&
+                    (instruction.HasLockPrefix || instruction.HasRepPrefix || instruction.HasRepnePrefix || instruction.SegmentPrefix != Register.None))
+                {
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented,
+                        new ISIL.StringLiteral("Native call prefixes require independent semantics: " + FormatInstruction(instruction)));
+                    break;
+                }
                 // We don't try and resolve which method is being called, but we do need to know how many parameters it has
                 // I would hope that all of these methods have the same number of arguments, else how can they be inlined?
 
