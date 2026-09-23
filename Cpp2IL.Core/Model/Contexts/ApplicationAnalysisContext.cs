@@ -73,13 +73,14 @@ public class ApplicationAnalysisContext : ContextWithDataStorage
     public readonly Dictionary<ulong, List<MethodAnalysisContext>> MethodsByAddress = new();
 
     /// <summary>
-    /// Exception type name thrown by the runtime helper at each address, or null where the address turned
-    /// out not to be a throw helper. Populated on demand by <see cref="Analysis.ThrowHelperRecovery"/>.
+    /// Legacy exception-name hints retained for API compatibility.
+    /// Recovery does not populate or trust these hints as evidence of a helper's managed behavior.
     /// </summary>
     public readonly ConcurrentDictionary<ulong, string?> ThrowHelperNamesByAddress = new();
 
     /// <summary>
-    /// Dict of address to "is this method analogue to il2cpp::vm::Exception::Raise"
+    /// Legacy exception-raiser hints retained for API compatibility.
+    /// Recovery does not populate or trust these hints as evidence that a call always throws.
     /// </summary>
     public readonly ConcurrentDictionary<ulong, bool> ExceptionRaisersByAddress = new();
 

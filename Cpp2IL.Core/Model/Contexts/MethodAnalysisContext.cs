@@ -396,22 +396,12 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         KeyFunctionRecovery.Run(this);
         DeadCodeEliminator.Run(this);
 
-        // Delete any il2cpp_codegen_initialize_runtime_metadata/il2cpp_codegen_initialize_method
-        MetadataInitGuardRemover.Run(this);
-
         // Delete inlined GC write barriers
         WriteBarrierRecovery.Run(this);
-
-        InjectedCheckRemover.Run(this);
 
         InterfaceDispatchRecovery.Run(this);
 
         LocalVariables.ResolveTypesAndFields(this);
-
-        // Needs the MethodInfo* receivers typed, so runs after resolution unlike the class-init guards
-        MetadataInitGuardRemover.RunRgctx(this);
-
-        MetadataInitGuardRemover.RewriteUnguardedInits(this);
 
         // Needs type resolved for delegate locals
         DelegateInvokeRecovery.Run(this);
