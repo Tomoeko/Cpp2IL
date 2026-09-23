@@ -51,11 +51,37 @@ def verify_report(report, expected_discovery):
             "discoveredComponents": len(bound), "serializedFields": sum(map(len, EXPECTED.values())), "platform": report["platform"]}
 
 
+def verify_recovery_origin(source_directory, copied_directory, copied_files, receipt_path):
+    receipt_path = receipt_path.resolve()
+    receipt_bytes = receipt_path.read_bytes()
+    origin = json.loads(receipt_bytes)
+    recovery = origin.get("stages", {}).get("recovery", {})
+    if (origin.get("status") != "passed" or origin.get("profile") != "components" or origin.get("scope") != "ComponentFixture" or
+            origin.get("recoveryInputs") != "isolated player binary and metadata only" or recovery.get("status") != "passed" or
+            recovery.get("selectedMethods") != 3 or recovery.get("selectedUnresolved") != 0):
+        raise ValueError("Discovery provenance requires a passed player-only component recovery receipt")
+    relative_source = "recovered/UnityProject/Assets/Recovered/ComponentFixture/"
+    if source_directory.resolve() != (receipt_path.parent / relative_source).resolve():
+        raise ValueError("Source directory does not belong to the supplied recovery receipt")
+    source_artifacts = [item for item in origin.get("artifacts", []) if item["path"].startswith(relative_source)]
+    expected = {item["path"][len(relative_source):]: item["sha256"] for item in source_artifacts}
+    actual = {path.relative_to(copied_directory).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in copied_directory.rglob("*") if path.is_file() and
+              (path.suffix in {".cs", ".asmdef", ".asmref", ".rsp"} or path.name == "link.xml")}
+    if (not expected or len(expected) != len(source_artifacts) or len(actual) != len(copied_files) or
+            set(actual) != {item["path"] for item in copied_files} or actual != expected):
+        raise ValueError("Fresh copied source does not exactly match the recovery receipt artifact manifest")
+    return {"path": str(receipt_path), "sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+            "copiedSourceFilesVerified": len(actual)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--editor", type=Path, required=True)
     parser.add_argument("--wine")
     parser.add_argument("--source-dir", type=Path, default=ROOT / "Validation/ComponentFixture")
+    parser.add_argument("--recovery-receipt", type=Path,
+                        help="Passed component roundtrip receipt whose artifact hashes establish player-only source provenance")
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--expect-discovery", choices=["bound", "unbound", "observe"], default="bound")
     parser.add_argument("--timeout", type=int, default=300)
@@ -89,7 +115,7 @@ def main():
     (project / "ProjectSettings/ProjectVersion.txt").write_text("m_EditorVersion: " + VERSION + "\n")
     write_json(project / "Packages/manifest.json", {"dependencies": {}})
     receipt = {"status": "running", "scope": "editor discovery and fresh-instance serialized fields only",
-               "recoveryProvenance": "authored synthetic fixture" if args.source_dir.resolve() == (ROOT / "Validation/ComponentFixture").resolve() else "oracle-derived emitter output; not player-only recovery",
+               "recoveryProvenance": "authored synthetic fixture" if args.source_dir.resolve() == (ROOT / "Validation/ComponentFixture").resolve() else "supplied source; recovery provenance unverified",
                "nativeBuild": "not-requested", "originalGuidsAndScenes": "not-reconstructed",
                "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
                "workingTreeDirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),
@@ -106,6 +132,10 @@ def main():
         "-projectPath", target_path(project), "-executeMethod", "ComponentProbe.ScriptProbe.Run", "-logFile", target_path(directory / "editor.log")]
     write_json(directory / "receipt.json", receipt)
     try:
+        if args.recovery_receipt:
+            receipt["recoveryOrigin"] = verify_recovery_origin(args.source_dir, project / "Assets/Fixture",
+                                                               receipt["sourceFiles"], args.recovery_receipt)
+            receipt["recoveryProvenance"] = "player-only recovered source verified against its passed recovery receipt"
         configure = list(command)
         configure[configure.index("-executeMethod") + 1] = "ComponentProbe.ScriptProbe.Configure"
         configure[configure.index("-logFile") + 1] = target_path(directory / "configure-editor.log")
@@ -119,6 +149,11 @@ def main():
             raise ValueError("Editor process failed or timed out")
         report = json.loads((project / "Reports/components.json").read_text())
         receipt["editorCheck"] = verify_report(report, args.expect_discovery)
+        if args.recovery_receipt:
+            receipt["recoveryOriginAfterEditor"] = verify_recovery_origin(args.source_dir, project / "Assets/Fixture",
+                                                                          receipt["sourceFiles"], args.recovery_receipt)
+            if receipt["recoveryOriginAfterEditor"] != receipt["recoveryOrigin"]:
+                raise ValueError("Recovery provenance changed during the editor run")
         receipt["status"] = receipt["editorCheck"]["status"]
     except Exception as error:
         receipt.update(status="failed", error=str(error))

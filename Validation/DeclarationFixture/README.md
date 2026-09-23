@@ -103,3 +103,10 @@ constant, attribute, overloaded attribute constructor, constraint and
 default-parameter changes, and to verify the intentional exclusion of method
 bodies. They are separate from exact-Unity
 fixture validation.
+
+External enum attribute decoding resolves the complete declared assembly identity
+against explicitly supplied reference directories. Multiple installed versions may
+coexist, but exactly one must match name, version, culture and public-key token.
+The comparer rejects missing or duplicate exact matches instead of selecting a
+reference by directory order. Mutation checks cover mixed-version search order,
+wrong version/culture and duplicate matching files.

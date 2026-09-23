@@ -14,3 +14,5 @@ This synthetic assembly separates native metadata bookkeeping from managed state
 | `TouchThrowing` | Repeated calls throw `TypeInitializationException` with `InvalidOperationException` inside; `ThrowingCount` increases exactly once. |
 
 A metadata guard may be removed only with positive proof of its runtime helper, guard location, effects and control flow. An application Boolean or byte branch is not such proof. Class initialization can run user code or throw; removing its call requires preserved managed initialization semantics. Narrow register comparisons and broader signed/unsigned cases remain separate work.
+
+The original exact-target build passed all 22 editor and native observations. Its initial strict recovery control run rejected 11 of 14 methods while emitting the literal-return method and two trivial bodies; the field-width and class-initialization call sites remained unresolved. The separate `MetadataLiteralFixture` provides a complete one-method positive round trip without excluding these harder controls from their denominator.
