@@ -46,7 +46,7 @@ public static class InterfaceDispatchRecovery
                     continue;
 
                 RewriteDispatch(method, instruction, block, match, definitions);
-                TryExciseLookup(cfg, match, definitions, homeBlock);
+                TryExciseLookup(cfg, match.Merge, match.SlowCall, match.KlassLocal, definitions, homeBlock);
                 changed = true;
             }
         }
@@ -247,21 +247,19 @@ public static class InterfaceDispatchRecovery
     }
 
     // Bailing here is fine, it just leaves the (already resolved) call with dead lookup around it
-    private static void TryExciseLookup(ISILControlFlowGraph cfg, Match match, Dictionary<LocalVariable, Instruction> definitions, Dictionary<Instruction, Block> homeBlock)
+    internal static void TryExciseLookup(ISILControlFlowGraph cfg, Block merge, Instruction slowCall, LocalVariable klassLocal, Dictionary<LocalVariable, Instruction> definitions, Dictionary<Instruction, Block> homeBlock)
     {
-        var merge = match.Merge;
-
-        if (!homeBlock.TryGetValue(match.SlowCall, out var slowBlock))
+        if (!homeBlock.TryGetValue(slowCall, out var slowBlock))
             return;
 
-        if (Definition(definitions, match.KlassLocal) is not { } klassDefinition
+        if (Definition(definitions, klassLocal) is not { } klassDefinition
             || !homeBlock.TryGetValue(klassDefinition, out var head) || head == merge)
             return;
 
         if (!TryCollectRegion(cfg, head, merge, out var region) || !region.Contains(slowBlock))
             return;
 
-        if (!RegionIsSideEffectFree(region, match.SlowCall) || AnyValueEscapes(cfg, region, merge))
+        if (!RegionIsSideEffectFree(region, slowCall) || AnyValueEscapes(cfg, region, merge))
             return;
 
         if (!MergePhisAreDead(cfg, merge, out var removable))
@@ -352,20 +350,15 @@ public static class InterfaceDispatchRecovery
             foreach (var instruction in block.Instructions)
             {
                 if (ReferenceEquals(instruction, slowCall))
-                    continue;
-
-                var harmless = instruction.OpCode switch
                 {
-                    OpCode.Nop or OpCode.Jump or OpCode.ConditionalJump or OpCode.Phi => true,
-                    OpCode.Move or OpCode.Add or OpCode.Subtract or OpCode.Multiply or OpCode.Divide or OpCode.Modulo
-                        or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightUnsigned or OpCode.And or OpCode.Or or OpCode.Xor
-                        or OpCode.Not or OpCode.Negate
-                        => instruction.Destination is LocalVariable,
-                    var comparison when comparison.IsComparison() => instruction.Destination is LocalVariable,
-                    _ => false,
-                };
+                    // Replacing the helper call does not authorize dropping evaluation of
+                    // a folded memory/array argument that the managed call may not evaluate.
+                    if (!instruction.Operands.Skip(2).All(OperandEffects.IsPureValue))
+                        return false;
+                    continue;
+                }
 
-                if (!harmless)
+                if (!RecoveryRegionEffects.CanDiscard(instruction))
                     return false;
             }
         }
@@ -400,7 +393,7 @@ public static class InterfaceDispatchRecovery
         return false;
     }
 
-    // They may only feed loads off the VirtualInvokeData pointer, which must themselves be dead
+    // Only unused phis can be removed without a proof for evaluating their consumers.
     private static bool MergePhisAreDead(ISILControlFlowGraph cfg, Block merge, out List<Instruction> removable)
     {
         removable = [];
@@ -410,7 +403,7 @@ public static class InterfaceDispatchRecovery
         {
             foreach (var instruction in block.Instructions)
             {
-                foreach (var used in UsedLocals(instruction))
+                foreach (var used in OperandEffects.ReadLocals(instruction))
                 {
                     if (!useSites.TryGetValue(used, out var sites))
                         useSites[used] = sites = [];
@@ -427,14 +420,10 @@ public static class InterfaceDispatchRecovery
             if (phi.Operands[0] is not LocalVariable phiDest)
                 return false;
 
-            foreach (var use in useSites.TryGetValue(phiDest, out var phiUses) ? phiUses : [])
-            {
-                if (use is not { OpCode: OpCode.Move, Operands: [LocalVariable loaded, MemoryOperand] }
-                    || (useSites.TryGetValue(loaded, out var loadUses) && loadUses.Count > 0))
-                    return false;
-
-                removable.Add(use);
-            }
+            // Even an unused load can fault. A phi-shaped address alone does not prove that
+            // the access is a runtime-owned VirtualInvokeData field subsumed by the new call.
+            if (useSites.TryGetValue(phiDest, out var phiUses) && phiUses.Count > 0)
+                return false;
 
             removable.Add(phi);
         }
@@ -443,30 +432,6 @@ public static class InterfaceDispatchRecovery
     }
 
     private static bool Uses(Instruction instruction, HashSet<LocalVariable> candidates)
-        => UsedLocals(instruction).Any(candidates.Contains);
+        => OperandEffects.ReadLocals(instruction).Any(candidates.Contains);
 
-    private static IEnumerable<LocalVariable> UsedLocals(Instruction instruction)
-    {
-        for (var i = 0; i < instruction.Operands.Count; i++)
-        {
-            if (ReferenceEquals(instruction.Operands[i], instruction.Destination))
-                continue;
-
-            switch (instruction.Operands[i])
-            {
-                case LocalVariable local:
-                    yield return local;
-                    break;
-                case AddressOf { Target: LocalVariable addressed }:
-                    yield return addressed;
-                    break;
-                case MemoryOperand memory:
-                    if (memory.Base is LocalVariable baseLocal)
-                        yield return baseLocal;
-                    if (memory.Index is LocalVariable indexLocal)
-                        yield return indexLocal;
-                    break;
-            }
-        }
-    }
 }

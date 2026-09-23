@@ -15,7 +15,7 @@ public static class WriteBarrierRecovery
 {
     private static readonly ConcurrentDictionary<ApplicationAnalysisContext, ulong> FlagAddressCache = new();
 
-    private record Candidate(Block Guard, Block Entry, Block Merge, HashSet<Block> Region);
+    internal record Candidate(Block Guard, Block Entry, Block Merge, HashSet<Block> Region);
 
     public static void Run(MethodAnalysisContext method)
     {
@@ -23,7 +23,13 @@ public static class WriteBarrierRecovery
         if (flagAddress == 0)
             return;
 
-        var cfg = method.ControlFlowGraph!;
+        Run(method.ControlFlowGraph!, flagAddress);
+    }
+
+    internal static void Run(ISILControlFlowGraph cfg, ulong flagAddress)
+    {
+        if (flagAddress == 0)
+            return;
 
         var definitions = new Dictionary<LocalVariable, ISIL.Instruction>();
         foreach (var instruction in cfg.Instructions)
@@ -83,7 +89,7 @@ public static class WriteBarrierRecovery
         DeadCodeEliminator.Run(cfg);
     }
 
-    private static void Excise(ISILControlFlowGraph cfg, List<Candidate> candidates)
+    internal static void Excise(ISILControlFlowGraph cfg, List<Candidate> candidates)
     {
         var union = new HashSet<Block>(candidates.SelectMany(c => c.Region));
 
@@ -258,7 +264,7 @@ public static class WriteBarrierRecovery
     private static bool EndsInReturn(Block block) 
         => block.Instructions.Count > 0 && block.Instructions[^1].OpCode == OpCode.Return;
 
-    private static bool TailBlockMatchesMerge(Block tail, Block merge, Block guard, Dictionary<LocalVariable, ISIL.Instruction> definitions)
+    internal static bool TailBlockMatchesMerge(Block tail, Block merge, Block guard, Dictionary<LocalVariable, ISIL.Instruction> definitions)
     {
         var tailInstructions = tail.Instructions.Where(i => i.OpCode != OpCode.Nop).ToList();
         var mergeInstructions = merge.Instructions.Where(i => i.OpCode is not (OpCode.Nop or OpCode.Phi)).ToList();
@@ -331,33 +337,18 @@ public static class WriteBarrierRecovery
         return operand;
     }
 
-    private static bool IsBarrierInstruction(ISIL.Instruction instruction, ref bool sawBitmapStore, ref bool sawPageShift)
+    internal static bool IsBarrierInstruction(ISIL.Instruction instruction, ref bool sawBitmapStore, ref bool sawPageShift)
     {
-        switch (instruction.OpCode)
-        {
-            case OpCode.Nop:
-            case OpCode.Jump:
-            case OpCode.ConditionalJump: // the interlocked retry loop
-                return true;
+        // A computed-address store and a page shift do not identify the GC bitmap. Until a
+        // matcher proves the store's address/provenance, retain the region rather than erase
+        // an arbitrary application write. No current instruction establishes sawBitmapStore.
+        if (!RecoveryRegionEffects.CanDiscard(instruction))
+            return false;
 
-            // the dirty-bit store into the bitmap, at a computed (register-based) address
-            case OpCode.Move when instruction.Operands is [MemoryOperand { Base: LocalVariable }, ..]:
-                sawBitmapStore = true;
-                return true;
+        if (instruction.OpCode is OpCode.ShiftRight or OpCode.ShiftRightUnsigned
+            && instruction.Operands is [LocalVariable, _, Immediate { Value: 12 }])
+            sawPageShift = true;
 
-            case OpCode.ShiftRight or OpCode.ShiftRightUnsigned when instruction.Operands is [LocalVariable, _, Immediate { Value: 12 }]:
-                sawPageShift = true;
-                return true;
-
-            case OpCode.Move:
-            case OpCode.Phi:
-            case OpCode.Add or OpCode.Subtract or OpCode.Multiply or OpCode.Divide or OpCode.Modulo:
-            case OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightUnsigned:
-            case OpCode.And or OpCode.Or or OpCode.Xor or OpCode.Not or OpCode.Negate:
-            case var comparison when comparison.IsComparison():
-                return instruction.Operands is [LocalVariable, ..]; // computes into a local, no side effects
-        }
-
-        return false;
+        return true;
     }
 }
