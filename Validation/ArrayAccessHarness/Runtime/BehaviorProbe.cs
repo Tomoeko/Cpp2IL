@@ -50,6 +50,19 @@ namespace RecoveryValidation
             }
             RecordWide(observations, "null", null);
             RecordWideWrite(observations, "null", null);
+            var wideUnsignedArrays = new[]
+            {
+                new { Label = "empty", Values = new ulong[0] },
+                new { Label = "single", Values = new[] { ulong.MaxValue } },
+                new { Label = "mixed", Values = new[] { 0UL, 1UL, 0x8000000000000000UL, ulong.MaxValue } }
+            };
+            foreach (var array in wideUnsignedArrays)
+            {
+                RecordWideUnsigned(observations, array.Label, array.Values);
+                RecordWideUnsignedWrite(observations, array.Label, array.Values);
+            }
+            RecordWideUnsigned(observations, "null", null);
+            RecordWideUnsignedWrite(observations, "null", null);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -168,6 +181,44 @@ namespace RecoveryValidation
                 observations.Add(new Dictionary<string, object>
                 {
                     { "kind", "wide-write:" + label }, { "index", index }, { "result", result }, { "exception", exception }
+                });
+            }
+        }
+
+        private static void RecordWideUnsigned(List<object> observations, string label, ulong[] values)
+        {
+            var length = values == null ? 0 : values.Length;
+            foreach (var index in new[] { int.MinValue, -1, 0, 1, length - 1, length, int.MaxValue })
+            {
+                object result = null;
+                var exception = "none";
+                try { result = ArrayReads.ReadWideUnsigned(values, index); }
+                catch (Exception error) { exception = error.GetType().FullName; }
+                observations.Add(new Dictionary<string, object>
+                {
+                    { "kind", "wide-unsigned:" + label }, { "index", index }, { "result", result }, { "exception", exception }
+                });
+            }
+        }
+
+        private static void RecordWideUnsignedWrite(List<object> observations, string label, ulong[] values)
+        {
+            var length = values == null ? 0 : values.Length;
+            foreach (var index in new[] { int.MinValue, -1, 0, 1, length - 1, length, int.MaxValue })
+            {
+                var copy = values == null ? null : (ulong[])values.Clone();
+                var value = (index & 1) == 0 ? ulong.MaxValue : 0x8000000000000000UL;
+                object result = null;
+                var exception = "none";
+                try
+                {
+                    ArrayWrites.WriteWideUnsigned(copy, index, value);
+                    result = copy == null ? null : (object)copy[index];
+                }
+                catch (Exception error) { exception = error.GetType().FullName; }
+                observations.Add(new Dictionary<string, object>
+                {
+                    { "kind", "wide-unsigned-write:" + label }, { "index", index }, { "result", result }, { "exception", exception }
                 });
             }
         }

@@ -56,7 +56,8 @@ internal static class X86IntegerArrayAccessProof
             array.ParameterType is not SzArrayTypeAnalysisContext { ElementType: var element } ||
             (!ReferenceEquals(element, app.SystemTypes.SystemInt32Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemUInt32Type) &&
-             !ReferenceEquals(element, app.SystemTypes.SystemInt64Type)) ||
+             !ReferenceEquals(element, app.SystemTypes.SystemInt64Type) &&
+             !ReferenceEquals(element, app.SystemTypes.SystemUInt64Type)) ||
             !ReferenceEquals(index.ParameterType, app.SystemTypes.SystemInt32Type) ||
             array.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
@@ -73,7 +74,8 @@ internal static class X86IntegerArrayAccessProof
             body.Count < 12 || body[0].IP != context.UnderlyingPointer)
             return null;
 
-        var elementSize = ReferenceEquals(element, app.SystemTypes.SystemInt64Type) ? 8 : 4;
+        var elementSize = ReferenceEquals(element, app.SystemTypes.SystemInt64Type) ||
+                          ReferenceEquals(element, app.SystemTypes.SystemUInt64Type) ? 8 : 4;
         var nullCall = body[9];
         var boundsCall = body[11];
         if (!TryProveShape(body, isWrite, elementSize) ||
@@ -114,10 +116,12 @@ internal static class X86IntegerArrayAccessProof
     }
 
     private static Il2CppTypeEnum RawElementType(ApplicationAnalysisContext app, TypeAnalysisContext element)
-        => ReferenceEquals(element, app.SystemTypes.SystemInt64Type)
-            ? Il2CppTypeEnum.IL2CPP_TYPE_I8
-            : ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)
-                ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
+        => ReferenceEquals(element, app.SystemTypes.SystemUInt64Type)
+            ? Il2CppTypeEnum.IL2CPP_TYPE_U8
+            : ReferenceEquals(element, app.SystemTypes.SystemInt64Type)
+                ? Il2CppTypeEnum.IL2CPP_TYPE_I8
+                : ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)
+                    ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
 
     internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4)
     {

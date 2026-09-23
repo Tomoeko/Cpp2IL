@@ -20,6 +20,8 @@ public class X86RuntimeBoundsThrowFixtureTests
     [TestCase("WriteUnsigned", true, 4, true)]
     [TestCase("ReadWide", false, 8, false)]
     [TestCase("WriteWide", true, 8, false)]
+    [TestCase("ReadWideUnsigned", false, 8, true)]
+    [TestCase("WriteWideUnsigned", true, 8, true)]
     public void ExactArrayAccessIdentifiesBothRuntimeExceptionExits(string name, bool isWrite, int elementSize, bool unsigned)
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_ARRAY_ACCESS_FIXTURE_INPUT");
@@ -48,7 +50,8 @@ public class X86RuntimeBoundsThrowFixtureTests
                 "The final proven nonreturning bounds call needs no trailing padding instruction.");
             Assert.That(access.Parameters[0].ParameterType, Is.TypeOf<Cpp2IL.Core.Model.Contexts.SzArrayTypeAnalysisContext>());
             Assert.That(((Cpp2IL.Core.Model.Contexts.SzArrayTypeAnalysisContext)access.Parameters[0].ParameterType).ElementType,
-                Is.SameAs(elementSize == 8 ? app.SystemTypes.SystemInt64Type :
+                Is.SameAs(elementSize == 8 ?
+                    (unsigned ? app.SystemTypes.SystemUInt64Type : app.SystemTypes.SystemInt64Type) :
                     unsigned ? app.SystemTypes.SystemUInt32Type : app.SystemTypes.SystemInt32Type));
             Assert.That(X86CallerExceptionRegionProof.Check(access, native,
                 calls.Select(instruction => instruction.IP).ToHashSet()), Is.Null);

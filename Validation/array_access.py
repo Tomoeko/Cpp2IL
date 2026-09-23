@@ -1,4 +1,4 @@
-"""Independent oracle for signed/unsigned 32-bit and signed 64-bit array accesses."""
+"""Independent oracle for signed/unsigned 32/64-bit array accesses."""
 
 import json
 
@@ -14,6 +14,9 @@ def observations():
         ("wide:", "wide-write:", (("empty", []), ("single", [-(1 << 63)]),
                                   ("mixed", [-7, 0, 19, (1 << 63) - 1]), ("null", None)),
          (1 << 63) - 1, -(1 << 63)),
+        ("wide-unsigned:", "wide-unsigned-write:", (("empty", []), ("single", [(1 << 64) - 1]),
+                                                      ("mixed", [0, 1, 1 << 63, (1 << 64) - 1]), ("null", None)),
+         (1 << 64) - 1, 1 << 63),
     )
     expected = []
     for read_kind, write_kind, arrays, high_value, low_value in profiles:
@@ -44,6 +47,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Array-access behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 6,
+    return {"status": "passed", "observations": len(expected), "methods": 8,
             "platform": report["platform"], "profile": "array-access",
-            "scope": "signed/unsigned 32-bit and signed 64-bit array reads and writes, null and bounds failures; not whole-program equivalence"}
+            "scope": "signed/unsigned 32/64-bit array reads and writes, null and bounds failures; not whole-program equivalence"}
