@@ -18,6 +18,18 @@ namespace ArrayCallFixture
     {
     }
 
+    public sealed class FieldForwarder
+    {
+        public ArrayEcho Receiver;
+        public int[] Values;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int[] ForwardField()
+        {
+            return Receiver.Echo(Values);
+        }
+    }
+
     public static class ArrayCalls
     {
         [MethodImpl(MethodImplOptions.NoInlining)]

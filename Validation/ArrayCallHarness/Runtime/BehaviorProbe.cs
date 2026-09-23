@@ -29,6 +29,10 @@ namespace RecoveryValidation
             RecordTwo(observations, "two-receivers", false, false);
             RecordTwo(observations, "first-null", true, false);
             RecordTwo(observations, "second-null", false, true);
+            RecordFields(observations, "field-values", new ArrayEcho(), new[] { int.MinValue, 0, int.MaxValue });
+            RecordFields(observations, "field-null-values", new ArrayEcho(), null);
+            RecordFields(observations, "field-null-receiver", null, new[] { -17, 19 });
+            RecordNullOwner(observations);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -97,6 +101,39 @@ namespace RecoveryValidation
                 { "kind", kind }, { "result", result }, { "sameReference", sameReference },
                 { "exception", exception }, { "firstCalls", first == null ? null : (object)first.Calls },
                 { "secondCalls", second == null ? null : (object)second.Calls }
+            });
+        }
+
+        private static void RecordFields(List<object> observations, string kind, ArrayEcho receiver, int[] values)
+        {
+            var owner = new FieldForwarder { Receiver = receiver, Values = values };
+            object result = null;
+            var sameReference = false;
+            var exception = "none";
+            try
+            {
+                var returned = owner.ForwardField();
+                result = returned;
+                sameReference = ReferenceEquals(returned, values);
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", kind }, { "result", result },
+                { "sameReference", sameReference }, { "exception", exception },
+                { "callsAfter", receiver == null ? null : (object)receiver.Calls }
+            });
+        }
+
+        private static void RecordNullOwner(List<object> observations)
+        {
+            FieldForwarder owner = null;
+            var exception = "none";
+            try { owner.ForwardField(); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "field-null-owner" }, { "exception", exception }
             });
         }
 
