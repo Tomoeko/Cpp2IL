@@ -215,12 +215,16 @@ Status: baselines measured; integration acceptance remains incomplete. Every run
 | Zero-adjustment near-return proof | Independent | 4,293 | 7,872 | 80 | 479 |
 | Bounded `int[]` read proof | Private | 1,734 | 4,504 | 1 | 1,017 |
 | Bounded `int[]` read proof | Independent | 4,293 | 7,872 | 80 | 479 |
+| Bounded signed `int` instance-field null guard | Private | 1,734 | 4,503 | 2 | 1,017 |
+| Bounded signed `int` instance-field null guard | Independent | 4,300 | 7,864 | 81 | 479 |
 
 The integer-extension checkpoint authenticated prior inputs and preserved every selected and full-input method identity. Ten private and 300 independent methods previously marked emitted failed on unproved integer extensions. Two private and 95 independent partial methods became emitted solely because a native proof resolved their unused-receiver mapping warning. One additional private partial method failed on an unproved extension. The fallthrough boundary check became the first diagnostic for 490 private and 1,264 independent methods that already failed.
 
 The current corpus refresh again authenticates the input and complete method denominators. Relative to the preceding null-check/SIMD checkpoint, the zero-adjustment return proof moves 38 private and 576 independent methods from failed to emitted, with no emitted-to-failed transition. Both full application scopes still fail strict recovery; neither has a typed-IL, Unity compilation, native rebuild or behavioral equivalence result. First-diagnostic counts are not root-cause counts, and disposition changes do not establish behavioral accuracy.
 
 A subsequent authenticated player-only refresh after the bounded array-read proof preserves all 7,256 private and 12,724 independent selected identities and dispositions, with no transition in either direction. The new proof therefore adds only its controlled synthetic acceptance result at this checkpoint. Both broad scopes still fail strict recovery and have no typed-IL, Unity compilation, native rebuild or behavioral equivalence result.
+
+The authenticated refresh after the bounded instance-field proof again preserves every selected and full-input method identity. In the private scope, one method changes from failed to partial and none becomes emitted. In the independent scope, seven change from failed to emitted and one from failed to partial; no emitted method regresses. Both complete scopes still fail strict recovery. These are analysis dispositions only: the broad corpora have no typed-IL verification, Unity compilation, native rebuild or behavioral equivalence result at this checkpoint.
 
 - Run the user-supplied source/build pair locally as an independent validation case. Keep source/original assemblies inaccessible to the player-only recovery step, and use them afterwards for comparisons.
 - Validate the private target with the same reporting, compilation and behavioral gates to the extent an oracle is available. Without source or an equivalent oracle, report the narrower observed evidence honestly.
