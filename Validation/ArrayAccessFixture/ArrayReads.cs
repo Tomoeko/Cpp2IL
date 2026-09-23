@@ -15,6 +15,12 @@ namespace ArrayAccessFixture
         {
             return values[index];
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static long ReadWide(long[] values, int index)
+        {
+            return values[index];
+        }
     }
 
     public static class ArrayWrites
@@ -27,6 +33,12 @@ namespace ArrayAccessFixture
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static void WriteUnsigned(uint[] values, int index, uint value)
+        {
+            values[index] = value;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void WriteWide(long[] values, int index, long value)
         {
             values[index] = value;
         }

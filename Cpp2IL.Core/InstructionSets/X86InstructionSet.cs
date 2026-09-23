@@ -61,7 +61,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
         var nativeInstructions = X86Utils.Iterate(context).ToArray();
         var noReturnCalls = new HashSet<ulong>();
-        if (X86IntArrayAccessProof.TryLift(context, nativeInstructions) is { } arrayAccess)
+        if (X86IntegerArrayAccessProof.TryLift(context, nativeInstructions) is { } arrayAccess)
             return arrayAccess; // The closed proof includes both helper exits and the caller unwind region.
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
             return QualifyExceptionRegions(integerExtension);

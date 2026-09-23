@@ -37,6 +37,19 @@ namespace RecoveryValidation
             }
             RecordUnsigned(observations, "null", null);
             RecordUnsignedWrite(observations, "null", null);
+            var wideArrays = new[]
+            {
+                new { Label = "empty", Values = new long[0] },
+                new { Label = "single", Values = new[] { long.MinValue } },
+                new { Label = "mixed", Values = new[] { -7L, 0L, 19L, long.MaxValue } }
+            };
+            foreach (var array in wideArrays)
+            {
+                RecordWide(observations, array.Label, array.Values);
+                RecordWideWrite(observations, array.Label, array.Values);
+            }
+            RecordWide(observations, "null", null);
+            RecordWideWrite(observations, "null", null);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -117,6 +130,44 @@ namespace RecoveryValidation
                 observations.Add(new Dictionary<string, object>
                 {
                     { "kind", "unsigned-write:" + label }, { "index", index }, { "result", result }, { "exception", exception }
+                });
+            }
+        }
+
+        private static void RecordWide(List<object> observations, string label, long[] values)
+        {
+            var length = values == null ? 0 : values.Length;
+            foreach (var index in new[] { int.MinValue, -1, 0, 1, length - 1, length, int.MaxValue })
+            {
+                object result = null;
+                var exception = "none";
+                try { result = ArrayReads.ReadWide(values, index); }
+                catch (Exception error) { exception = error.GetType().FullName; }
+                observations.Add(new Dictionary<string, object>
+                {
+                    { "kind", "wide:" + label }, { "index", index }, { "result", result }, { "exception", exception }
+                });
+            }
+        }
+
+        private static void RecordWideWrite(List<object> observations, string label, long[] values)
+        {
+            var length = values == null ? 0 : values.Length;
+            foreach (var index in new[] { int.MinValue, -1, 0, 1, length - 1, length, int.MaxValue })
+            {
+                var copy = values == null ? null : (long[])values.Clone();
+                var value = (index & 1) == 0 ? long.MaxValue : long.MinValue;
+                object result = null;
+                var exception = "none";
+                try
+                {
+                    ArrayWrites.WriteWide(copy, index, value);
+                    result = copy == null ? null : (object)copy[index];
+                }
+                catch (Exception error) { exception = error.GetType().FullName; }
+                observations.Add(new Dictionary<string, object>
+                {
+                    { "kind", "wide-write:" + label }, { "index", index }, { "result", result }, { "exception", exception }
                 });
             }
         }

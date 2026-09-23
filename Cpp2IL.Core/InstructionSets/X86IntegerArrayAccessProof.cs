@@ -12,11 +12,11 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Closed exact-profile 32-bit integer array access: prove both runtime exception exits and the only
+/// Closed exact-profile 32/64-bit integer array access: prove both runtime exception exits and the only
 /// successful memory access before replacing the diamond with managed ldelem or stelem.
 /// This does not generalize to unchecked native array access or other element widths.
 /// </summary>
-internal static class X86IntArrayAccessProof
+internal static class X86IntegerArrayAccessProof
 {
     internal static List<IsilInstruction>? TryLift(MethodAnalysisContext context, IReadOnlyList<Instruction> body)
     {
@@ -55,7 +55,8 @@ internal static class X86IntArrayAccessProof
             array.OverrideParameterType != null || index.OverrideParameterType != null ||
             array.ParameterType is not SzArrayTypeAnalysisContext { ElementType: var element } ||
             (!ReferenceEquals(element, app.SystemTypes.SystemInt32Type) &&
-             !ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)) ||
+             !ReferenceEquals(element, app.SystemTypes.SystemUInt32Type) &&
+             !ReferenceEquals(element, app.SystemTypes.SystemInt64Type)) ||
             !ReferenceEquals(index.ParameterType, app.SystemTypes.SystemInt32Type) ||
             array.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
@@ -72,19 +73,20 @@ internal static class X86IntArrayAccessProof
             body.Count < 12 || body[0].IP != context.UnderlyingPointer)
             return null;
 
+        var elementSize = ReferenceEquals(element, app.SystemTypes.SystemInt64Type) ? 8 : 4;
         var nullCall = body[9];
         var boundsCall = body[11];
-        if (!TryProveShape(body, isWrite) ||
+        if (!TryProveShape(body, isWrite, elementSize) ||
             X86RuntimeNullThrowProof.TryIdentify(app, nullCall.NearBranchTarget) == null ||
             !X86RuntimeBoundsThrowProof.TryIdentify(app, boundsCall.NearBranchTarget) ||
             X86CallerExceptionRegionProof.Check(context, body,
                 new HashSet<ulong> { nullCall.IP, boundsCall.IP }) != null)
             return null;
 
-        // ArrayRecovery recognizes this typed offset/scale as a 32-bit element access.
+        // ArrayRecovery recognizes this typed offset/scale as an element access.
         // The emitter preserves null-first and unsigned bounds failure via ldelem/stelem.
         var memory = new ISIL.MemoryOperand(new IsilRegister(null, "rcx"),
-            new IsilRegister(null, "rdx"), 0x20, 4);
+            new IsilRegister(null, "rdx"), 0x20, elementSize);
         if (isWrite)
             return
             [
@@ -112,12 +114,14 @@ internal static class X86IntArrayAccessProof
     }
 
     private static Il2CppTypeEnum RawElementType(ApplicationAnalysisContext app, TypeAnalysisContext element)
-        => ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)
-            ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
+        => ReferenceEquals(element, app.SystemTypes.SystemInt64Type)
+            ? Il2CppTypeEnum.IL2CPP_TYPE_I8
+            : ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)
+                ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
 
-    internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite)
+    internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4)
     {
-        if (body.Count < 12)
+        if (body.Count < 12 || elementSize is not (4 or 8))
             return false;
         for (var i = 0; i < 12; i++)
         {
@@ -145,10 +149,12 @@ internal static class X86IntArrayAccessProof
                Registers(body[5], Mnemonic.Movsxd, Register.RAX, Register.EDX) &&
                element.Mnemonic == Mnemonic.Mov && element.OpCount == 2 &&
                (isWrite
-                   ? Memory(element, 0, Register.RCX, Register.RAX, 4, 0x20, 4) &&
-                     element.Op1Kind == OpKind.Register && element.Op1Register == Register.R8D
-                   : element.Op0Kind == OpKind.Register && element.Op0Register == Register.EAX &&
-                     Memory(element, 1, Register.RCX, Register.RAX, 4, 0x20, 4)) &&
+                   ? Memory(element, 0, Register.RCX, Register.RAX, elementSize, 0x20, elementSize) &&
+                     element.Op1Kind == OpKind.Register &&
+                     element.Op1Register == (elementSize == 8 ? Register.R8 : Register.R8D)
+                   : element.Op0Kind == OpKind.Register &&
+                     element.Op0Register == (elementSize == 8 ? Register.RAX : Register.EAX) &&
+                     Memory(element, 1, Register.RCX, Register.RAX, elementSize, 0x20, elementSize)) &&
                Stack(body[7], Mnemonic.Add, 0x28) &&
                body[8].Code == Code.Retnq && body[8].OpCount == 0 &&
                Call(body[9]) && body[10].Code == Code.Int3 &&
