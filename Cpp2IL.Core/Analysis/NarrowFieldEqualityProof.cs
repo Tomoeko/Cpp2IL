@@ -86,7 +86,9 @@ internal static class NarrowFieldEqualityProof
         if (field.IsStatic || field.Attributes != field.DefaultAttributes ||
             (field.Attributes & (FieldAttributes.Literal | FieldAttributes.HasFieldMarshal)) != 0 ||
             field.BackingData?.Field.RawFieldType is not { NumMods: 0, Byref: 0, Pinned: 0 } ||
-            !ReferenceEquals(field.FieldType, field.DefaultFieldType) ||
+            // Resolving a metadata array type can create a new wrapper each time. The
+            // override records an actual change; object identity does not.
+            field.OverrideFieldType != null ||
             !(referenceField || HasExactStorageWidth(field.FieldType, width)) ||
             field.Offset < 2 * owner.AppContext.Binary.PointerSizeBytes || field.Offset != field.DefaultOffset || reference.Offset != field.Offset ||
             !ReferenceEquals(reference.Local.Type, owner) || owner.IsValueType || owner.IsEnumType ||
@@ -107,7 +109,7 @@ internal static class NarrowFieldEqualityProof
                 if (ReferenceEquals(other, field))
                     continue;
                 var size = StorageSize(other.FieldType, owner.AppContext.Binary.PointerSizeBytes);
-                if (other.Attributes != other.DefaultAttributes || !ReferenceEquals(other.FieldType, other.DefaultFieldType) ||
+                if (other.Attributes != other.DefaultAttributes || other.OverrideFieldType != null ||
                     other.Offset < 0 || other.Offset != other.DefaultOffset || size <= 0 ||
                     StorageRangesOverlap(field.Offset, width / 8, other.Offset, size))
                     return false;

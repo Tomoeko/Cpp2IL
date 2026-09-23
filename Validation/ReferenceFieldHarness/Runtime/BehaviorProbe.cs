@@ -11,8 +11,15 @@ namespace RecoveryValidation
         public static void Write(string path, string stage)
         {
             var observations = new List<object>();
-            var box = new ReferenceBox();
-            var outer = new ReferenceOuter { Inner = box };
+            var boxPrefix = new[] { int.MinValue, 0 };
+            var boxSuffix = new[] { int.MaxValue, -17 };
+            var outerPrefix = new[] { 11, 13 };
+            var outerSuffix = new[] { -19, -23 };
+            var box = new ReferenceBox { Prefix = boxPrefix, Suffix = boxSuffix };
+            var outer = new ReferenceOuter
+            {
+                Prefix = outerPrefix, Inner = box, Suffix = outerSuffix
+            };
             var derivedBox = new DerivedBox { Marker = int.MinValue };
             var derivedOuter = new DerivedOuter { Inner = derivedBox, Marker = long.MaxValue };
             observations.Add(new Dictionary<string, object>
@@ -44,6 +51,16 @@ namespace RecoveryValidation
             {
                 { "kind", "derived-layout" }, { "boxMarker", derivedBox.Marker },
                 { "outerMarker", derivedOuter.Marker }
+            });
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "neighbor-arrays" },
+                { "boxPrefix", box.Prefix }, { "boxSuffix", box.Suffix },
+                { "outerPrefix", outer.Prefix }, { "outerSuffix", outer.Suffix },
+                { "sameBoxPrefix", ReferenceEquals(box.Prefix, boxPrefix) },
+                { "sameBoxSuffix", ReferenceEquals(box.Suffix, boxSuffix) },
+                { "sameOuterPrefix", ReferenceEquals(outer.Prefix, outerPrefix) },
+                { "sameOuterSuffix", ReferenceEquals(outer.Suffix, outerSuffix) }
             });
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>

@@ -23,6 +23,11 @@ def observations():
                      "sameReference": False, "exception": "System.NullReferenceException"})
     expected.append({"kind": "derived-layout", "boxMarker": -(1 << 31),
                      "outerMarker": (1 << 63) - 1})
+    expected.append({"kind": "neighbor-arrays", "boxPrefix": [-(1 << 31), 0],
+                     "boxSuffix": [(1 << 31) - 1, -17], "outerPrefix": [11, 13],
+                     "outerSuffix": [-19, -23], "sameBoxPrefix": True,
+                     "sameBoxSuffix": True, "sameOuterPrefix": True,
+                     "sameOuterSuffix": True})
     return expected
 
 
