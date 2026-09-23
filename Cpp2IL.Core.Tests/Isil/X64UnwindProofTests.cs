@@ -212,8 +212,8 @@ public class X64UnwindProofTests
         Assert.That(map, Is.Not.Null);
         Assert.That(map!.UnwindActions, Is.EqualTo(new[]
         {
-            new X64Eh4MapProof.UnwindAction(1, 0, null, null),
-            new X64Eh4MapProof.UnwindAction(2, 0, null, null),
+            new X64Eh4MapProof.UnwindAction(1, 0, null, null, -1),
+            new X64Eh4MapProof.UnwindAction(2, 0, null, null, -1),
         }));
         Assert.That(map.TryBlocks, Has.Count.EqualTo(1));
         Assert.That(map.TryBlocks[0].Handlers, Has.Count.EqualTo(1));
@@ -255,6 +255,7 @@ public class X64UnwindProofTests
     [TestCase("oversized-count")]
     [TestCase("nonexecutable-funclet")]
     [TestCase("out-of-range-ip")]
+    [TestCase("bad-unwind-link")]
     public void MalformedFrameHandlerMapsCannotEstablishStructure(string defect)
     {
         var image = Eh4Image();
@@ -269,6 +270,7 @@ public class X64UnwindProofTests
                 break;
             case "nonexecutable-funclet": U32(image, 0x962, 0x3060); break;
             case "out-of-range-ip": image[0x951] = 0x40; break;
+            case "bad-unwind-link": image[0x932] = 0; break;
         }
         var index = X64UnwindProof.Parse(image)!;
         var region = index.GetHandler(ImageBase + 0x1000);

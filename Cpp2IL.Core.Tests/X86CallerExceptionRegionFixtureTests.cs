@@ -132,6 +132,8 @@ public class X86CallerExceptionRegionFixtureTests
                 Assert.That(map.TryBlocks[0].Handlers, Has.Count.EqualTo(1));
                 Assert.That(map.IpStates, Has.Count.EqualTo(2));
                 Assert.That(map.UnwindActions, Has.Count.EqualTo(method.Name == "CatchZero" ? 2 : 3));
+                Assert.That(map.UnwindActions.Select(action => action.TargetState),
+                    Is.EqualTo(method.Name == "CatchZero" ? new[] { -1, -1 } : new[] { -1, 0, 0 }));
                 Assert.That(map.UnwindActions.Any(action => action.Kind != 0),
                     Is.EqualTo(method.Name == "FinallyCount"));
                 var native = X86Utils.Iterate(method).ToArray();

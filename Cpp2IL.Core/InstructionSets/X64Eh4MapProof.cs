@@ -12,7 +12,8 @@ internal static class X64Eh4MapProof
 {
     internal sealed record Map(byte Header, IReadOnlyList<UnwindAction> UnwindActions,
         IReadOnlyList<TryBlock> TryBlocks, IReadOnlyList<IpState> IpStates);
-    internal sealed record UnwindAction(uint NextOffset, byte Kind, uint? ActionRva, uint? ObjectOffset);
+    internal sealed record UnwindAction(uint NextOffset, byte Kind, uint? ActionRva,
+        uint? ObjectOffset, int TargetState);
     internal sealed record TryBlock(uint LowState, uint HighState, uint CatchHighState,
         IReadOnlyList<Handler> Handlers);
     internal sealed record Handler(byte Header, uint? Adjectives, uint? NativeTypeDescriptorRva,
@@ -78,11 +79,25 @@ internal static class X64Eh4MapProof
         if (!cursor.ReadCompressed(out var count) || !budget.Take(count))
             return false;
         var entries = new List<UnwindAction>((int)count);
+        var start = cursor.Address;
+        var statesByAddress = new Dictionary<ulong, int>();
         for (var i = 0U; i < count; i++)
         {
+            var entryAddress = cursor.Address;
             if (!cursor.ReadCompressed(out var encoded))
                 return false;
             var kind = (byte)(encoded & 3);
+            var nextOffset = encoded >> 2;
+            // EH4 links backward from this entry's first byte. One byte before
+            // the entry buffer denotes state -1; all other links must name an
+            // earlier entry boundary, as defined by the supplied MSVC header.
+            if (nextOffset == 0 || nextOffset > entryAddress - (start - 1))
+                return false;
+            var targetAddress = entryAddress - nextOffset;
+            var targetState = -1;
+            if (targetAddress != start - 1 &&
+                !statesByAddress.TryGetValue(targetAddress, out targetState))
+                return false;
             uint? action = null, obj = null;
             if (kind != 0)
             {
@@ -96,7 +111,8 @@ internal static class X64Eh4MapProof
                     return false;
                 obj = offset;
             }
-            entries.Add(new UnwindAction(encoded >> 2, kind, action, obj));
+            entries.Add(new UnwindAction(nextOffset, kind, action, obj, targetState));
+            statesByAddress.Add(entryAddress, checked((int)i));
         }
         actions = entries;
         return true;
@@ -212,6 +228,8 @@ internal static class X64Eh4MapProof
         private readonly ReadOnlySpan<byte> _image = image;
         private readonly X64UnwindProof.Index _index = index;
         private ulong _address = address;
+
+        internal ulong Address => _address;
 
         internal bool ReadByte(out byte value)
         {
