@@ -6,6 +6,7 @@ using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Utils;
 using LibCpp2IL;
 using LibCpp2IL.PE;
 
@@ -21,7 +22,7 @@ internal static class RuntimeNullGuardCoalescer
 
     internal sealed record FieldAccessEvidence(Instruction Operation, FieldReference Access, LocalVariable Receiver,
         FieldAnalysisContext Field, TypeAnalysisContext Owner, TypeAnalysisContext ValueType, int Offset,
-        FieldAttributes Attributes, bool RequireNativeBinding, LocalVariable? StoredValue)
+        FieldAttributes Attributes, bool RequireNativeBinding, IOperand? StoredValue)
     {
         internal bool IsValidFor(MethodAnalysisContext method)
         {
@@ -34,17 +35,27 @@ internal static class RuntimeNullGuardCoalescer
                       !ReferenceEquals(Operation.Operands[1], Access)
                     : !ReferenceEquals(Operation.Operands[0], Access) ||
                       !ReferenceEquals(Operation.Operands[1], StoredValue) ||
-                      !ReferenceEquals(StoredValue.Type, ValueType) ||
-                      !method.ParameterLocals.Contains(StoredValue) ||
-                      !UnchangedParameter(method, StoredValue, ValueType)) ||
+                      !ValidStoredValue(method)) ||
                 !ReferenceEquals(Access.Local, Receiver) ||
                 !ReferenceEquals(Access.Field, Field) || !ReferenceEquals(Receiver.Type, Owner) ||
                 !ReferenceEquals(Field.DeclaringType, Owner) || !ReferenceEquals(Field.FieldType, ValueType) ||
                 Field.Attributes != Attributes || Field.IsStatic || Access.Offset != Offset || Field.Offset != Offset ||
-                RequireNativeBinding && !HasUnchangedNativeField(Access))
+                RequireNativeBinding && !HasUnchangedNativeField(method, Access))
                 return false;
             return UnchangedParameter(method, Receiver, Owner);
         }
+
+        private bool ValidStoredValue(MethodAnalysisContext method) => StoredValue switch
+        {
+            LocalVariable local => ReferenceEquals(local.Type, ValueType) &&
+                                   method.ParameterLocals.Contains(local) &&
+                                   UnchangedParameter(method, local, ValueType),
+            Immediate { Value: 0 } => ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemBooleanType) &&
+                                      method.GetExtraData<X86BooleanZeroStoreProof.Proof>(
+                                          X86BooleanZeroStoreProof.EvidenceKey) is { } proof &&
+                                      ReferenceEquals(proof.Field, Field),
+            _ => false,
+        };
 
         private static bool UnchangedParameter(MethodAnalysisContext method, LocalVariable local, TypeAnalysisContext type)
         {
@@ -76,7 +87,7 @@ internal static class RuntimeNullGuardCoalescer
             OpCode: OpCode.RuntimeNullThrow, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct,
             Operands: [RuntimeNullThrowEvidence evidence],
         } && evidence.IsValidFor(method.AppContext), HasUnchangedNativeSignature,
-            HasUnchangedNativeField, true);
+            access => HasUnchangedNativeField(method, access), true);
     }
 
     // Graph-only tests supply an intrinsic predicate and explicit injected managed signatures.
@@ -196,7 +207,7 @@ internal static class RuntimeNullGuardCoalescer
         }
 
         bool TryGuardedOperation(Block entry, Block predecessor, LocalVariable receiver,
-            out Instruction operation, out FieldReference? fieldAccess, out LocalVariable? storedValue)
+            out Instruction operation, out FieldReference? fieldAccess, out IOperand? storedValue)
         {
             operation = null!;
             fieldAccess = null;
@@ -236,14 +247,19 @@ internal static class RuntimeNullGuardCoalescer
                         return true; // The first effect is the managed field read and null check.
                     }
                     if (instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0,
-                            Operands: [FieldReference writeAccess, LocalVariable value] } &&
+                            Operands: [FieldReference writeAccess, var value] } &&
                         ReferenceEquals(writeAccess.Local, receiver) &&
                         receiver.Type != null && NullCheckedCall.IsReferenceClass(receiver.Type) &&
                         ReferenceEquals(writeAccess.Field.DeclaringType, receiver.Type) &&
                         !writeAccess.Field.IsStatic && writeAccess.Offset >= 0 &&
                         writeAccess.Offset == writeAccess.Field.Offset &&
-                        ReferenceEquals(value.Type, writeAccess.Field.FieldType) &&
-                        method.ParameterLocals.Contains(value) && Available(value, entry, instruction) &&
+                        (value is LocalVariable parameterValue &&
+                         ReferenceEquals(parameterValue.Type, writeAccess.Field.FieldType) &&
+                         method.ParameterLocals.Contains(parameterValue) &&
+                         Available(parameterValue, entry, instruction) ||
+                         value is Immediate { Value: 0 } &&
+                         ReferenceEquals(writeAccess.Field.FieldType,
+                             method.AppContext.SystemTypes.SystemBooleanType)) &&
                         provesNativeField(writeAccess))
                     {
                         operation = instruction;
@@ -301,13 +317,20 @@ internal static class RuntimeNullGuardCoalescer
         return true;
     }
 
-    private static bool HasUnchangedNativeField(FieldReference access)
+    private static bool HasUnchangedNativeField(MethodAnalysisContext method, FieldReference access)
     {
         var field = access.Field;
         var owner = field.DeclaringType;
         var types = owner.AppContext.SystemTypes;
         var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) ? 32 :
-            ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 : 0;
+            ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 :
+            ReferenceEquals(field.FieldType, types.SystemBooleanType) ? 8 : 0;
+        if (width == 8 &&
+            (method.GetExtraData<X86BooleanZeroStoreProof.Proof>(X86BooleanZeroStoreProof.EvidenceKey)
+                is not { } proof || !ReferenceEquals(proof.Field, field) ||
+             X86BooleanZeroStoreProof.Find(method, X86Utils.Iterate(method).ToArray()) is not { } current ||
+             !ReferenceEquals(current.Field, field)))
+            return false;
         return field.Name == field.DefaultName &&
                width != 0 &&
                owner.Fields.Contains(field) && NullCheckedCall.IsReferenceClass(owner) &&

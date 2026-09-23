@@ -23,6 +23,12 @@ namespace RecoveryValidation
             foreach (var value in new[] { long.MinValue, -17L, 0L, 17L, long.MaxValue })
                 RecordLongWrite(observations, value.ToString(), new LongBox(42), value);
             RecordLongWrite(observations, "null", null, 17);
+            foreach (var initial in new[] { false, true })
+            {
+                var box = new BooleanBox { Value = initial };
+                RecordBooleanClear(observations, initial.ToString(), box);
+            }
+            RecordBooleanClear(observations, "null", null);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -84,6 +90,22 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "long-write:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordBooleanClear(List<object> observations, string kind, BooleanBox box)
+        {
+            object result = null;
+            var exception = "none";
+            try
+            {
+                BooleanFieldClears.Clear(box);
+                result = box == null ? null : (object)box.Value;
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "bool-clear:" + kind }, { "result", result }, { "exception", exception }
             });
         }
 

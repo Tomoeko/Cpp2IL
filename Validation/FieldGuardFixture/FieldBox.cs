@@ -57,4 +57,18 @@ namespace FieldGuardFixture
             box.Value = value;
         }
     }
+
+    public sealed class BooleanBox
+    {
+        public bool Value;
+    }
+
+    public static class BooleanFieldClears
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void Clear(BooleanBox box)
+        {
+            box.Value = false;
+        }
+    }
 }
