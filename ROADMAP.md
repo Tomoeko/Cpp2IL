@@ -45,7 +45,7 @@ Report total input methods and types, methods with native bodies, emitted bodies
 
 ## Milestone 0 — Reproducible baseline and truthful reporting
 
-Status: complete for the initial baseline. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests passed. The latest full core run passes 1,184 tests and explicitly skips four optional fixture checks; all four pass in a separate focused run with their exact synthetic inputs supplied. Native loop-call, scalar-truncation and exception-region integration checks are included in the full run. The current net10.0 CLI builds without warnings or errors. Sixty-nine public harness checks and the declaration comparer's mutation checks pass without Unity. The offline parser suite passes three local cases and explicitly skips five optional external samples. Four existing solution-wide package warnings concern the prerelease Disarm dependency. Private baseline logs are retained locally.
+Status: complete for the initial baseline. The complete solution restores and builds with .NET SDK 10.0.107; all 76 pre-change core tests passed. The latest full core run passes all 1,190 tests with the optional exact synthetic fixtures supplied and no skips. Native loop-call, scalar-truncation and exception-region integration checks are included. The current net10.0 CLI builds without warnings or errors. Sixty-nine public harness checks and the declaration comparer's mutation checks pass without Unity. The offline parser suite passes three local cases and explicitly skips five optional external samples. Four existing solution-wide package warnings concern the prerelease Disarm dependency. Private baseline logs are retained locally.
 
 Implemented evidence:
 
@@ -149,7 +149,9 @@ The exact target runtime null-check helper now has a native instruction, metadat
 
 A later SIMD audit removes eleven unproved scalar aliases: raw-bit and full-vector moves, packed bitwise operations, and incomplete shuffle/interleave expansion. Unsupported cases remain explicit even when their results are overwritten; 56 focused decoding, dead-code and emission checks pass. At this checkpoint all 66 accepted methods across twelve scopes still pass strict recovery and typed IL verification. All 74 source/configuration files and all 66 method-body projections are unchanged against their native acceptance receipts; whole DLL byte identity is not claimed.
 
-After the loop-call change, a fresh receipt-driven refresh of the current committed CLI accepts 70 of 70 selected methods across thirteen scopes with strict recovery and typed IL. All 80 source/configuration files and all 70 method-body projections are unchanged against their completed native receipts. This refresh did not launch Unity; the loop-call scope also has a fresh native round trip above. Whole managed DLL byte identity is not claimed.
+The frame-free x64 proof now accepts a near `RET imm16` only when its immediate is zero. In that case it pops the return address with no additional stack adjustment, as specified by the [Intel instruction reference](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf). A read-only native inspection and 31 focused checks distinguish that encoding from returns that do change the caller's stack. The broader corpus refresh below measures the resulting disposition changes without treating them as behavior validation.
+
+After that return-proof change, a fresh receipt-driven refresh of the current committed CLI accepts 70 of 70 selected methods across thirteen scopes with strict recovery and typed IL. All 80 source/configuration files and all 70 method-body projections are unchanged against their completed native receipts. This refresh did not launch Unity; the loop-call scope has the fresh native round trip above. Whole managed DLL byte identity is not claimed.
 
 Prioritize measured failure categories rather than adding broad pattern collections without evidence.
 
@@ -197,8 +199,14 @@ Status: baselines measured; integration acceptance remains incomplete. Every run
 | Initialization/exception preservation; floating and byte-field support | Independent | 4,415 | 7,655 | 175 | 479 |
 | Integer-extension and native-boundary proofs | Private | 1,664 | 4,572 | 3 | 1,017 |
 | Integer-extension and native-boundary proofs | Independent | 4,210 | 7,955 | 80 | 479 |
+| Null-check and SIMD safety proofs | Private | 1,696 | 4,542 | 1 | 1,017 |
+| Null-check and SIMD safety proofs | Independent | 3,717 | 8,448 | 80 | 479 |
+| Zero-adjustment near-return proof | Private | 1,734 | 4,504 | 1 | 1,017 |
+| Zero-adjustment near-return proof | Independent | 4,293 | 7,872 | 80 | 479 |
 
-The latest refresh authenticates prior inputs and preserves every selected and full-input method identity. Ten private and 300 independent methods previously marked emitted now fail on unproved integer extensions. Two private and 95 independent partial methods become emitted solely because a native proof resolves their unused-receiver mapping warning. One additional private partial method now fails on an unproved extension. The new fallthrough boundary check becomes the first diagnostic for 490 private and 1,264 independent methods that already failed. First-diagnostic counts are not root-cause counts, and disposition changes are not behavioral regression measurements. These results guide synthetic investigations while keeping unresolved behavior explicit.
+The integer-extension checkpoint authenticated prior inputs and preserved every selected and full-input method identity. Ten private and 300 independent methods previously marked emitted failed on unproved integer extensions. Two private and 95 independent partial methods became emitted solely because a native proof resolved their unused-receiver mapping warning. One additional private partial method failed on an unproved extension. The fallthrough boundary check became the first diagnostic for 490 private and 1,264 independent methods that already failed.
+
+The current corpus refresh again authenticates the input and complete method denominators. Relative to the preceding null-check/SIMD checkpoint, the zero-adjustment return proof moves 38 private and 576 independent methods from failed to emitted, with no emitted-to-failed transition. Both full application scopes still fail strict recovery; neither has a typed-IL, Unity compilation, native rebuild or behavioral equivalence result. First-diagnostic counts are not root-cause counts, and disposition changes do not establish behavioral accuracy.
 
 - Run the user-supplied source/build pair locally as an independent validation case. Keep source/original assemblies inaccessible to the player-only recovery step, and use them afterwards for comparisons.
 - Validate the private target with the same reporting, compilation and behavioral gates to the extent an oracle is available. Without source or an equivalent oracle, report the narrower observed evidence honestly.
