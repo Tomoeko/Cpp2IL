@@ -8,6 +8,7 @@ using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 using LibCpp2IL;
+using LibCpp2IL.BinaryStructures;
 using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core.Analysis;
@@ -43,9 +44,7 @@ internal static class RuntimeNullGuardCoalescer
                 Field.Attributes != Attributes || Field.IsStatic || Access.Offset != Offset || Field.Offset != Offset ||
                 RequireNativeBinding && !HasUnchangedNativeField(method, Access))
                 return false;
-            if (ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemStringType) ||
-                ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemObjectType) ||
-                IsInt32Array(ValueType))
+            if (IsBoundedReferenceFieldReadType(ValueType))
                 return StoredValue == null &&
                        ProvedNativeReferenceFieldRead(method, Access) is { } referenceRead &&
                        ValidFieldReceiver(method, referenceRead.ReceiverField);
@@ -364,9 +363,7 @@ internal static class RuntimeNullGuardCoalescer
         var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) ? 32 :
             ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 :
             ReferenceEquals(field.FieldType, types.SystemBooleanType) ? 8 : 0;
-        var referenceRead = ReferenceEquals(field.FieldType, types.SystemStringType) ||
-                            ReferenceEquals(field.FieldType, types.SystemObjectType) ||
-                            IsInt32Array(field.FieldType);
+        var referenceRead = IsBoundedReferenceFieldReadType(field.FieldType);
         if (width == 8 && !HasProvedNativeZeroStore(method, access) &&
             !HasProvedNativeBooleanFieldRead(method, access))
             return false;
@@ -388,6 +385,12 @@ internal static class RuntimeNullGuardCoalescer
     private static bool IsInt32Array(TypeAnalysisContext type) =>
         type is SzArrayTypeAnalysisContext array &&
         ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemInt32Type);
+
+    private static bool IsBoundedReferenceFieldReadType(TypeAnalysisContext type) =>
+        ReferenceEquals(type, type.AppContext.SystemTypes.SystemStringType) ||
+        ReferenceEquals(type, type.AppContext.SystemTypes.SystemObjectType) ||
+        type.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS && NullCheckedCall.IsReferenceClass(type) ||
+        IsInt32Array(type);
 
     private static bool HasProvedNativeZeroStore(MethodAnalysisContext method, FieldReference access)
     {

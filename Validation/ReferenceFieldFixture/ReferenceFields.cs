@@ -65,6 +65,12 @@ namespace ReferenceFieldFixture
         {
             return Inner.Numbers;
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public ReferenceBox ReadBoxSelf()
+        {
+            return Inner;
+        }
     }
 
     public sealed class DerivedOuter : ReferenceOuter
@@ -110,6 +116,12 @@ namespace ReferenceFieldFixture
         public static int[] ReadArray(ReferenceBox box)
         {
             return box.Numbers;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static ReferenceBox ReadBox(ReferenceOuter outer)
+        {
+            return outer.Inner;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

@@ -57,6 +57,13 @@ def observations():
     for kind in ("self-text-null-owner", "self-object-null-owner", "self-array-null-owner"):
         expected.append({"kind": kind, "result": None, "sameReference": False,
                          "exception": "System.NullReferenceException"})
+    for suffix in ("value", "null-value", "null-owner", "derived"):
+        for prefix in ("class-self", "class-param"):
+            expected.append({"kind": prefix + "-" + suffix,
+                             "resultIsNull": suffix in ("null-value", "null-owner"),
+                             "resultIsDerived": suffix == "derived",
+                             "sameReference": suffix != "null-owner",
+                             "exception": "System.NullReferenceException" if suffix == "null-owner" else "none"})
     expected.append({"kind": "shared-constructors", "boxCreated": True,
                      "outerCreated": True})
     for kind in ("shared-direct-value", "shared-nested-value"):
@@ -85,6 +92,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Reference-field behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 17,
+    return {"status": "passed", "observations": len(expected), "methods": 19,
             "platform": report["platform"], "profile": "reference-field",
-            "scope": "direct, self and one-level nested string/object/int-array field reads with null owners; not whole-program equivalence"}
+            "scope": "direct, self and one-level nested string/object/int-array/class field reads with null owners; not whole-program equivalence"}

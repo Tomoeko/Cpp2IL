@@ -14,7 +14,7 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Binds an exact x64 null diamond to a string, object or bounded array field load. One preceding
+/// Binds an exact x64 null diamond to an ordinary class or bounded array field load. One preceding
 /// reference-field load is allowed, but no intervening effects or alternative exits are.
 /// </summary>
 internal static class X86ReferenceFieldReadProof
@@ -41,6 +41,8 @@ internal static class X86ReferenceFieldReadProof
               ReferenceEquals(method.ReturnType, app.SystemTypes.SystemStringType) ||
               rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_OBJECT &&
               ReferenceEquals(method.ReturnType, app.SystemTypes.SystemObjectType) ||
+              rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS &&
+              ISIL.NullCheckedCall.IsReferenceClass(method.ReturnType) ||
               rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY &&
               method.ReturnType is SzArrayTypeAnalysisContext array &&
               ReferenceEquals(array.ElementType, app.SystemTypes.SystemInt32Type)) ||

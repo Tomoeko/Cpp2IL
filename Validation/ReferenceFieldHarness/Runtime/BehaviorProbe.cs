@@ -106,6 +106,18 @@ namespace RecoveryValidation
             RecordCall(observations, "self-text-null-owner", null, () => nullBox.ReadTextSelf());
             RecordCall(observations, "self-object-null-owner", null, () => nullBox.ReadObjectSelf());
             RecordCall(observations, "self-array-null-owner", null, () => nullBox.ReadArraySelf());
+            outer.Inner = box;
+            RecordBox(observations, "class-self-value", box, () => outer.ReadBoxSelf());
+            RecordBox(observations, "class-param-value", box, () => ReferenceReads.ReadBox(outer));
+            outer.Inner = null;
+            RecordBox(observations, "class-self-null-value", null, () => outer.ReadBoxSelf());
+            RecordBox(observations, "class-param-null-value", null, () => ReferenceReads.ReadBox(outer));
+            ReferenceOuter nullOuter = null;
+            RecordBox(observations, "class-self-null-owner", null, () => nullOuter.ReadBoxSelf());
+            RecordBox(observations, "class-param-null-owner", null, () => ReferenceReads.ReadBox(null));
+            derivedOuter.Inner = derivedBox;
+            RecordBox(observations, "class-self-derived", derivedBox, () => derivedOuter.ReadBoxSelf());
+            RecordBox(observations, "class-param-derived", derivedBox, () => ReferenceReads.ReadBox(derivedOuter));
             var sharedBoxPrefix = new[] { -31 };
             var sharedBoxSuffix = new[] { 37 };
             var sharedOuterPrefix = new[] { -41 };
@@ -181,6 +193,26 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", kind }, { "result", result },
+                { "sameReference", sameReference }, { "exception", exception }
+            });
+        }
+
+        private static void RecordBox(List<object> observations, string kind, ReferenceBox expected,
+            Func<ReferenceBox> read)
+        {
+            ReferenceBox result = null;
+            var sameReference = false;
+            var exception = "none";
+            try
+            {
+                result = read();
+                sameReference = ReferenceEquals(result, expected);
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", kind }, { "resultIsNull", result == null },
+                { "resultIsDerived", result is DerivedBox },
                 { "sameReference", sameReference }, { "exception", exception }
             });
         }
