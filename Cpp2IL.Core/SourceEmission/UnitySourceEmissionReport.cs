@@ -17,6 +17,8 @@ public sealed class UnitySourceEmissionReport
     public string WindowsNativeBuild => "unverified";
     public string BehavioralValidation => "unverified";
     public string ScriptAssetBindings => "unverified";
+    public string PackageManifestProvenance { get; set; } = "default-empty";
+    public int PackageDependencyCount { get; set; }
     public string? RecoveryReportFile { get; set; }
     public List<UnitySourceAssemblyReport> Assemblies { get; } = [];
     public List<string> Diagnostics { get; } = [];
@@ -33,6 +35,8 @@ public sealed class UnitySourceEmissionReport
             "  \"WindowsNativeBuild\":" + JsonText.Quote(WindowsNativeBuild) + ",\n" +
             "  \"BehavioralValidation\":" + JsonText.Quote(BehavioralValidation) + ",\n" +
             "  \"ScriptAssetBindings\":" + JsonText.Quote(ScriptAssetBindings) + ",\n" +
+            "  \"PackageManifestProvenance\":" + JsonText.Quote(PackageManifestProvenance) + ",\n" +
+            "  \"PackageDependencyCount\":" + PackageDependencyCount + ",\n" +
             "  \"ReferencePolicy\":\"Explicit target references; recovered selected application assemblies; no host fallback\",\n" +
             "  \"RecoveryReportFile\":" + JsonText.Quote(RecoveryReportFile) + ",\n" +
             "  \"Assemblies\":[" + string.Join(",", Assemblies.Select(a =>

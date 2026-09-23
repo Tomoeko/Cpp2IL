@@ -57,6 +57,9 @@ public class CommandLineArgs
     [Option("unity-reference-dir", HelpText = "Directories containing the exact Unity, framework and package reference assemblies for source emission.")]
     public IEnumerable<string> UnityReferenceDirectories { get; set; } = new List<string>();
 
+    [Option("unity-package-manifest", HelpText = "Explicit Unity Packages/manifest.json input for cs_unity output. Package versions are never inferred from the player.")]
+    public string? UnityPackageManifestPath { get; set; }
+
     //Flags
 
     [Option("verbose", HelpText = "Enable Verbose Logging.")]

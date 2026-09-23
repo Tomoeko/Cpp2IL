@@ -562,6 +562,7 @@ internal static class Program
         result.StrictRecovery = options.StrictRecovery;
         result.UnitySourceAssemblies = options.UnitySourceAssemblies.ToList();
         result.UnityReferenceDirectories = options.UnityReferenceDirectories.ToList();
+        result.UnityPackageManifestPath = options.UnityPackageManifestPath;
 
         // if(string.IsNullOrEmpty(options.OutputFormatId))      // throw new SoftException("No output format specified, so nothing to do!");
 
@@ -577,6 +578,10 @@ internal static class Program
                 throw new SoftException(e.Message);
             }
         }
+
+        if (options.UnityPackageManifestPath != null &&
+            result.OutputFormats?.Any(format => format.OutputFormatId == "cs_unity") != true)
+            throw new SoftException("--unity-package-manifest requires --output-as cs_unity.");
 
         try
         {

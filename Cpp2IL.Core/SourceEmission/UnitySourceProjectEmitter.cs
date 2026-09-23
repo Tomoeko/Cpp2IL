@@ -40,8 +40,9 @@ public static class UnitySourceProjectEmitter
     };
 
     public static UnitySourceEmissionReport Emit(IEnumerable<AssemblyDefinition> assemblies, IEnumerable<string> selectedAssemblyNames,
-        IEnumerable<string> referenceDirectories, string outputDirectory)
+        IEnumerable<string> referenceDirectories, string outputDirectory, string? packageManifestPath = null)
     {
+        var packageManifest = UnityPackageManifest.Load(packageManifestPath);
         var selected = selectedAssemblyNames.Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray();
         if (selected.Length == 0)
             throw new ArgumentException("Unity source output requires an explicit, nonempty application assembly selection.");
@@ -66,6 +67,8 @@ public static class UnitySourceProjectEmitter
         Directory.CreateDirectory(outputDirectory);
 
         var report = new UnitySourceEmissionReport();
+        report.PackageManifestProvenance = packageManifest.Provenance;
+        report.PackageDependencyCount = packageManifest.DependencyCount;
         try
         {
             var managedDirectory = Path.Combine(outputDirectory, "RecoveredManaged");
@@ -149,7 +152,7 @@ public static class UnitySourceProjectEmitter
             Directory.CreateDirectory(Path.Combine(outputDirectory, "ProjectSettings"));
             File.WriteAllText(Path.Combine(outputDirectory, "ProjectSettings", "ProjectVersion.txt"), $"m_EditorVersion: {TargetUnityVersion}\n");
             Directory.CreateDirectory(Path.Combine(outputDirectory, "Packages"));
-            File.WriteAllText(Path.Combine(outputDirectory, "Packages", "manifest.json"), "{\"dependencies\":{}}\n");
+            File.WriteAllBytes(Path.Combine(outputDirectory, "Packages", "manifest.json"), packageManifest.Bytes);
             File.WriteAllText(Path.Combine(outputDirectory, "Assets", "csc.rsp"), "-langversion:9.0\n-unsafe\n-checked-\n");
             report.SourceGeneration = report.Diagnostics.Count == 0 ? "generated" : "partial";
         }

@@ -27,4 +27,5 @@ public class Cpp2IlRuntimeArgs
     public bool StrictRecovery;
     public List<string> UnitySourceAssemblies = [];
     public List<string> UnityReferenceDirectories = [];
+    public string? UnityPackageManifestPath;
 }

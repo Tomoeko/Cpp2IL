@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using AsmResolver.DotNet;
 using AsmResolver.DotNet.Code.Cil;
 using AsmResolver.DotNet.Signatures;
@@ -42,6 +44,75 @@ public class UnitySourceEmitterTests
         Assert.That(report.Assemblies[0].SourceFiles, Is.EqualTo(new[] { report.Assemblies[0].SourceFile }));
         Assert.That(Directory.GetFiles(Path.Combine(_directory, "Assets"), "*.dll", SearchOption.AllDirectories), Is.Empty);
         Assert.That(File.Exists(Path.Combine(_directory, "Assets/Recovered/Synthetic.Application/Synthetic.Application.asmdef")), Is.True);
+        Assert.That(File.ReadAllText(Path.Combine(_directory, "Packages/manifest.json")), Is.EqualTo("{\"dependencies\":{}}\n"));
+        Assert.That(report.PackageManifestProvenance, Is.EqualTo("default-empty"));
+        Assert.That(report.PackageDependencyCount, Is.Zero);
+    }
+
+    [Test]
+    public void ExplicitUnityManifestIsCopiedExactlyAndReportedWithoutInputDetails()
+    {
+        const string manifest = "{\n  \"scopedRegistries\": [{\"name\": \"Example registry\", \"url\": \"https://packages.example.org\", \"scopes\": [\"com.example\"]}],\n" +
+                                "  \"dependencies\": {\"com.example.feature\": \"2.4.1-preview.3+001\", \"com.unity.test-framework\": \"1.1.33\", \"com.example.remote_package\": \"https://example.org/package.git?path=/Runtime/Package#v1.2.3\"},\n" +
+                                "  \"testables\": [\"com.example.feature\"], \"enableLockFile\": true, \"resolutionStrategy\": \"highest\"\n}\n";
+        var input = Path.Combine(_directory, "manifest-input.json");
+        var output = Path.Combine(_directory, "project");
+        File.WriteAllText(input, manifest, new UTF8Encoding(false));
+
+        var report = UnitySourceProjectEmitter.Emit([CreateAssembly("Synthetic.Application")], ["Synthetic.Application"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], output, input);
+
+        Assert.That(File.ReadAllText(Path.Combine(output, "Packages/manifest.json")), Is.EqualTo(manifest));
+        Assert.That(report.PackageManifestProvenance, Is.EqualTo("explicit-auxiliary"));
+        Assert.That(report.PackageDependencyCount, Is.EqualTo(3));
+        var sourceReport = File.ReadAllText(Path.Combine(output, "source-emission-report.json"));
+        Assert.That(sourceReport, Does.Contain("\"PackageManifestProvenance\":\"explicit-auxiliary\""));
+        Assert.That(sourceReport, Does.Not.Contain(input).And.Not.Contain("com.example.feature").And.Not.Contain("Sha256"));
+    }
+
+    private static IEnumerable<string> InvalidPackageManifests()
+    {
+        yield return "[]";
+        yield return "{}";
+        yield return "{\"dependencies\":[]}";
+        yield return "{\"dependencies\":{},\"useSatSolver\":true}";
+        yield return "{\"dependencies\":{},\"dependencies\":{}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":null}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"1.0.0-01\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"1.0.0-preview.01\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"file:/example/absolute-package\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"C:\\\\example\\\\absolute-package\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"../absolute-package\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://user:token@example.org/package.git\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"http://example.org/package.git\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"git+file:///example/absolute-package\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://localhost/package.git\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://packages.localhost/package.git\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://127.0.0.1/package.git\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://example.org/package.git?path=/../absolute-package\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://example.org/package.git?path=/Runtime/%2e%2e\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://example.org/package.git?path=//absolute-package\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://example.org/package.git?path=/Runtime&token=absolute-package\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://example.org/package?path=/Runtime\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://example.org/package\"}}";
+        yield return "{\"dependencies\":{\"com.example.feature\":\"https://example.org/package.git#\"}}";
+        yield return "{\"dependencies\":{\"example\":\"1.0.0\"}}";
+        yield return "{\"dependencies\":{},\"unexpected\":\"/example/absolute-package\"}";
+        yield return "{\"dependencies\":{},\"scopedRegistries\":[{\"name\":\"A\",\"url\":\"file:/example/absolute-package\",\"scopes\":[\"com.example\"]}]}";
+    }
+
+    [TestCaseSource(nameof(InvalidPackageManifests))]
+    public void UnsafeOrMalformedManifestIsRejectedBeforeProjectCreation(string manifest)
+    {
+        var input = Path.Combine(_directory, "manifest-input.json");
+        var output = Path.Combine(_directory, "project");
+        File.WriteAllText(input, manifest, new UTF8Encoding(false));
+
+        var error = Assert.Throws<ArgumentException>(() => UnitySourceProjectEmitter.Emit(
+            [CreateAssembly("Synthetic.Application")], ["Synthetic.Application"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], output, input));
+        Assert.That(error!.Message, Does.Not.Contain("absolute-package").And.Not.Contain(input));
+        Assert.That(Directory.Exists(output), Is.False);
     }
 
     [Test]
