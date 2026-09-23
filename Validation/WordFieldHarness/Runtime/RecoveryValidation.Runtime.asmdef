@@ -1,0 +1,4 @@
+{
+  "name": "RecoveryValidation.Runtime",
+  "references": ["WordFieldFixture"]
+}

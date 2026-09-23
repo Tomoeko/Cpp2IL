@@ -1,0 +1,4 @@
+<linker>
+  <!-- Validation configuration: preserve the complete four-method selected scope. -->
+  <assembly fullname="WordFieldFixture" preserve="all" />
+</linker>
