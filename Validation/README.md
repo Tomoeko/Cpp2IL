@@ -104,6 +104,24 @@ build profile, native behavior result and player-input hashes before use. Every
 recovery and replacement project still uses a fresh directory. Reference paths
 must contain matching target API assemblies, never original application DLLs.
 
+Completed runs can retain hundreds of megabytes of reproducible Unity build
+output each. After reviewing a run's receipt and any artifacts needed for the
+next validation step, preview and prune old generated trees:
+
+```sh
+python3 Validation/prune_generated_artifacts.py
+python3 Validation/prune_generated_artifacts.py --apply
+```
+
+The default dry run waits 24 hours after a terminal receipt. The script removes
+only `project/`, `player/` and `player-input/` trees under completed ignored
+`Files/validation/` runs; it retains receipts, logs, recovered source and
+recovery reports, and writes a private cleanup manifest. Use `--exclude RUN_NAME`
+to keep a run under investigation. A pruned run can no longer be passed to
+`--baseline-run`; rebuild that original fixture when a new player input is
+needed. Never use the cleanup script on the supplied editor, license prefix,
+original game/project inputs, or active runs.
+
 Run the bounded harness checks without Unity or Wine:
 
 ```sh

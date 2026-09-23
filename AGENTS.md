@@ -76,6 +76,7 @@ These are repository build/test commands, not proof that recovered code compiles
 - For recovery changes, prioritize small synthetic fixtures built with the exact target. Compare emitted declarations and behavior with known source, then compile regenerated source in Unity and build/run the relevant native fixture.
 - Test Release semantics, including integer width/signedness, floating-point edge cases, side effects, aliasing, exceptions, value types, generics, and runtime dispatch as each feature is implemented.
 - Record commit, tool versions, target settings, input set, command, exit status, diagnostics, coverage denominator, and result. Keep private raw evidence in `Files/`; only neutral summaries belong in the repository.
+- After recording and reviewing a completed validation run, use `Validation/prune_generated_artifacts.py` to remove old generated Unity projects and player copies. Preview its plan, exclude active investigations, and retain receipts, logs, recovered source and reports. Pruned runs need a fresh original build before `--baseline-run` reuse.
 - A zero exit status alone is insufficient. Require fresh output, completed compilation/build evidence, and an explicit result for each validation stage. Report missing tools or unavailable checks as unverified, never as passed.
 
 ## Git workflow and reporting
