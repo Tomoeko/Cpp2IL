@@ -30,6 +30,15 @@ namespace FieldGuardFixture
         }
     }
 
+    public static class FieldClears
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void Clear(FieldBox box)
+        {
+            box.Value = 0;
+        }
+    }
+
     public sealed class LongBox
     {
         public long Value;

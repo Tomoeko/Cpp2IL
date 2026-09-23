@@ -15,14 +15,15 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Binds a closed target-runtime null diamond to an ordinary Boolean zero store, or to
-/// one reference-field load followed by a signed 32-bit zero store. The guard remains
-/// in ISIL until the corresponding managed field access can retain its null failure.
+/// Binds a closed target-runtime null diamond to a Boolean or signed 32-bit zero store,
+/// optionally after one reference-field load. The guard remains in ISIL until
+/// the corresponding managed field access can retain its null failure.
 /// </summary>
 internal static class X86GuardedZeroStoreProof
 {
     internal const string EvidenceKey = "X86GuardedZeroStoreProof";
-    internal sealed record Proof(FieldAnalysisContext Field, FieldAnalysisContext? ReceiverField);
+    internal sealed record Proof(FieldAnalysisContext Field, FieldAnalysisContext? ReceiverField,
+        int StoreWidth);
     internal sealed record Shape(long? ReceiverOffset, long StoreOffset, int StoreWidth, int CallIndex);
 
     public static Proof? Find(MethodAnalysisContext method, IReadOnlyList<Instruction> body)
@@ -109,7 +110,7 @@ internal static class X86GuardedZeroStoreProof
             X86RuntimeNullThrowProof.TryIdentify(app, call.NearBranchTarget) == null ||
             X86CallerExceptionRegionProof.Check(method, body, new HashSet<ulong> { call.IP }) != null)
             return null;
-        return new Proof(storeField, receiverField);
+        return new Proof(storeField, receiverField, shape.StoreWidth);
     }
 
     internal static Shape? TryProveShape(IReadOnlyList<Instruction> body)
@@ -150,16 +151,17 @@ internal static class X86GuardedZeroStoreProof
         var test = body[testIndex];
         var branch = body[branchIndex];
         var store = body[storeIndex];
-        var width = nested ? 4 : 1;
+        var width = store.Code == Code.Mov_rm8_imm8 ? 1 :
+            store.Code == Code.Mov_rm32_imm32 ? 4 : 0;
         if (test.Mnemonic != Mnemonic.Test || test.Op0Kind != OpKind.Register ||
             test.Op1Kind != OpKind.Register || test.Op0Register != tested ||
             test.Op1Register != tested ||
             branch.Mnemonic != Mnemonic.Je || branch.Op0Kind != OpKind.NearBranch64 ||
             branch.NearBranchTarget != body[callIndex].IP ||
-            store.Code != (nested ? Code.Mov_rm32_imm32 : Code.Mov_rm8_imm8) ||
+            width == 0 || (nested && width != 4) ||
             store.Op0Kind != OpKind.Memory || store.MemoryBase != tested ||
             store.MemoryIndex != Register.None || store.MemorySize.GetSize() != width ||
-            (nested ? store.Op1Kind != OpKind.Immediate32 || store.Immediate32 != 0 :
+            (width == 4 ? store.Op1Kind != OpKind.Immediate32 || store.Immediate32 != 0 :
                 store.Op1Kind != OpKind.Immediate8 || store.Immediate8 != 0) ||
             store.MemoryDisplacement64 > int.MaxValue ||
             !Stack(body[storeIndex + 1], Mnemonic.Add) ||

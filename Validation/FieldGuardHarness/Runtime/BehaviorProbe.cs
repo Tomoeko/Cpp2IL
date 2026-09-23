@@ -17,6 +17,9 @@ namespace RecoveryValidation
             foreach (var value in new[] { int.MinValue, -17, 0, 17, int.MaxValue })
                 RecordWrite(observations, value.ToString(), new FieldBox(42), value);
             RecordWrite(observations, "null", null, 17);
+            foreach (var initial in new[] { int.MinValue, 0, int.MaxValue })
+                RecordClear(observations, initial.ToString(), new FieldBox(initial));
+            RecordClear(observations, "null", null);
             foreach (var value in new[] { long.MinValue, -17L, 0L, 17L, long.MaxValue })
                 RecordLong(observations, value.ToString(), new LongBox(value));
             RecordLong(observations, "null", null);
@@ -67,6 +70,22 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "write:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordClear(List<object> observations, string kind, FieldBox box)
+        {
+            object result = null;
+            var exception = "none";
+            try
+            {
+                FieldClears.Clear(box);
+                result = box == null ? null : (object)box.Value;
+            }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "clear:" + kind }, { "result", result }, { "exception", exception }
             });
         }
 

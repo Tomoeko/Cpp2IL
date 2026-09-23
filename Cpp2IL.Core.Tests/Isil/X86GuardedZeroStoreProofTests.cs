@@ -8,9 +8,10 @@ namespace Cpp2IL.Core.Tests.Isil;
 public class X86GuardedZeroStoreProofTests
 {
     [Test]
-    public void DirectBooleanAndNestedIntegerShapesKeepTheirWidthsAndOffsets()
+    public void DirectBooleanAndIntegerAndNestedIntegerShapesKeepTheirWidthsAndOffsets()
     {
         var direct = X86GuardedZeroStoreProof.TryProveShape(Body(false));
+        var directInteger = X86GuardedZeroStoreProof.TryProveShape(Body(false, true));
         var nested = X86GuardedZeroStoreProof.TryProveShape(Body(true));
         Assert.Multiple(() =>
         {
@@ -18,10 +19,34 @@ public class X86GuardedZeroStoreProofTests
             Assert.That(direct!.ReceiverOffset, Is.Null);
             Assert.That(direct.StoreOffset, Is.EqualTo(0x10));
             Assert.That(direct.StoreWidth, Is.EqualTo(1));
+            Assert.That(directInteger, Is.Not.Null);
+            Assert.That(directInteger!.ReceiverOffset, Is.Null);
+            Assert.That(directInteger.StoreOffset, Is.EqualTo(0x10));
+            Assert.That(directInteger.StoreWidth, Is.EqualTo(4));
             Assert.That(nested, Is.Not.Null);
             Assert.That(nested!.ReceiverOffset, Is.EqualTo(0x10));
             Assert.That(nested.StoreOffset, Is.EqualTo(0x10));
             Assert.That(nested.StoreWidth, Is.EqualTo(4));
+        });
+    }
+
+    [Test]
+    public void DirectIntegerZeroStoreRequiresZeroAndTheGuardedReceiver()
+    {
+        var nonzero = Body(false, true);
+        var changedValue = nonzero[3];
+        changedValue.Immediate32 = 1;
+        nonzero[3] = changedValue;
+
+        var wrongReceiver = Body(false, true);
+        var changedReceiver = wrongReceiver[3];
+        changedReceiver.MemoryBase = Register.RDX;
+        wrongReceiver[3] = changedReceiver;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(X86GuardedZeroStoreProof.TryProveShape(nonzero), Is.Null);
+            Assert.That(X86GuardedZeroStoreProof.TryProveShape(wrongReceiver), Is.Null);
         });
     }
 
@@ -72,11 +97,12 @@ public class X86GuardedZeroStoreProofTests
         Assert.That(X86GuardedZeroStoreProof.TryProveShape(body), Is.Null);
     }
 
-    private static List<Instruction> Body(bool nested)
+    private static List<Instruction> Body(bool nested, bool directInteger = false)
     {
         const ulong address = 0x1000;
         var bytes = Convert.FromHexString(nested
             ? "4883EC28488B41104885C0740CC74010000000004883C428C3E8E23F0000"
+            : directInteger ? "4883EC284885C9740CC74110000000004883C428C3E8E23F0000"
             : "4883EC284885C97409C64110004883C428C3E8E93F0000");
         var decoder = Decoder.Create(64, new ByteArrayCodeReader(bytes), address);
         var body = new List<Instruction>();

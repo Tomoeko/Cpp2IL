@@ -54,7 +54,7 @@ internal static class RuntimeNullGuardCoalescer
                 method.GetExtraData<X86GuardedZeroStoreProof.Proof>(
                     X86GuardedZeroStoreProof.EvidenceKey) is { } proof &&
                 ReferenceEquals(proof.Field, Field) &&
-                ReferenceEquals(ValueType, proof.ReceiverField == null
+                ReferenceEquals(ValueType, proof.StoreWidth == 1
                     ? method.AppContext.SystemTypes.SystemBooleanType
                     : method.AppContext.SystemTypes.SystemInt32Type) &&
                 ValidZeroStoreReceiver(method, proof),
@@ -364,7 +364,8 @@ internal static class RuntimeNullGuardCoalescer
             return false;
         var current = X86GuardedZeroStoreProof.Find(method, X86Utils.Iterate(method).ToArray());
         return current != null && ReferenceEquals(current.Field, proof.Field) &&
-               ReferenceEquals(current.ReceiverField, proof.ReceiverField);
+               ReferenceEquals(current.ReceiverField, proof.ReceiverField) &&
+               current.StoreWidth == proof.StoreWidth;
     }
 
     private static bool HasOutputOptions(MethodAnalysisContext method)

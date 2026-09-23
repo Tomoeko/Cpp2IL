@@ -17,6 +17,7 @@ public class RuntimeNullFieldGuardFixtureTests
     [TestCase("LongFieldWrites", "Write", true)]
     [TestCase("BooleanFieldClears", "Clear", true)]
     [TestCase("NestedFieldBox", "ClearInner", true)]
+    [TestCase("FieldClears", "Clear", true)]
     public void PlayerOnlyFieldAccessRetainsAnImplicitNullCheckAndRejectsChangedMetadata(string typeName, string name, bool isWrite)
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_FIELD_GUARD_FIXTURE_INPUT");
