@@ -103,7 +103,8 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
 
     protected RecoveryReport CreateRecoveryReport(ApplicationAnalysisContext context, bool completed)
         => new(_methodResults.Values, _inputTypeCount, context.UnityVersion.ToString(),
-            context.Binary.InstructionSetId.ToString(), completed);
+            context.Binary.InstructionSetId.ToString(), completed,
+            context.Assemblies.Where(assembly => assembly.Definition != null).Select(assembly => assembly.Name));
 
     private void Record(MethodAnalysisContext method, MethodRecoveryDisposition disposition, params string[] reasons)
         => _methodResults[method] = _methodResults[method].WithDisposition(disposition, reasons.Concat(method.AnalysisWarnings));

@@ -55,6 +55,42 @@ public class RecoveryReportTests
     }
 
     [Test]
+    public void ExplicitDeclarationOnlyAssembliesNeedNoInventedExecutableBody()
+    {
+        var report = new RecoveryReport([Result(0, MethodRecoveryDisposition.NoManagedBody, "Interfaces")],
+            2, "test", "test", true, ["Interfaces", "Enums"]);
+        Assert.DoesNotThrow(() => report.EnsureComplete(["Interfaces"]));
+        Assert.DoesNotThrow(() => report.EnsureComplete(["Enums"]));
+        Assert.DoesNotThrow(() => report.EnsureComplete(["Interfaces", "Enums"]));
+        Assert.Throws<IncompleteRecoveryException>(() => report.EnsureComplete(["Missing"]));
+        Assert.Throws<IncompleteRecoveryException>(() => report.EnsureComplete());
+        Assert.Multiple(() =>
+        {
+            Assert.That(report.InputAssemblyNames, Is.EqualTo(new[] { "Enums", "Interfaces" }));
+            Assert.That(report.EmittedMethodCount, Is.Zero);
+            Assert.That(report.BehaviorallyVerifiedMethodCount, Is.Zero);
+            Assert.That(report.InputMethodCount, Is.EqualTo(1));
+        });
+    }
+
+    [TestCase(MethodRecoveryDisposition.NoNativeBody)]
+    [TestCase(MethodRecoveryDisposition.ExcludedReferenceAssembly)]
+    [TestCase(MethodRecoveryDisposition.ExcludedInjectedMethod)]
+    [TestCase(MethodRecoveryDisposition.NotProcessed)]
+    public void MissingAndExcludedBodiesCannotMasqueradeAsDeclarationOnly(MethodRecoveryDisposition disposition)
+    {
+        var report = new RecoveryReport([Result(0, disposition)], 1, "test", "test", true, ["Sample"]);
+        Assert.Throws<IncompleteRecoveryException>(() => report.EnsureComplete(["Sample"]));
+    }
+
+    [Test]
+    public void InterruptedDeclarationOnlyRunStillFails()
+    {
+        var report = new RecoveryReport([], 1, "test", "test", false, ["Enums"]);
+        Assert.Throws<IncompleteRecoveryException>(() => report.EnsureComplete(["Enums"]));
+    }
+
+    [Test]
     public void JsonRetainsExplicitDispositionAndEscapesInputIdentifiers()
     {
         var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, "recovery-report-test.json");

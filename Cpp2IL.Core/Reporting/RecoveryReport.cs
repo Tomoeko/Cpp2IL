@@ -19,6 +19,7 @@ public sealed class RecoveryReport
     public string Scope { get; private set; } = "Application managed method bodies; reference assemblies and bodyless declarations are explicitly excluded.";
     public int InputTypeCount { get; private set; }
     public int InputMethodCount { get; private set; }
+    public string[] InputAssemblyNames { get; private set; }
     public int InputMethodsWithNativeBodies { get; private set; }
     public int InjectedMethodCount { get; private set; }
     public int EmittedMethodCount { get; private set; }
@@ -34,12 +35,20 @@ public sealed class RecoveryReport
 
     public RecoveryReport(IEnumerable<MethodRecoveryResult> methods, int inputTypeCount,
         string unityVersion, string instructionSet, bool analysisCompleted)
+        : this(methods, inputTypeCount, unityVersion, instructionSet, analysisCompleted, null)
+    {
+    }
+
+    public RecoveryReport(IEnumerable<MethodRecoveryResult> methods, int inputTypeCount,
+        string unityVersion, string instructionSet, bool analysisCompleted, IEnumerable<string>? inputAssemblyNames)
     {
         Methods = methods.OrderBy(m => m.Identity).ToArray();
         if (Methods.Select(m => m.Identity).Distinct().Count() != Methods.Length)
             throw new ArgumentException("Recovery report method identities must be unique.", nameof(methods));
 
         InputTypeCount = inputTypeCount;
+        InputAssemblyNames = (inputAssemblyNames ?? Methods.Where(m => m.IsInputMethod).Select(m => m.AssemblyName))
+            .Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToArray();
         UnityVersion = unityVersion;
         InstructionSet = instructionSet;
         AnalysisCompleted = analysisCompleted;
@@ -68,14 +77,19 @@ public sealed class RecoveryReport
         if (assemblyNames != null)
         {
             var names = new HashSet<string>(assemblyNames, StringComparer.Ordinal);
-            if (names.Count == 0 || names.Any(n => !Methods.Any(m => m.AssemblyName == n)))
+            if (names.Count == 0 || names.Any(n => !InputAssemblyNames.Contains(n, StringComparer.Ordinal)))
                 throw new IncompleteRecoveryException("Strict recovery requires a nonempty selection of assemblies present in the report.", this);
             selected = selected.Where(m => names.Contains(m.AssemblyName));
         }
 
         var scopedMethods = selected.Where(m => !m.IsExcluded).ToArray();
         var unresolved = scopedMethods.Count(m => m.IsUnresolved);
-        if (!AnalysisCompleted || scopedMethods.Length == 0 || unresolved != 0)
+        // Explicitly selected input assemblies may contain only interfaces, enums or other
+        // declarations requiring no managed bodies. This establishes no recovered behavior.
+        // A reference/injected-method exclusion is not such a declaration-only proof.
+        var declarationOnly = assemblyNames != null && selected.All(m =>
+            m.IsInputMethod && m.Disposition == MethodRecoveryDisposition.NoManagedBody);
+        if (!AnalysisCompleted || (scopedMethods.Length == 0 && !declarationOnly) || unresolved != 0)
             throw new IncompleteRecoveryException($"Strict recovery rejected output: {unresolved} unresolved method(s) in {scopedMethods.Length} scoped method(s); analysis completed: {AnalysisCompleted}. See the recovery report. Emission is not behavioral verification.", this);
     }
 
@@ -93,6 +107,7 @@ public sealed class RecoveryReport
         Text(nameof(Scope), Scope);
         Number(nameof(InputTypeCount), InputTypeCount);
         Number(nameof(InputMethodCount), InputMethodCount);
+        json.Append(JsonText.Quote(nameof(InputAssemblyNames))).Append(':').Append(JsonText.Array(InputAssemblyNames)).Append(",\n");
         Number(nameof(InputMethodsWithNativeBodies), InputMethodsWithNativeBodies);
         Number(nameof(InjectedMethodCount), InjectedMethodCount);
         Number(nameof(EmittedMethodCount), EmittedMethodCount);

@@ -18,3 +18,24 @@ implicit class override or infer a finalizer from its name alone.
 
 This fixture does not request collection or depend on finalizer scheduling.
 The arithmetic harness's behavior result does not verify destructor behavior.
+
+The exact authored baseline retained seven types and thirteen methods through
+stripping. Player-only declaration recovery matched that oracle with zero
+projection differences, including the two canonical Object.Finalize mappings
+and the absence of added mappings on all controls. This result does not
+establish recovery of destructor bodies or arbitrary original MethodImpl rows.
+
+Run the optional native-evidence integration test against that fixture:
+
+```sh
+CPP2IL_FINALIZER_FIXTURE_INPUT="$FINALIZER_PLAYER_INPUT" \
+  dotnet test --project Cpp2IL.Core.Tests -c Release --no-restore -- \
+  --filter 'FullyQualifiedName~CanonicalFinalizerOverrideTests'
+```
+
+The test explicitly skips when the environment variable is absent. A supplied
+path must contain the neutral fixture's player inputs, expected types and
+member counts; missing or mismatched inputs fail without a fallback. The test
+checks the positive and negative controls, mutates parsed evidence to ensure
+insufficient flags/signatures/slots are rejected, and verifies idempotent
+MethodImpl emission. It performs no native execution or finalizer scheduling.

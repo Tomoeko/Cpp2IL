@@ -7,7 +7,7 @@ public static class TestGameLoader
 {
     private static bool _initialized;
     
-    private static void EnsureInit()
+    internal static void EnsureInit()
     {
         if(!_initialized)
             Cpp2IlApi.Init();
