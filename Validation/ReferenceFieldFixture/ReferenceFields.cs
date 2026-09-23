@@ -13,6 +13,8 @@ namespace ReferenceFieldFixture
         public int[] Suffix;
         public object Payload;
         public int[] Numbers;
+        public string[] Labels;
+        public object[] Objects;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public string ReadTextSelf()
@@ -30,6 +32,18 @@ namespace ReferenceFieldFixture
         public int[] ReadArraySelf()
         {
             return Numbers;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public string[] ReadLabelsSelf()
+        {
+            return Labels;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public object[] ReadObjectsSelf()
+        {
+            return Objects;
         }
     }
 
@@ -64,6 +78,18 @@ namespace ReferenceFieldFixture
         public int[] ReadArrayInner()
         {
             return Inner.Numbers;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public string[] ReadLabelsInner()
+        {
+            return Inner.Labels;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public object[] ReadObjectsInner()
+        {
+            return Inner.Objects;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -116,6 +142,18 @@ namespace ReferenceFieldFixture
         public static int[] ReadArray(ReferenceBox box)
         {
             return box.Numbers;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static string[] ReadLabels(ReferenceBox box)
+        {
+            return box.Labels;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static object[] ReadObjects(ReferenceBox box)
+        {
+            return box.Objects;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

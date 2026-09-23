@@ -64,6 +64,16 @@ def observations():
                              "resultIsDerived": suffix == "derived",
                              "sameReference": suffix != "null-owner",
                              "exception": "System.NullReferenceException" if suffix == "null-owner" else "none"})
+    for array_kind, values in (("labels", ["ll", None, ""]),
+                               ("objects", ["rr", -(1 << 31), None])):
+        for scenario, value in (("value", values), ("empty", []), ("null-value", None)):
+            for access in ("direct", "nested", "self"):
+                expected.append({"kind": array_kind + "-" + access + "-" + scenario,
+                                 "result": value, "sameReference": True, "exception": "none"})
+        for access in ("direct-null-owner", "nested-null-inner",
+                       "nested-null-outer", "self-null-owner"):
+            expected.append({"kind": array_kind + "-" + access, "result": None,
+                             "sameReference": False, "exception": "System.NullReferenceException"})
     expected.append({"kind": "shared-constructors", "boxCreated": True,
                      "outerCreated": True})
     for kind in ("shared-direct-value", "shared-nested-value"):
@@ -92,6 +102,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Reference-field behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 19,
+    return {"status": "passed", "observations": len(expected), "methods": 25,
             "platform": report["platform"], "profile": "reference-field",
-            "scope": "direct, self and one-level nested string/object/int-array/class field reads with null owners; not whole-program equivalence"}
+            "scope": "direct, self and one-level nested string/object/class and int/string/object-array field reads with null owners; not whole-program equivalence"}

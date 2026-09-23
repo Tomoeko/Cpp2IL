@@ -382,15 +382,11 @@ internal static class RuntimeNullGuardCoalescer
         return ReferenceEquals(proof?.Field, access.Field) ? proof : null;
     }
 
-    private static bool IsInt32Array(TypeAnalysisContext type) =>
-        type is SzArrayTypeAnalysisContext array &&
-        ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemInt32Type);
-
     private static bool IsBoundedReferenceFieldReadType(TypeAnalysisContext type) =>
         ReferenceEquals(type, type.AppContext.SystemTypes.SystemStringType) ||
         ReferenceEquals(type, type.AppContext.SystemTypes.SystemObjectType) ||
         type.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS && NullCheckedCall.IsReferenceClass(type) ||
-        IsInt32Array(type);
+        X86ReferenceFieldReadProof.IsSupportedArrayType(type);
 
     private static bool HasProvedNativeZeroStore(MethodAnalysisContext method, FieldReference access)
     {

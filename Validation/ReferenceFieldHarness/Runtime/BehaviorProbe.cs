@@ -118,6 +118,36 @@ namespace RecoveryValidation
             derivedOuter.Inner = derivedBox;
             RecordBox(observations, "class-self-derived", derivedBox, () => derivedOuter.ReadBoxSelf());
             RecordBox(observations, "class-param-derived", derivedBox, () => ReferenceReads.ReadBox(derivedOuter));
+            outer.Inner = box;
+            box.Labels = new[] { new string('l', 2), null, string.Empty };
+            RecordReferenceArrays(observations, "labels", "value", box.Labels,
+                () => ReferenceReads.ReadLabels(box), () => outer.ReadLabelsInner(), () => box.ReadLabelsSelf());
+            box.Labels = Array.Empty<string>();
+            RecordReferenceArrays(observations, "labels", "empty", box.Labels,
+                () => ReferenceReads.ReadLabels(box), () => outer.ReadLabelsInner(), () => box.ReadLabelsSelf());
+            box.Labels = null;
+            RecordReferenceArrays(observations, "labels", "null-value", null,
+                () => ReferenceReads.ReadLabels(box), () => outer.ReadLabelsInner(), () => box.ReadLabelsSelf());
+            RecordCall(observations, "labels-direct-null-owner", null, () => ReferenceReads.ReadLabels(null));
+            outer.Inner = null;
+            RecordCall(observations, "labels-nested-null-inner", null, () => outer.ReadLabelsInner());
+            RecordCall(observations, "labels-nested-null-outer", null, () => nullOuter.ReadLabelsInner());
+            RecordCall(observations, "labels-self-null-owner", null, () => nullBox.ReadLabelsSelf());
+            outer.Inner = box;
+            box.Objects = new object[] { new string('r', 2), (object)int.MinValue, null };
+            RecordReferenceArrays(observations, "objects", "value", box.Objects,
+                () => ReferenceReads.ReadObjects(box), () => outer.ReadObjectsInner(), () => box.ReadObjectsSelf());
+            box.Objects = Array.Empty<object>();
+            RecordReferenceArrays(observations, "objects", "empty", box.Objects,
+                () => ReferenceReads.ReadObjects(box), () => outer.ReadObjectsInner(), () => box.ReadObjectsSelf());
+            box.Objects = null;
+            RecordReferenceArrays(observations, "objects", "null-value", null,
+                () => ReferenceReads.ReadObjects(box), () => outer.ReadObjectsInner(), () => box.ReadObjectsSelf());
+            RecordCall(observations, "objects-direct-null-owner", null, () => ReferenceReads.ReadObjects(null));
+            outer.Inner = null;
+            RecordCall(observations, "objects-nested-null-inner", null, () => outer.ReadObjectsInner());
+            RecordCall(observations, "objects-nested-null-outer", null, () => nullOuter.ReadObjectsInner());
+            RecordCall(observations, "objects-self-null-owner", null, () => nullBox.ReadObjectsSelf());
             var sharedBoxPrefix = new[] { -31 };
             var sharedBoxSuffix = new[] { 37 };
             var sharedOuterPrefix = new[] { -41 };
@@ -178,6 +208,14 @@ namespace RecoveryValidation
         private static void RecordArray(List<object> observations, string kind, object owner, int[] expected, bool nested)
             => RecordCall(observations, kind, expected,
                 () => nested ? ((ReferenceOuter)owner).ReadArrayInner() : ReferenceReads.ReadArray((ReferenceBox)owner));
+
+        private static void RecordReferenceArrays(List<object> observations, string arrayKind, string scenario,
+            object expected, Func<object> direct, Func<object> nested, Func<object> self)
+        {
+            RecordCall(observations, arrayKind + "-direct-" + scenario, expected, direct);
+            RecordCall(observations, arrayKind + "-nested-" + scenario, expected, nested);
+            RecordCall(observations, arrayKind + "-self-" + scenario, expected, self);
+        }
 
         private static void RecordCall(List<object> observations, string kind, object expected, Func<object> read)
         {

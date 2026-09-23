@@ -44,8 +44,7 @@ internal static class X86ReferenceFieldReadProof
               rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS &&
               ISIL.NullCheckedCall.IsReferenceClass(method.ReturnType) ||
               rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY &&
-              method.ReturnType is SzArrayTypeAnalysisContext array &&
-              ReferenceEquals(array.ElementType, app.SystemTypes.SystemInt32Type)) ||
+              IsSupportedArrayType(method.ReturnType)) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             method.GenericParameters.Count != 0 ||
@@ -175,6 +174,12 @@ internal static class X86ReferenceFieldReadProof
         instruction.Op0Register == Register.RAX && instruction.Op1Kind == OpKind.Memory &&
         instruction.MemoryBase == receiver && instruction.MemoryIndex == Register.None &&
         instruction.MemorySize.GetSize() == 8 && instruction.MemoryDisplacement64 <= int.MaxValue;
+
+    internal static bool IsSupportedArrayType(TypeAnalysisContext type) =>
+        type is SzArrayTypeAnalysisContext array &&
+        (ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemInt32Type) ||
+         ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemStringType) ||
+         ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemObjectType));
 
     private static bool Stack(Instruction instruction, Mnemonic mnemonic) =>
         instruction.Mnemonic == mnemonic && instruction.Op0Kind == OpKind.Register &&
