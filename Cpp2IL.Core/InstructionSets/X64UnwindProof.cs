@@ -59,6 +59,36 @@ internal static class X64UnwindProof
             return new(SpanKind.NoEntry, start, end);
         }
 
+        // Immutable literal evidence must stay inside one readable, file-backed data section.
+        internal int MapReadOnlyData(ulong address, uint length)
+        {
+            if (length == 0 || address < _imageBase || address - _imageBase >= _imageSize ||
+                length > _imageSize - (address - _imageBase))
+                return -1;
+            var rva = checked((uint)(address - _imageBase));
+            foreach (var section in _sections)
+                if (rva >= section.Rva && (ulong)rva + length <= (ulong)section.Rva + section.VirtualSize)
+                {
+                    // IMAGE_SCN_MEM_READ is required; WRITE and EXECUTE are outside this scope.
+                    if ((section.Characteristics & 0xE0000000) != 0x40000000)
+                        return -1;
+                    return Map(_sections, rva, length, false);
+                }
+            return -1;
+        }
+
+        // A semantic helper matcher can additionally bind the decoded native prolog to
+        // its exact unwind operations. The reader does not know any helper-specific shape.
+        internal bool MatchesUnwind(ulong start, ulong end, byte prologSize, byte frameRegister, ReadOnlySpan<byte> codes)
+        {
+            var span = ClassifySpan(start, end);
+            if (span.Kind != SpanKind.HandlerFree || span.Start != start)
+                return false;
+            var function = _functions[Find(checked((uint)(start - _imageBase)))];
+            return function.Info!.PrologSize == prologSize && function.Info.FrameRegister == frameRegister &&
+                   function.Info.Codes.AsSpan().SequenceEqual(codes);
+        }
+
         // First record whose end lies beyond the requested PC. All records are sorted and
         // disjoint, so this also distinguishes a gap from an interior or cross-function span.
         private int Find(uint rva)

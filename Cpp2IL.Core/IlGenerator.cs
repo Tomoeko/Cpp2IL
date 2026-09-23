@@ -78,6 +78,8 @@ public static partial class IlGenerator
 
     public static void GenerateIl(MethodAnalysisContext context, MethodDefinition definition)
     {
+        ValidateCallSemantics(context);
+
         // Diagnose retained lifting failures before local typing. An unsupported operation
         // often also leaves its result untyped; that secondary error must not hide the cause.
         var unsupported = context.ControlFlowGraph!.Instructions.Where(i =>
@@ -411,6 +413,9 @@ public static partial class IlGenerator
                 if (instruction.Operands[0] is not MethodAnalysisContext targetMethod)
                     throw new DecompilerException($"Call target is unresolved: {instruction.Operands[0]}");
 
+                if (instruction.CallSemantics == CallSemantics.NullCheckedInstance)
+                    ValidateNullCheckedParameterTypes(instruction, locals);
+
                 var importedMethod = targetMethod.ToMethodDescriptor();
 
                 var thisParamIndex = instruction.OpCode == OpCode.Call ? 2 : 1;
@@ -439,7 +444,8 @@ public static partial class IlGenerator
                         throw new DecompilerException($"Call argument {i} is unresolved");
                 }
 
-                instructions.Add(CilOpCodes.Call, importedMethod);
+                instructions.Add(instruction.CallSemantics == CallSemantics.NullCheckedInstance
+                    ? CilOpCodes.Callvirt : CilOpCodes.Call, importedMethod);
 
                 // the lifter's guess at whether the callee returns anything can disagree with the
                 // signature we later resolved, so go by the signature and balance the stack

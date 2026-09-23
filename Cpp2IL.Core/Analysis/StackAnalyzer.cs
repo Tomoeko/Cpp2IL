@@ -40,7 +40,7 @@ public class StackAnalyzer
         // while a proved throw unwinds it. Inspect each path without merging their deltas.
         foreach (var predecessor in graph.ExitBlock.Predecessors)
         {
-            if (predecessor.Instructions.LastOrDefault()?.OpCode == OpCode.Throw ||
+            if (predecessor.Instructions.LastOrDefault()?.OpCode is OpCode.Throw or OpCode.RuntimeNullThrow ||
                 !analyzer._outGoingState.TryGetValue(predecessor, out var outDelta) || outDelta.Size == 0)
                 continue;
             var outText = outDelta.Size < 0 ? "-" + (-(long)outDelta.Size).ToString("X") : outDelta.Size.ToString("X");

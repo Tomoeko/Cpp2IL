@@ -14,6 +14,18 @@ public class Instruction : IOperand
     /// <summary>Native integer operand width in bits; zero means unspecified. This is not the width of a Boolean result.</summary>
     public int IntegerBitWidth { get; set; }
 
+    /// <summary>Direct call, or an instance call retaining a proved runtime receiver check.</summary>
+    public CallSemantics CallSemantics
+    {
+        get;
+        set
+        {
+            if (value != CallSemantics.Direct && (value != CallSemantics.NullCheckedInstance || !IsCall))
+                throw new InvalidOperationException("Only a managed call can retain a runtime null-check marker");
+            field = value;
+        }
+    }
+
     public OpCode OpCode
     {
         get;
@@ -21,6 +33,8 @@ public class Instruction : IOperand
         {
             if (field == value)
                 return;
+            if (CallSemantics != CallSemantics.Direct && value is not (OpCode.Call or OpCode.CallVoid))
+                throw new InvalidOperationException("A null-checked call cannot lose its invocation semantics");
 
             field = value;
             ResetSources();
@@ -37,7 +51,7 @@ public class Instruction : IOperand
     public bool IsFallThrough =>
         OpCode switch
         {
-            OpCode.Return or OpCode.Jump or OpCode.ConditionalJump or OpCode.IndirectJump or OpCode.Throw => false,
+            OpCode.Return or OpCode.Jump or OpCode.ConditionalJump or OpCode.IndirectJump or OpCode.Throw or OpCode.RuntimeNullThrow => false,
             _ => true
         };
 
@@ -207,23 +221,24 @@ public class Instruction : IOperand
 
     public override string ToString()
     {
+        var opcodeText = CallSemantics == CallSemantics.Direct ? OpCode.ToString() : $"{OpCode} [{CallSemantics}]";
         if (OpCode == OpCode.Jump && _operands[0] is Immediate jumpTarget)
-            return $"{Index} {OpCode} {jumpTarget.Value:X4}";
+            return $"{Index} {opcodeText} {jumpTarget.Value:X4}";
         if (OpCode == OpCode.ConditionalJump && _operands[0] is Immediate jumpTarget2)
-            return $"{Index} {OpCode} {jumpTarget2.Value:X4}, {FormatOperand(_operands[1])}";
+            return $"{Index} {opcodeText} {jumpTarget2.Value:X4}, {FormatOperand(_operands[1])}";
 
         if ((OpCode is OpCode.CallVoid or OpCode.Call) && _operands[0] is Immediate callTarget)
         {
             var remainingOperands = string.Join(", ", _operands.Skip(1).Select(FormatOperand));
             return string.IsNullOrEmpty(remainingOperands)
-                ? $"{Index} {OpCode} {callTarget.Value:X4}"
-                : $"{Index} {OpCode} {callTarget.Value:X4}, {remainingOperands}";
+                ? $"{Index} {opcodeText} {callTarget.Value:X4}"
+                : $"{Index} {opcodeText} {callTarget.Value:X4}, {remainingOperands}";
         }
 
         var formattedOperands = string.Join(", ", _operands.Select(FormatOperand));
         return string.IsNullOrEmpty(formattedOperands)
-            ? $"{Index} {OpCode}"
-            : $"{Index} {OpCode} {formattedOperands}";
+            ? $"{Index} {opcodeText}"
+            : $"{Index} {opcodeText} {formattedOperands}";
     }
 
     private static string FormatOperand(IOperand operand)
@@ -263,7 +278,7 @@ public class Instruction : IOperand
         if (OpCode != other.OpCode)
             return false;
 
-        if (IntegerBitWidth != other.IntegerBitWidth)
+        if (IntegerBitWidth != other.IntegerBitWidth || CallSemantics != other.CallSemantics)
             return false;
 
         if (Index != other.Index)

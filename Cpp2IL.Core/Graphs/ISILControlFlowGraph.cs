@@ -191,7 +191,7 @@ public class ISILControlFlowGraph
     }
 
     /// <summary>
-    /// A call rewritten to Throw may be inside a merged block. Split its suffix before cutting
+    /// A call rewritten to an exceptional terminator may be inside a merged block. Split its suffix before cutting
     /// the fallthrough edge so alternate entries survive, and keep SSA phi inputs aligned.
     /// </summary>
     public void NormalizeThrowTerminators()
@@ -200,7 +200,7 @@ public class ISILControlFlowGraph
         for (var index = 0; index < Blocks.Count; index++)
         {
             var block = Blocks[index];
-            var throwIndex = block.Instructions.FindIndex(i => i.OpCode == OpCode.Throw);
+            var throwIndex = block.Instructions.FindIndex(i => i.OpCode is OpCode.Throw or OpCode.RuntimeNullThrow);
             if (throwIndex < 0)
                 continue;
             if (throwIndex + 1 < block.Instructions.Count)
@@ -408,7 +408,8 @@ public class ISILControlFlowGraph
                 case OpCode.CallVoid:
                 case OpCode.Return:
                 case OpCode.Throw:
-                    var isReturn = instructions[i].OpCode is OpCode.Return or OpCode.Throw;
+                case OpCode.RuntimeNullThrow:
+                    var isReturn = instructions[i].OpCode is OpCode.Return or OpCode.Throw or OpCode.RuntimeNullThrow;
 
                     currentBlock.AddInstruction(instructions[i]);
 

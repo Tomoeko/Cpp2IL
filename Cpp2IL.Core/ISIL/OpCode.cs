@@ -169,4 +169,10 @@ public enum OpCode
     /// Models result bits under masked floating exceptions, not MXCSR status/control effects.
     /// </summary>
     FloatTruncateSigned,
+    /// <summary>
+    /// Nonreturning target-runtime NullCheck failure; op1 is validated RuntimeNullThrowEvidence.
+    /// This is not ordinary managed construction/throw. It must be coalesced into an equivalent
+    /// implicit managed receiver check; any surviving instruction is a strict emission failure.
+    /// </summary>
+    RuntimeNullThrow,
 }

@@ -57,12 +57,11 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var addresses = new List<ulong>();
 
         var nativeInstructions = X86Utils.Iterate(context).ToArray();
-        if (X86CallerExceptionRegionProof.Check(context, nativeInstructions, new HashSet<ulong>()) is { } exceptionRegionFailure)
-            return [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(exceptionRegionFailure))];
+        var noReturnCalls = new HashSet<ulong>();
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
-            return integerExtension;
+            return QualifyExceptionRegions(integerExtension);
         if (X86ScalarTruncationProof.TryLift(context, nativeInstructions) is { } scalarTruncation)
-            return scalarTruncation;
+            return QualifyExceptionRegions(scalarTruncation);
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
         var shiftCountExtensions = X86ShiftCountExtensionProof.Find(context, nativeInstructions);
         var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);
@@ -72,10 +71,16 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         {
             if (metadataGuard?.RemovedAddresses.Contains(instruction.IP) == true)
                 continue;
+            var firstLiftedIndex = instructions.Count;
             ConvertInstructionStatement(instruction, instructions, addresses, context,
                 singleWidthDividends.Contains(instruction.IP), shiftCountExtensions.Contains(instruction.IP));
+            if (instruction.Code == Code.Call_rel32_64 &&
+                instructions.Skip(firstLiftedIndex).Any(lifted => lifted.OpCode == ISIL.OpCode.RuntimeNullThrow))
+                noReturnCalls.Add(instruction.IP);
         }
 
+        if (X86CallerExceptionRegionProof.Check(context, nativeInstructions, noReturnCalls) is { } exceptionRegionFailure)
+            return [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(exceptionRegionFailure))];
         X86BodyBoundary.AppendFallthroughFailure(instructions);
 
         // fix branches
@@ -102,6 +107,11 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         }
 
         return instructions;
+
+        List<ISIL.Instruction> QualifyExceptionRegions(List<ISIL.Instruction> lifted)
+            => X86CallerExceptionRegionProof.Check(context, nativeInstructions, noReturnCalls) is { } failure
+                ? [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(failure))]
+                : lifted;
     }
 
     private static ISIL.Register? ReturnRegisterClobberedBy(MethodAnalysisContext callee)
@@ -678,6 +688,14 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 {
                     Add(instruction.IP, ISIL.OpCode.NotImplemented,
                         new ISIL.StringLiteral("Native call prefixes require independent semantics: " + FormatInstruction(instruction)));
+                    break;
+                }
+                if (instruction.Code == Code.Call_rel32_64 &&
+                    X86RuntimeNullThrowProof.TryIdentify(context.AppContext, instruction.NearBranchTarget) is { } nullThrow)
+                {
+                    // Keep the target runtime operation opaque until a proved receiver call
+                    // preserves its implicit check. It has no standalone newobj/throw emission.
+                    Add(instruction.IP, ISIL.OpCode.RuntimeNullThrow, nullThrow);
                     break;
                 }
                 var target = instruction.NearBranchTarget;
