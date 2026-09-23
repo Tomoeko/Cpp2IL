@@ -653,6 +653,11 @@ internal static class Program
                 return -1;
             }
 #endif
+        catch (Exception e)
+        {
+            Logger.ErrorNewline($"Execution Failed: {e}");
+            return 1;
+        }
     }
 
     public static int MainWithArgs(Cpp2IlRuntimeArgs runtimeArgs)

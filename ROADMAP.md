@@ -51,6 +51,8 @@ The offline core suite now reuses a read-only public player model within three t
 
 Report registration now assigns sequential method ordinals without reading `ConcurrentDictionary.Count` for every method. A local synthetic 91,198-entry benchmark measured 0.79–0.80 seconds for repeated count reads and 0.005–0.006 seconds for sequential ordinals across warm trials. Both full private-input audits preserved every ordered method identity after the change; end-to-end audit times remain dominated by recovery and are not claimed to improve by the benchmark ratio.
 
+An exact-target negative source-export control with no configured reference assemblies now exits with status 1 while retaining its `SOURCE001` failure report. Unexpected CLI errors are logged as failed commands instead of terminating through an unhandled exception; this does not turn a failed export into a compilation result.
+
 Implemented evidence:
 
 - Recovery reports retain every input method, distinguish exclusions and failures, and reject detected incomplete recovery in strict mode. Labels and stack depth are checked separately from typed IL verification and behavior. Regression cases reject missing values and unsupported operations rather than inventing defaults.
