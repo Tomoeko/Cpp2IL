@@ -1,0 +1,38 @@
+"""Independent oracle for a signed 32-bit array element read."""
+
+import json
+
+
+def observations():
+    arrays = (
+        ("empty", []),
+        ("single", [-(1 << 31)]),
+        ("mixed", [-7, 0, 19, (1 << 31) - 1]),
+        ("null", None),
+    )
+    expected = []
+    for label, values in arrays:
+        length = len(values) if values is not None else 0
+        for index in (-(1 << 31), -1, 0, 1, length - 1, length, (1 << 31) - 1):
+            if values is None:
+                result, exception = None, "System.NullReferenceException"
+            elif index < 0 or index >= length:
+                result, exception = None, "System.IndexOutOfRangeException"
+            else:
+                result, exception = values[index], "none"
+            expected.append({"kind": label, "index": index, "result": result, "exception": exception})
+    return expected
+
+
+def verify(path, stage, version):
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report.get("unityVersion") != version or report.get("stage") != stage or report.get("profile") != "array-access":
+        raise ValueError("Array-access report has the wrong version, stage or profile")
+    if stage == "player" and report.get("platform") != "WindowsPlayer":
+        raise ValueError("Array-access native observations require a Windows player")
+    expected = observations()
+    if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
+        raise ValueError("Array-access behavior differs from the independent oracle")
+    return {"status": "passed", "observations": len(expected), "methods": 1,
+            "platform": report["platform"], "profile": "array-access",
+            "scope": "int-array reads, null and bounds failures; not whole-program equivalence"}
