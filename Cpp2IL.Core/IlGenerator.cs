@@ -18,7 +18,7 @@ using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core;
 
-public static class IlGenerator
+public static partial class IlGenerator
 {
     private const string HelpersNamespace = "Cpp2ILInjected";
     private const string HelpersTypeName = "Cpp2ILHelpers";
@@ -509,6 +509,10 @@ public static class IlGenerator
                     _ => CilOpCodes.Shl,
                 });
                 StoreToOperand(instruction.Operands[0], method, locals);
+                break;
+
+            case OpCode.FloatCompare:
+                EmitFloatingComparison(instruction, method, locals);
                 break;
 
             case OpCode.CheckEqual:

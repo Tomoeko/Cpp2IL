@@ -149,4 +149,10 @@ public enum OpCode
     DivideUnsigned,
     /// <summary>Unsigned integer remainder: op1 = op2 % op3; requires an established native width.</summary>
     ModuloUnsigned,
+
+    /// <summary>
+    /// Boolean scalar floating comparison: destination, left, right, width (32/64), outcome mask.
+    /// Mask bits select less=1, equal=2, greater=4, unordered=8. Width and mask are Immediate operands.
+    /// </summary>
+    FloatCompare,
 }

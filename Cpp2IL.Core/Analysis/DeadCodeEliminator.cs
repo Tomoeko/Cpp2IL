@@ -79,6 +79,11 @@ public static class DeadCodeEliminator
                 or OpCode.And or OpCode.Or or OpCode.Xor
                 or OpCode.Not or OpCode.Negate => true,
             var comparison when comparison.IsComparison() => true,
+            OpCode.FloatCompare => instruction is
+            {
+                IntegerBitWidth: 0,
+                Operands: [_, LocalVariable, LocalVariable, Immediate { Value: 32 or 64 }, Immediate { Value: >= 0 and <= 15 }]
+            },
             _ => false
         };
         if (!pureOperation)
