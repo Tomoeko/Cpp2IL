@@ -57,6 +57,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var addresses = new List<ulong>();
 
         var nativeInstructions = X86Utils.Iterate(context).ToArray();
+        if (X86CallerExceptionRegionProof.Check(context, nativeInstructions, new HashSet<ulong>()) is { } exceptionRegionFailure)
+            return [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(exceptionRegionFailure))];
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
             return integerExtension;
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
@@ -733,9 +735,6 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                         new ISIL.StringLiteral("Native call prefixes require independent semantics: " + FormatInstruction(instruction)));
                     break;
                 }
-                // We don't try and resolve which method is being called, but we do need to know how many parameters it has
-                // I would hope that all of these methods have the same number of arguments, else how can they be inlined?
-
                 var target = instruction.NearBranchTarget;
 
                 if (instruction.Op0Kind == OpKind.Register || instruction.Op0Kind == OpKind.Memory)

@@ -142,6 +142,8 @@ Native body boundaries also fail explicitly when no terminal path is proved, rat
 
 A separate scalar-truncation baseline preserves two binary64-to-signed-integer methods. The exact Windows editor and original Release player each pass 132 bit-pattern results across 66 inputs, including representable neighbors of both integer limits, infinities and quiet NaNs. Native inspection confirms the two register conversion/return bodies. Recovery and rebuilt-source acceptance for this scope remain pending.
 
+Exact-profile x64 recovery now checks the PE exception directory and every reachable native instruction before lifting. Malformed, chained or handler-bearing unwind regions remain unsupported; frame-free leaves require independent register and control-flow checks. Sixty-two focused checks pass, including two original native catch methods that the production lifter explicitly rejects. This protects reporting while catch/finally recovery remains unfinished. A separate null-throw helper investigation found constructor-exception suppression in the runtime; ordinary allocation/construction/throw lowering remains disabled until that behavior is preserved.
+
 Prioritize measured failure categories rather than adding broad pattern collections without evidence.
 
 | Feature group | Required focus |
