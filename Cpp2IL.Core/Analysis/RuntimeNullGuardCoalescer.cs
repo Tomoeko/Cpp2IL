@@ -31,19 +31,21 @@ internal static class RuntimeNullGuardCoalescer
                 Operation.Operands.Count != 2 ||
                 (StoredValue == null
                     ? Operation.Operands[0] is not LocalVariable destination ||
-                      !ReferenceEquals(destination.Type, ValueType) ||
+                      !NullCheckedCall.SameOrdinaryType(destination.Type, ValueType) ||
                       !ReferenceEquals(Operation.Operands[1], Access)
                     : !ReferenceEquals(Operation.Operands[0], Access) ||
                       !ReferenceEquals(Operation.Operands[1], StoredValue) ||
                       !ValidStoredValue(method)) ||
                 !ReferenceEquals(Access.Local, Receiver) ||
                 !ReferenceEquals(Access.Field, Field) || !ReferenceEquals(Receiver.Type, Owner) ||
-                !ReferenceEquals(Field.DeclaringType, Owner) || !ReferenceEquals(Field.FieldType, ValueType) ||
+                !ReferenceEquals(Field.DeclaringType, Owner) ||
+                !NullCheckedCall.SameOrdinaryType(Field.FieldType, ValueType) ||
                 Field.Attributes != Attributes || Field.IsStatic || Access.Offset != Offset || Field.Offset != Offset ||
                 RequireNativeBinding && !HasUnchangedNativeField(method, Access))
                 return false;
             if (ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemStringType) ||
-                ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemObjectType))
+                ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemObjectType) ||
+                IsInt32Array(ValueType))
                 return StoredValue == null &&
                        ProvedNativeReferenceFieldRead(method, Access) is { } referenceRead &&
                        ValidFieldReceiver(method, referenceRead.ReceiverField);
@@ -269,7 +271,7 @@ internal static class RuntimeNullGuardCoalescer
                         receiver.Type != null && NullCheckedCall.IsReferenceClass(receiver.Type) &&
                         ReferenceEquals(access.Field.DeclaringType, receiver.Type) &&
                         !access.Field.IsStatic && access.Offset >= 0 && access.Offset == access.Field.Offset &&
-                        ReferenceEquals(fieldDestination.Type, access.Field.FieldType) &&
+                        NullCheckedCall.SameOrdinaryType(fieldDestination.Type, access.Field.FieldType) &&
                         provesNativeField(access))
                     {
                         operation = instruction;
@@ -363,7 +365,8 @@ internal static class RuntimeNullGuardCoalescer
             ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 :
             ReferenceEquals(field.FieldType, types.SystemBooleanType) ? 8 : 0;
         var referenceRead = ReferenceEquals(field.FieldType, types.SystemStringType) ||
-                            ReferenceEquals(field.FieldType, types.SystemObjectType);
+                            ReferenceEquals(field.FieldType, types.SystemObjectType) ||
+                            IsInt32Array(field.FieldType);
         if (width == 8 && !HasProvedNativeZeroStore(method, access) &&
             !HasProvedNativeBooleanFieldRead(method, access))
             return false;
@@ -381,6 +384,10 @@ internal static class RuntimeNullGuardCoalescer
         var proof = X86ReferenceFieldReadProof.Find(method, X86Utils.Iterate(method).ToArray());
         return ReferenceEquals(proof?.Field, access.Field) ? proof : null;
     }
+
+    private static bool IsInt32Array(TypeAnalysisContext type) =>
+        type is SzArrayTypeAnalysisContext array &&
+        ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemInt32Type);
 
     private static bool HasProvedNativeZeroStore(MethodAnalysisContext method, FieldReference access)
     {

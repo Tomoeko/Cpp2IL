@@ -76,6 +76,20 @@ namespace RecoveryValidation
             outer.Inner = null;
             RecordObject(observations, "object-nested-null-inner", outer, null, true);
             RecordObject(observations, "object-nested-null-outer", null, null, true);
+            outer.Inner = box;
+            box.Numbers = new[] { int.MinValue, 0, int.MaxValue };
+            RecordArray(observations, "array-direct-values", box, box.Numbers, false);
+            RecordArray(observations, "array-nested-values", outer, box.Numbers, true);
+            box.Numbers = Array.Empty<int>();
+            RecordArray(observations, "array-direct-empty", box, box.Numbers, false);
+            RecordArray(observations, "array-nested-empty", outer, box.Numbers, true);
+            box.Numbers = null;
+            RecordArray(observations, "array-direct-null-value", box, null, false);
+            RecordArray(observations, "array-nested-null-value", outer, null, true);
+            RecordArray(observations, "array-direct-null-owner", null, null, false);
+            outer.Inner = null;
+            RecordArray(observations, "array-nested-null-inner", outer, null, true);
+            RecordArray(observations, "array-nested-null-outer", null, null, true);
             var sharedBoxPrefix = new[] { -31 };
             var sharedBoxSuffix = new[] { 37 };
             var sharedOuterPrefix = new[] { -41 };
@@ -132,6 +146,10 @@ namespace RecoveryValidation
         private static void RecordObject(List<object> observations, string kind, object owner, object expected, bool nested)
             => RecordCall(observations, kind, expected,
                 () => nested ? ((ReferenceOuter)owner).ReadObjectInner() : ReferenceReads.ReadObject((ReferenceBox)owner));
+
+        private static void RecordArray(List<object> observations, string kind, object owner, int[] expected, bool nested)
+            => RecordCall(observations, kind, expected,
+                () => nested ? ((ReferenceOuter)owner).ReadArrayInner() : ReferenceReads.ReadArray((ReferenceBox)owner));
 
         private static void RecordCall(List<object> observations, string kind, object expected, Func<object> read)
         {

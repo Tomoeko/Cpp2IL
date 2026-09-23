@@ -14,7 +14,7 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Binds an exact x64 null diamond to an ordinary string/object field load. One preceding
+/// Binds an exact x64 null diamond to a string, object or bounded array field load. One preceding
 /// reference-field load is allowed, but no intervening effects or alternative exits are.
 /// </summary>
 internal static class X86ReferenceFieldReadProof
@@ -40,7 +40,10 @@ internal static class X86ReferenceFieldReadProof
             !(rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_STRING &&
               ReferenceEquals(method.ReturnType, app.SystemTypes.SystemStringType) ||
               rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_OBJECT &&
-              ReferenceEquals(method.ReturnType, app.SystemTypes.SystemObjectType)) ||
+              ReferenceEquals(method.ReturnType, app.SystemTypes.SystemObjectType) ||
+              rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY &&
+              method.ReturnType is SzArrayTypeAnalysisContext array &&
+              ReferenceEquals(array.ElementType, app.SystemTypes.SystemInt32Type)) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             method.GenericParameters.Count != 0 ||
@@ -95,7 +98,7 @@ internal static class X86ReferenceFieldReadProof
 
         var fields = box.Fields.Where(field => !field.IsStatic &&
             field.Offset == shape.FieldOffset &&
-            ReferenceEquals(field.FieldType, method.ReturnType) &&
+            ISIL.NullCheckedCall.SameOrdinaryType(field.FieldType, method.ReturnType) &&
             field.BackingData?.Field.RawFieldType is { NumMods: 0, Byref: 0, Pinned: 0 } rawField &&
             rawField.Type == rawReturn.Type).ToArray();
         if (fields is not [{ } referenceField] || referenceField.Name != referenceField.DefaultName)
