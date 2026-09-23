@@ -227,6 +227,8 @@ Status: baselines measured; integration acceptance remains incomplete. Every run
 | Bounded signed `int` instance-field store | Independent | 4,300 | 7,864 | 81 | 479 |
 | Bounded `int[]` element store and terminal bounds exit | Private | 1,734 | 4,503 | 2 | 1,017 |
 | Bounded `int[]` element store and terminal bounds exit | Independent | 4,300 | 7,864 | 81 | 479 |
+| Bounded signed 64-bit instance-field access | Private | 1,734 | 4,503 | 2 | 1,017 |
+| Bounded signed 64-bit instance-field access | Independent | 4,300 | 7,864 | 81 | 479 |
 
 The integer-extension checkpoint authenticated prior inputs and preserved every selected and full-input method identity. Ten private and 300 independent methods previously marked emitted failed on unproved integer extensions. Two private and 95 independent partial methods became emitted solely because a native proof resolved their unused-receiver mapping warning. One additional private partial method failed on an unproved extension. The fallthrough boundary check became the first diagnostic for 490 private and 1,264 independent methods that already failed.
 
@@ -239,6 +241,8 @@ The authenticated refresh after the bounded instance-field proof again preserves
 An authenticated refresh after the parameter-supplied instance-field store proof preserves the same complete denominators and every selected disposition in both corpora. This extends only the controlled synthetic acceptance scope at this checkpoint. Both broad scopes still fail strict recovery and have no typed-IL, Unity compilation, native rebuild or behavioral equivalence result.
 
 The authenticated refresh after the bounded `int[]` store and terminal-helper boundary proof again preserves both complete denominators and every selected disposition. The controlled read/write fixture passes, while both broad scopes still fail strict recovery. Neither broad scope has typed-IL, Unity compilation, native rebuild or behavioral equivalence evidence from this refresh.
+
+The authenticated refresh after signed 64-bit field-access support preserves both complete denominators and every selected disposition again. The expanded controlled fixture passes all exact-target gates; both broad scopes still fail strict recovery and have no typed-IL, Unity compilation, native rebuild or behavioral equivalence result.
 
 - Run the user-supplied source/build pair locally as an independent validation case. Keep source/original assemblies inaccessible to the player-only recovery step, and use them afterwards for comparisons.
 - Validate the private target with the same reporting, compilation and behavioral gates to the extent an oracle is available. Without source or an equivalent oracle, report the narrower observed evidence honestly.
