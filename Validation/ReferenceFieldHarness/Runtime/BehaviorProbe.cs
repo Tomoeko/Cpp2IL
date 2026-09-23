@@ -13,9 +13,12 @@ namespace RecoveryValidation
             var observations = new List<object>();
             var box = new ReferenceBox();
             var outer = new ReferenceOuter { Inner = box };
+            var derivedBox = new DerivedBox { Marker = int.MinValue };
+            var derivedOuter = new DerivedOuter { Inner = derivedBox, Marker = long.MaxValue };
             observations.Add(new Dictionary<string, object>
             {
-                { "kind", "constructors" }, { "boxCreated", box != null }, { "outerCreated", outer != null }
+                { "kind", "constructors" }, { "boxCreated", box != null }, { "outerCreated", outer != null },
+                { "derivedBoxCreated", derivedBox != null }, { "derivedOuterCreated", derivedOuter != null }
             });
             var values = new[] { new string('q', 3), string.Empty, null };
             var labels = new[] { "value", "empty", "null-value" };
@@ -29,6 +32,19 @@ namespace RecoveryValidation
             outer.Inner = null;
             Record(observations, "nested-null-inner", outer, null, true);
             Record(observations, "nested-null-outer", null, null, true);
+            derivedBox.Text = new string('d', 4);
+            Record(observations, "direct-derived-value", derivedBox, derivedBox.Text, false);
+            Record(observations, "nested-derived-value", derivedOuter, derivedBox.Text, true);
+            derivedBox.Text = null;
+            Record(observations, "direct-derived-null-value", derivedBox, null, false);
+            Record(observations, "nested-derived-null-value", derivedOuter, null, true);
+            derivedOuter.Inner = null;
+            Record(observations, "nested-derived-null-inner", derivedOuter, null, true);
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "derived-layout" }, { "boxMarker", derivedBox.Marker },
+                { "outerMarker", derivedOuter.Marker }
+            });
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {

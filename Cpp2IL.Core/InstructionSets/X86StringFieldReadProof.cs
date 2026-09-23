@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
 using Iced.Intel;
@@ -69,8 +68,7 @@ internal static class X86StringFieldReadProof
         {
             if (method.IsStatic || method.Parameters.Count != 0 || definition.parameterCount != 0 ||
                 (definition.InternalParameterData?.Length ?? 0) != 0 ||
-                !ISIL.NullCheckedCall.IsReferenceClass(method.DeclaringType) ||
-                (method.DeclaringType.Attributes & TypeAttributes.Sealed) == 0)
+                !ISIL.NullCheckedCall.IsReferenceClass(method.DeclaringType))
                 return null;
             var parents = method.DeclaringType.Fields.Where(field => !field.IsStatic &&
                 field.Offset == shape.ReceiverOffset &&
@@ -90,7 +88,6 @@ internal static class X86StringFieldReadProof
         if (box.Definition is not { GenericContainer: null } ||
             box.IsGenericInstance || box.GenericParameters.Count != 0 ||
             box.Attributes != box.DefaultAttributes ||
-            (box.Attributes & TypeAttributes.Sealed) == 0 ||
             !ISIL.NullCheckedCall.IsReferenceClass(box))
             return null;
 

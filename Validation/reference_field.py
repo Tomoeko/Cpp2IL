@@ -4,7 +4,8 @@ import json
 
 
 def observations():
-    expected = [{"kind": "constructors", "boxCreated": True, "outerCreated": True}]
+    expected = [{"kind": "constructors", "boxCreated": True, "outerCreated": True,
+                 "derivedBoxCreated": True, "derivedOuterCreated": True}]
     for label, value in (("value", "qqq"), ("empty", ""), ("null-value", None)):
         for prefix in ("direct", "nested"):
             expected.append({"kind": prefix + "-" + label, "result": value,
@@ -12,6 +13,16 @@ def observations():
     for kind in ("direct-null-owner", "nested-null-inner", "nested-null-outer"):
         expected.append({"kind": kind, "result": None, "sameReference": False,
                          "exception": "System.NullReferenceException"})
+    for kind in ("direct-derived-value", "nested-derived-value"):
+        expected.append({"kind": kind, "result": "dddd", "sameReference": True,
+                         "exception": "none"})
+    for kind in ("direct-derived-null-value", "nested-derived-null-value"):
+        expected.append({"kind": kind, "result": None, "sameReference": True,
+                         "exception": "none"})
+    expected.append({"kind": "nested-derived-null-inner", "result": None,
+                     "sameReference": False, "exception": "System.NullReferenceException"})
+    expected.append({"kind": "derived-layout", "boxMarker": -(1 << 31),
+                     "outerMarker": (1 << 63) - 1})
     return expected
 
 
@@ -24,6 +35,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Reference-field behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 4,
+    return {"status": "passed", "observations": len(expected), "methods": 6,
             "platform": report["platform"], "profile": "reference-field",
             "scope": "direct and one-level nested string-field reads with null owners; not whole-program equivalence"}

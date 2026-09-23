@@ -2,12 +2,17 @@ using System.Runtime.CompilerServices;
 
 namespace ReferenceFieldFixture
 {
-    public sealed class ReferenceBox
+    public class ReferenceBox
     {
         public string Text;
     }
 
-    public sealed class ReferenceOuter
+    public sealed class DerivedBox : ReferenceBox
+    {
+        public int Marker;
+    }
+
+    public class ReferenceOuter
     {
         public ReferenceBox Inner;
 
@@ -16,6 +21,11 @@ namespace ReferenceFieldFixture
         {
             return Inner.Text;
         }
+    }
+
+    public sealed class DerivedOuter : ReferenceOuter
+    {
+        public long Marker;
     }
 
     public static class ReferenceReads
