@@ -49,6 +49,23 @@ internal static class X64UnwindProof
         internal Index(ulong imageBase, uint imageSize, Section[] sections, Function[] functions)
         { _imageBase = imageBase; _imageSize = imageSize; _sections = sections; _functions = functions; }
 
+        internal ulong ImageBase => _imageBase;
+
+        internal int MapReadOnlyRva(uint rva, uint length) => rva < _imageSize &&
+            _imageBase <= ulong.MaxValue - rva ? MapReadOnlyData(_imageBase + rva, length) : -1;
+
+        internal bool IsExecutableRva(uint rva) => rva < _imageSize && Map(_sections, rva, 1, true) >= 0;
+
+        internal bool IsReadableFileBackedRva(uint rva)
+        {
+            if (rva >= _imageSize || Map(_sections, rva, 1, false) < 0)
+                return false;
+            foreach (var section in _sections)
+                if (rva >= section.Rva && (ulong)rva < (ulong)section.Rva + section.VirtualSize)
+                    return (section.Characteristics & 0x40000000) != 0;
+            return false;
+        }
+
         internal SpanClassification ClassifySpan(ulong start, ulong end)
         {
             if (!TryRange(start, end, out var rva, out var endRva))

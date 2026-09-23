@@ -140,6 +140,103 @@ public class X64UnwindProofTests
             "Parsed evidence is an immutable snapshot of the input bytes.");
     }
 
+    [Test]
+    public void BoundedFrameHandlerMapsRemainStructuralEvidence()
+    {
+        var image = Eh4Image();
+        var index = X64UnwindProof.Parse(image)!;
+        var region = index.GetHandler(ImageBase + 0x1000);
+        Assert.That(region, Is.Not.Null);
+        var map = X64Eh4MapProof.Parse(image, index, region!.Value);
+        Assert.That(map, Is.Not.Null);
+        Assert.That(map!.UnwindActions, Is.EqualTo(new[]
+        {
+            new X64Eh4MapProof.UnwindAction(1, 0, null, null),
+            new X64Eh4MapProof.UnwindAction(2, 0, null, null),
+        }));
+        Assert.That(map.TryBlocks, Has.Count.EqualTo(1));
+        Assert.That(map.TryBlocks[0].Handlers, Has.Count.EqualTo(1));
+        Assert.That(map.TryBlocks[0].Handlers[0].FuncletRva, Is.EqualTo(0x1300));
+        Assert.That(map.TryBlocks[0].Handlers[0].ContinuationRvas, Is.EqualTo(new uint[] { 0x1002 }));
+        Assert.That(map.IpStates, Is.EqualTo(new[] { new X64Eh4MapProof.IpState(0x1002, 0) }));
+        Assert.That(X64Eh4MapProof.Parse(image, index, region.Value with { End = region.Value.Start }), Is.Null);
+        Assert.That(index.ClassifySpan(ImageBase + 0x1000, ImageBase + 0x1001).Kind,
+            Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+    }
+
+    [TestCase(1)]
+    [TestCase(2)]
+    [TestCase(3)]
+    [TestCase(4)]
+    [TestCase(5)]
+    public void FrameHandlerCompressedCountsUseTheirDeclaredWidth(int width)
+    {
+        var image = Eh4Image();
+        image.AsSpan(0x930, 8).Clear();
+        switch (width)
+        {
+            case 1: image[0x930] = 4; break;
+            case 2: image[0x930] = 9; break;
+            case 3: image[0x930] = 19; break;
+            case 4: image[0x930] = 39; break;
+            case 5: image[0x930] = 15; U32(image, 0x931, 2); break;
+        }
+        image[0x930 + width] = 8;
+        image[0x931 + width] = 16;
+        var index = X64UnwindProof.Parse(image)!;
+        var region = index.GetHandler(ImageBase + 0x1000)!.Value;
+        Assert.That(X64Eh4MapProof.Parse(image, index, region)!.UnwindActions, Has.Count.EqualTo(2));
+    }
+
+    [TestCase("writable-maps")]
+    [TestCase("bad-function-info")]
+    [TestCase("unsupported-header")]
+    [TestCase("oversized-count")]
+    [TestCase("nonexecutable-funclet")]
+    [TestCase("out-of-range-ip")]
+    public void MalformedFrameHandlerMapsCannotEstablishStructure(string defect)
+    {
+        var image = Eh4Image();
+        switch (defect)
+        {
+            case "writable-maps": U32(image, 0x1FC, 0xC0000040); break;
+            case "bad-function-info": U32(image, 0x90C, 0x1300); break;
+            case "unsupported-header": image[0x920] = 0x39; break;
+            case "oversized-count":
+                image[0x930] = 0x0F;
+                U32(image, 0x931, 65537);
+                break;
+            case "nonexecutable-funclet": U32(image, 0x962, 0x3060); break;
+            case "out-of-range-ip": image[0x951] = 0x40; break;
+        }
+        var index = X64UnwindProof.Parse(image)!;
+        var region = index.GetHandler(ImageBase + 0x1000);
+        if (defect == "writable-maps")
+            Assert.That(region, Is.Null);
+        else
+            Assert.That(X64Eh4MapProof.Parse(image, index, region!.Value), Is.Null);
+    }
+
+    private static byte[] Eh4Image()
+    {
+        var image = Image();
+        image[0x900] = 1 | 3 << 3;
+        U32(image, 0x908, 0x1300);
+        U32(image, 0x90C, 0x3020); // handler data points to the frame-handler map
+        image[0x920] = 0x38;
+        U32(image, 0x921, 0x3030);
+        U32(image, 0x925, 0x3040);
+        U32(image, 0x929, 0x3050);
+        image[0x930] = 4; image[0x931] = 8; image[0x932] = 16;
+        image[0x940] = 2; image[0x941] = 0; image[0x942] = 0; image[0x943] = 2;
+        U32(image, 0x944, 0x3060);
+        image[0x950] = 2; image[0x951] = 4; image[0x952] = 2;
+        image[0x960] = 2; image[0x961] = 0x10;
+        U32(image, 0x962, 0x1300);
+        image[0x966] = 4;
+        return image;
+    }
+
     private static byte[] Image()
     {
         var image = new byte[0xA00];

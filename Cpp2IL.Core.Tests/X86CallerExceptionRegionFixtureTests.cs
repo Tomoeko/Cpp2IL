@@ -5,6 +5,7 @@ using AssetRipper.Primitives;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Utils;
+using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core.Tests;
 
@@ -79,6 +80,14 @@ public class X86CallerExceptionRegionFixtureTests
                 Assert.That(evidence, Is.Not.Null);
                 Assert.That(evidence!.Value.Flags, Is.EqualTo(3));
                 Assert.That(index.MapReadOnlyData(evidence.Value.HandlerDataAddress, 1), Is.GreaterThanOrEqualTo(0));
+                var map = X64Eh4MapProof.Parse(((PE)app.Binary).GetRawBinaryContent(), index, evidence.Value);
+                Assert.That(map, Is.Not.Null);
+                Assert.That(map!.TryBlocks, Has.Count.EqualTo(1));
+                Assert.That(map.TryBlocks[0].Handlers, Has.Count.EqualTo(1));
+                Assert.That(map.IpStates, Has.Count.EqualTo(2));
+                Assert.That(map.UnwindActions, Has.Count.EqualTo(method.Name == "CatchZero" ? 2 : 3));
+                Assert.That(map.UnwindActions.Any(action => action.Kind != 0),
+                    Is.EqualTo(method.Name == "FinallyCount"));
                 var native = X86Utils.Iterate(method).ToArray();
                 Assert.That(X86CallerExceptionRegionProof.Check(method, native, new System.Collections.Generic.HashSet<ulong>()),
                     Does.Contain("unsupported native handlers"));
