@@ -155,4 +155,11 @@ public enum OpCode
     /// Mask bits select less=1, equal=2, greater=4, unordered=8. Width and mask are Immediate operands.
     /// </summary>
     FloatCompare,
+
+    /// <summary>
+    /// Truncate the source to its low sourceBits, then extend to resultBits: destination, source,
+    /// sourceBits (8/16/32), resultBits (32/64), signedFlag (0=zero fill, 1=sign fill).
+    /// Widths and signedFlag are Immediate operands; IntegerBitWidth remains zero.
+    /// </summary>
+    IntegerExtend,
 }

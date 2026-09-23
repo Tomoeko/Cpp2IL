@@ -235,6 +235,7 @@ public static class LocalVariables
         SeedNewobjResults(method);
         SeedMethodInfoTypes(method);
         SeedComparisonResults(method);
+        SeedIntegerExtensions(method);
         SeedFloatLiterals(method);
 
         // Everywhere there's a CallVoid after a Newobj, we can resolve the constructor call.
@@ -407,6 +408,14 @@ public static class LocalVariables
         }
 
         return changed;
+    }
+
+    // Explicit result metadata does not establish a source type or native read width.
+    private static void SeedIntegerExtensions(MethodAnalysisContext method)
+    {
+        foreach (var instruction in method.ControlFlowGraph!.Instructions)
+            if (IntegerExtension.TryGet(instruction, out var extension))
+                SetTypeIfUnknown((LocalVariable)instruction.Operands[0], extension.ResultType(method.AppContext.SystemTypes));
     }
 
     // A single propagation sweep over every move and phi. Returns whether it filled in any type.

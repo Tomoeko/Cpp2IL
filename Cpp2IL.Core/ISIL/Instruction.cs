@@ -105,6 +105,7 @@ public class Instruction : IOperand
             case OpCode.DivideUnsigned:
             case OpCode.ModuloUnsigned:
             case OpCode.FloatCompare:
+            case OpCode.IntegerExtend:
             case OpCode.ShiftLeft:
             case OpCode.ShiftRight:
             case OpCode.ShiftRightUnsigned:
@@ -184,6 +185,8 @@ public class Instruction : IOperand
             OpCode.CallVoid or OpCode.Phi => _operands.Skip(1).ToList(),
             // Trailing width/mask immediates describe the predicate, rather than values being compared.
             OpCode.FloatCompare => _operands.Skip(1).Take(2).ToList(),
+            // Extension widths/sign describe the operation; only the value is a source.
+            OpCode.IntegerExtend => _operands.Skip(1).Take(1).ToList(),
             OpCode.CheckEqual or OpCode.CheckGreater or OpCode.CheckLess
                 or OpCode.CheckNotEqual or OpCode.CheckGreaterOrEqual or OpCode.CheckLessOrEqual
                 or OpCode.CheckLessUnsigned or OpCode.CheckGreaterUnsigned or OpCode.CheckLessOrEqualUnsigned or OpCode.CheckGreaterOrEqualUnsigned
