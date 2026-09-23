@@ -1,0 +1,3 @@
+<linker>
+  <assembly fullname="FinalizerFixture" preserve="all" />
+</linker>

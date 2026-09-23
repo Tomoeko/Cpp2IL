@@ -17,6 +17,12 @@ VERSION = "2021.3.35f1"
 ROOT = Path(__file__).resolve().parent.parent
 VALIDATION = ROOT / "Validation"
 VALUES = [-(2**31), -(2**31) + 1, -17, -1, 0, 1, 17, 2**31 - 2, 2**31 - 1]
+PROFILES = {
+    "arithmetic": {"assembly": "RecoveryFixture", "source": VALIDATION / "Fixture", "methods": 4},
+    "integers": {"assembly": "IntegerFixture", "source": VALIDATION / "IntegerFixture", "methods": 8},
+    "scalar-structs": {"assembly": "ScalarStructFixture", "source": VALIDATION / "ScalarStructFixture", "methods": 4},
+    "scalar-structs-negative": {"assembly": "ScalarStructNegativeFixture", "source": VALIDATION / "ScalarStructNegativeFixture", "methods": 3},
+}
 
 
 def write_json(path, value):
@@ -27,7 +33,13 @@ def int32(value):
     return (value + 2**31) % 2**32 - 2**31
 
 
-def verify_behavior(path, stage):
+def verify_behavior(path, stage, profile="arithmetic"):
+    if profile in ("scalar-structs", "scalar-structs-negative"):
+        return verify_scalar_struct_behavior(path, stage, profile)
+    if profile == "integers":
+        return verify_integer_behavior(path, stage)
+    if profile != "arithmetic":
+        raise ValueError("Unknown fixture profile")
     report = json.loads(path.read_text(encoding="utf-8"))
     if report["unityVersion"] != VERSION or report["stage"] != stage:
         raise ValueError("Behavior report has the wrong version or stage")
@@ -44,6 +56,74 @@ def verify_behavior(path, stage):
         raise ValueError("The behavioral run was not a Windows player")
     return {"status": "passed", "observations": len(expected), "methods": 3,
             "platform": report["platform"], "scope": "finite integer vectors; not a whole-program equivalence proof"}
+
+
+def integer_observations():
+    # Python integers retain every bit of UInt64 JSON numbers, including values above 2**53.
+    for width in (32, 64):
+        values = [0, 1, 2**(width - 1) - 1, 2**(width - 1), 2**width - 1]
+        for left in values:
+            for right in values:
+                yield {"width": width, "left": left, "right": right,
+                       "less": left < right, "greater": left > right,
+                       "lessOrEqual": left <= right, "greaterOrEqual": left >= right}
+
+
+def verify_integer_behavior(path, stage):
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report["unityVersion"] != VERSION or report["stage"] != stage or report.get("profile") != "integers":
+        raise ValueError("Integer behavior report has the wrong version, stage or profile")
+    observations = report["observations"]
+    if not isinstance(observations, list) or any(not isinstance(item, dict) for item in observations):
+        raise ValueError("Integer behavior observations must be a list of objects")
+    # Avoid Python's permissive 1 == True and float/integer equality accepting a malformed report.
+    for observation in observations:
+        if any(type(observation.get(key)) is not int for key in ("width", "left", "right")):
+            raise ValueError("Integer observation operands must be exact JSON integers")
+        if any(type(observation.get(key)) is not bool for key in ("less", "greater", "lessOrEqual", "greaterOrEqual")):
+            raise ValueError("Integer comparison observations must be JSON booleans")
+    expected = list(integer_observations())
+    if observations != expected:
+        raise ValueError("Behavior differs from the independent unsigned integer oracle")
+    if stage == "player" and report["platform"] != "WindowsPlayer":
+        raise ValueError("The behavioral run was not a Windows player")
+    return {"status": "passed", "observations": len(expected), "predicateChecks": len(expected) * 4,
+            "methods": 8, "platform": report["platform"], "profile": "integers",
+            "scope": "finite UInt32/UInt64 comparison vectors; not a whole-program equivalence proof"}
+
+
+def scalar_struct_observations(profile):
+    if profile == "scalar-structs":
+        for item in integer_observations():
+            width, left, right = item["width"], item["left"], item["right"]
+            yield {"width": width, "left": left, "right": right, "equal": left == right,
+                   "sum": (left + right) % 2**width}
+    else:
+        for case, count in (("padded", 2), ("multiple", 2), ("reference", 3)):
+            for left in range(count):
+                for right in range(count):
+                    yield {"case": case, "left": left, "right": right, "equal": left == right}
+
+
+def verify_scalar_struct_behavior(path, stage, profile):
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if report["unityVersion"] != VERSION or report["stage"] != stage or report.get("profile") != profile:
+        raise ValueError("Scalar struct report has the wrong version, stage or profile")
+    observations = report["observations"]
+    if not isinstance(observations, list) or any(not isinstance(item, dict) for item in observations):
+        raise ValueError("Scalar struct observations must be a list of objects")
+    integer_keys = ("width", "left", "right", "sum") if profile == "scalar-structs" else ("left", "right")
+    for observation in observations:
+        if any(type(observation.get(key)) is not int for key in integer_keys) or type(observation.get("equal")) is not bool:
+            raise ValueError("Scalar struct observations require exact JSON integers and booleans")
+    expected = list(scalar_struct_observations(profile))
+    if observations != expected:
+        raise ValueError("Behavior differs from the independent scalar struct oracle")
+    if stage == "player" and report["platform"] != "WindowsPlayer":
+        raise ValueError("The behavioral run was not a Windows player")
+    return {"status": "passed", "observations": len(expected), "methods": PROFILES[profile]["methods"],
+            "platform": report["platform"], "profile": profile,
+            "scope": "finite struct value vectors; not a whole-program equivalence proof"}
 
 
 def copy_sources(source, destination):
@@ -65,12 +145,26 @@ def copy_sources(source, destination):
     return copied
 
 
-def run_process(command, environment, log, timeout):
+def copy_harness(profile, destination):
+    if profile == "arithmetic":
+        return copy_sources(VALIDATION / "Harness", destination)
+    harness = {"integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
+               "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
+    copied = copy_sources(VALIDATION / harness, destination)
+    for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):
+        copied.append({**item, "path": "Editor/" + item["path"]})
+    serializer = VALIDATION / "Harness" / "Runtime" / "ReportJson.cs"
+    shutil.copyfile(serializer, destination / "Runtime" / "ReportJson.cs")
+    copied.append({"path": "Runtime/ReportJson.cs", "sha256": hashlib.sha256(serializer.read_bytes()).hexdigest()})
+    return sorted(copied, key=lambda item: item["path"])
+
+
+def run_process(command, environment, log, timeout, cwd=None):
     started = time.monotonic()
     timed_out = False
     with log.open("wb") as output:
         process = subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT,
-                                   start_new_session=True)
+                                   start_new_session=True, cwd=cwd)
         try:
             code = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -117,13 +211,18 @@ def main():
     parser.add_argument("--wine", help="Wine executable, required for a Windows editor on a non-Windows host")
     parser.add_argument("--toolchain-root", type=Path,
                         help="Optional VS2019 toolchain root containing VC/Tools/MSVC and Windows Kits/10")
-    parser.add_argument("--source-dir", type=Path, default=VALIDATION / "Fixture",
-                        help="Replacement source must expose the same RecoveryFixture API and assembly")
+    parser.add_argument("--profile", choices=PROFILES, default="arithmetic",
+                        help="Independent selected-assembly fixture contract")
+    parser.add_argument("--source-dir", type=Path,
+                        help="Replacement source must expose the selected profile's API and assembly")
     parser.add_argument("--run-dir", type=Path, required=True, help="New directory under this repository's ignored Files/")
     parser.add_argument("--stage", choices=["compile", "build", "run"], default="compile",
                         help="run builds and executes; build also compiles; every invocation uses a fresh project")
     parser.add_argument("--timeout", type=int, default=600, help="Per-process deadline in seconds")
     args = parser.parse_args()
+    profile = PROFILES[args.profile]
+    if args.source_dir is None:
+        args.source_dir = profile["source"]
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     editor = args.editor.expanduser().resolve()
@@ -161,7 +260,8 @@ def main():
 
     run_dir.mkdir(parents=True)
     receipt = {"unityVersionRequired": VERSION, "requestedStage": args.stage,
-               "sourceKind": "synthetic-baseline" if args.source_dir.resolve() == (VALIDATION / "Fixture").resolve() else "replacement-source",
+               "profile": args.profile, "assembly": profile["assembly"],
+               "sourceKind": "synthetic-baseline" if args.source_dir.resolve() == profile["source"].resolve() else "replacement-source",
                "status": "running", "stages": {
                    "unityCompilation": {"status": "unverified"},
                    "editorBehavior": {"status": "unverified"},
@@ -202,8 +302,8 @@ def main():
         (project / "Reports").mkdir()
         (project / "ProjectSettings" / "ProjectVersion.txt").write_text("m_EditorVersion: " + VERSION + "\n", encoding="utf-8")
         write_json(project / "Packages" / "manifest.json", {"dependencies": {}})
-        receipt["sourceFiles"] = copy_sources(args.source_dir.resolve(), project / "Assets" / "RecoveryFixture")
-        receipt["harnessFiles"] = copy_sources(VALIDATION / "Harness", project / "Assets" / "Validation")
+        receipt["sourceFiles"] = copy_sources(args.source_dir.resolve(), project / "Assets" / profile["assembly"])
+        receipt["harnessFiles"] = copy_harness(args.profile, project / "Assets" / "Validation")
         prefix_command = [args.wine, str(editor)] if args.wine else [str(editor)]
         common = prefix_command + ["-batchmode", "-nographics", "-quit", "-projectPath", target_path(project)]
         if args.stage != "compile":
@@ -218,7 +318,7 @@ def main():
 
         def behavior_stage(path, label, stage):
             try:
-                receipt["stages"][label] = verify_behavior(path, stage)
+                receipt["stages"][label] = verify_behavior(path, stage, args.profile)
             except ValueError as error:
                 receipt["stages"][label] = {"status": "failed", "reason": str(error)}
                 raise

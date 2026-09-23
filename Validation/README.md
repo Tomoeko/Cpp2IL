@@ -70,12 +70,41 @@ Raw receipts contain local paths and input hashes and must stay in `Files/`.
 Publish only sanitized stage summaries. Editor-only results, Windows build
 results and native behavioral results must remain distinct in progress reports.
 
+For the complete player-only round trip, build Cpp2IL first, then run:
+
+```sh
+python3 Validation/run_roundtrip.py --editor "$UNITY_WINDOWS_EDITOR" --wine "$WINE" \
+  --toolchain-root "$WINDOWS_TOOLCHAIN" \
+  --cpp2il Cpp2IL/bin/Release/net10.0/Cpp2IL.dll \
+  --reference-dir "$UNITY_API_REFERENCES" --install-ilverify \
+  --run-dir Files/validation/roundtrip
+```
+
+This creates the original fixture player, isolates only its binary and metadata
+for strict source recovery, verifies recovered IL with the pinned verifier, then
+compiles, rebuilds and runs the generated C# with the independent behavior driver.
+All four fixture methods, including the constructor, must be emitted without
+detected degradation. Original and rebuilt player settings must match. Tool files
+are snapshotted and hashed so another local build cannot change the run midway.
+`roundtrip.json` links the separate stage results; declaration fidelity and asset
+bindings are not inferred from these behavioral checks.
+
+To reuse an existing successful original fixture build, add
+`--baseline-run Files/validation/source-player`. The runner verifies the prior
+build profile, native behavior result and player-input hashes before use. Every
+recovery and replacement project still uses a fresh directory. Reference paths
+must contain matching target API assemblies, never original application DLLs.
+
 Run the bounded harness checks without Unity or Wine:
 
 ```sh
-python3 Validation/test_fixture_harness.py
+python3 -m unittest discover -s Validation -p 'test_*fixture*.py'
+python3 Validation/test_declaration_comparer.py
 ```
 
 They protect source/oracle separation, player-input filtering, incomplete
 behavior-report refusal and the distinction between a deadline and a successful
 process exit. Actual Editor/player validation remains a separate integration run.
+These public checks also run in the fork's ordinary CI; they require no private
+inputs or licensed editor. The declaration comparer is a read-only managed
+metadata tool, with separate declaration, stripping and body-validation scopes.

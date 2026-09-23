@@ -109,6 +109,10 @@ jobs:
                 run: dotnet build -c Release /p:VersionSuffix=${{ steps.set-vars.outputs.versionString }}
             -   name: Run Tests
                 run: dotnet test -c Release --no-build --no-restore /p:VersionSuffix=${{ steps.set-vars.outputs.versionString }} --coverlet --coverlet-output-format lcov --coverlet-exclude-by-attribute "LibCpp2IL.Coverage.NoCoverageAttribute"
+            -   name: Check synthetic validation boundaries
+                run: |
+                    python3 -m unittest discover -s Validation -p 'test_*fixture*.py'
+                    python3 Validation/test_declaration_comparer.py
             -   name: Upload Coverage
                 if: github.repository == 'SamboyCoding/Cpp2IL'
                 uses: coverallsapp/github-action@v2.3.8

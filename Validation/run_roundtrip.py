@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Run the synthetic player-only recovery, IL verification and exact Unity round trip."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+from run_fixture import ROOT, VERSION, run_process, write_json
+
+
+PROFILES = {"arithmetic": ("RecoveryFixture", 4), "integers": ("IntegerFixture", 8),
+            "scalar-structs": ("ScalarStructFixture", 4)}
+PLAYER_FILES = ("GameAssembly.dll", "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat")
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def checked_baseline(directory, profile):
+    receipt = json.loads((directory / "receipt.json").read_text(encoding="utf-8"))
+    if receipt.get("status") != "passed" or receipt.get("sourceKind") != "synthetic-baseline":
+        raise ValueError("Baseline must be a successful original synthetic fixture run")
+    if receipt.get("profile", "arithmetic") != profile:
+        raise ValueError("Baseline fixture profile does not match the requested round trip")
+    build = receipt["stages"]["nativeBuild"]
+    expected = {"unityVersion": VERSION, "target": "StandaloneWindows64", "backend": "IL2CPP",
+                "compilerConfiguration": "Release", "development": False, "errors": 0,
+                "result": "Succeeded"}
+    if any(build.get(key) != value for key, value in expected.items()):
+        raise ValueError("Baseline native build does not match the required profile")
+    if receipt["stages"]["playerBehavior"].get("status") != "passed":
+        raise ValueError("Baseline must have passed its native behavior checks")
+    files = {item["path"]: item for item in receipt["playerInputs"]}
+    for relative in PLAYER_FILES:
+        if digest(directory / "player-input" / relative) != files[relative]["sha256"]:
+            raise ValueError("Baseline player input changed since its build receipt")
+    return receipt
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--editor", type=Path, required=True)
+    parser.add_argument("--wine")
+    parser.add_argument("--toolchain-root", type=Path)
+    parser.add_argument("--cpp2il", type=Path, required=True, help="Built Cpp2IL.dll, executed with dotnet")
+    parser.add_argument("--dotnet", default="dotnet")
+    parser.add_argument("--reference-dir", action="append", type=Path, required=True)
+    parser.add_argument("--baseline-run", type=Path, help="Reuse a verified original synthetic baseline; otherwise build it")
+    parser.add_argument("--install-ilverify", action="store_true")
+    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--timeout", type=int, default=600, help="Per child-stage deadline in seconds")
+    parser.add_argument("--profile", choices=sorted(PROFILES), default="arithmetic")
+    args = parser.parse_args()
+    assembly, expected_methods = PROFILES[args.profile]
+    directory = args.run_dir.expanduser().resolve()
+    private = (ROOT / "Files").resolve()
+    if directory == private or private not in directory.parents or directory.exists():
+        parser.error("--run-dir must be a fresh child directory under Files/")
+    if subprocess.run(["git", "check-ignore", "--quiet", str(directory)], cwd=ROOT).returncode != 0:
+        parser.error("--run-dir must be ignored by Git")
+    if args.timeout <= 0 or not args.cpp2il.is_file():
+        parser.error("Provide a positive timeout and an existing built Cpp2IL.dll")
+    directory.mkdir(parents=True)
+    receipt = {"schemaVersion": 1, "status": "running", "scope": assembly, "profile": args.profile,
+               "unityVersion": VERSION, "recoveryInputs": "isolated player binary and metadata only",
+               "declarationFidelity": "unverified", "scriptAssetBindings": "out_of_scope",
+               "stages": {}, "commands": []}
+    # Snapshot the built tool and its adjacent managed dependencies so a concurrent repository
+    # build cannot change the recovery implementation halfway through a validation run.
+    tool_directory = directory / "tool"
+    tool_directory.mkdir()
+    receipt["toolFiles"] = []
+    for path in sorted(args.cpp2il.resolve().parent.iterdir()):
+        if path.is_file() and path.suffix in {".dll", ".json"}:
+            target = tool_directory / path.name
+            shutil.copyfile(path, target)
+            receipt["toolFiles"].append({"path": path.name, "sha256": digest(target)})
+    tool = tool_directory / args.cpp2il.name
+    receipt["commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    receipt["workingTreeDirty"] = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT))
+
+    def run(name, command, timeout=None):
+        # Cpp2IL discovers optional plugins relative to its current directory. Keep
+        # recovery in the owned tool snapshot so ambient plugins cannot alter it.
+        result = run_process(command, os.environ.copy(), directory / (name + ".log"), timeout or args.timeout,
+                             cwd=tool_directory if name == "recovery" else ROOT)
+        receipt["commands"].append({"stage": name, **result})
+        if result["timedOut"] or result["exitCode"] != 0:
+            raise ValueError(name + " failed or timed out; inspect its local log")
+
+    fixture_command = [sys.executable, str(ROOT / "Validation/run_fixture.py"),
+                       "--editor", str(args.editor.expanduser().resolve()), "--stage", "run", "--timeout", str(args.timeout),
+                       "--profile", args.profile]
+    if args.wine:
+        fixture_command += ["--wine", args.wine]
+    if args.toolchain_root:
+        fixture_command += ["--toolchain-root", str(args.toolchain_root.expanduser().resolve())]
+    try:
+        baseline = args.baseline_run.expanduser().resolve() if args.baseline_run else directory / "baseline"
+        if not args.baseline_run:
+            run("baseline", fixture_command + ["--run-dir", str(baseline)], args.timeout * 2 + 30)
+        original = checked_baseline(baseline, args.profile)
+        receipt["baselineReceipt"] = {"path": str(baseline / "receipt.json"), "sha256": digest(baseline / "receipt.json")}
+        receipt["stages"]["original"] = original["stages"]
+
+        # Only these two shipped inputs reach the recovery command. No source, generated C++,
+        # application managed oracle, debug symbols or analysis database is supplied.
+        player = directory / "recovery-input"
+        receipt["inputFiles"] = []
+        for relative in PLAYER_FILES:
+            source = baseline / "player-input" / relative
+            target = player / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            receipt["inputFiles"].append({"path": relative, "sha256": digest(target)})
+        references = [str(path.expanduser().resolve()) for path in args.reference_dir]
+        if any((Path(path) / (assembly + ".dll")).exists() for path in references):
+            raise ValueError("Reference directories must not contain the original application assembly")
+        recovered = directory / "recovered"
+        run("recovery", [args.dotnet, str(tool), "--force-binary-path", str(player / PLAYER_FILES[0]),
+                         "--force-metadata-path", str(player / PLAYER_FILES[1]), "--force-unity-version", VERSION,
+                         "--output-as", "cs_unity", "--unity-source-assemblies", assembly,
+                         "--unity-reference-dir", *references, "--strict-recovery", "--output-to", str(recovered)])
+        report = json.loads((recovered / "source-recovery-report.json").read_text(encoding="utf-8"))
+        methods = [method for method in report["Methods"] if method["AssemblyName"] == assembly]
+        if not report["AnalysisCompleted"] or len(methods) != expected_methods or any(method["Disposition"] != "Emitted" for method in methods):
+            raise ValueError("The selected fixture methods were not all recovered without detected degradation")
+        project = recovered / "UnityProject"
+        emission = json.loads((project / "source-emission-report.json").read_text(encoding="utf-8"))
+        if emission["SourceGeneration"] != "generated" or emission["Diagnostics"]:
+            raise ValueError("Source emission did not complete without diagnostics")
+        receipt["stages"]["recovery"] = {"status": "passed", "inputMethods": report["InputMethodCount"],
+                                           "selectedMethods": len(methods), "selectedUnresolved": 0}
+
+        verify = [sys.executable, str(ROOT / "Validation/verify_managed_il.py"), "--assembly",
+                  str(project / "RecoveredManaged" / (assembly + ".dll")), "--output-dir", str(directory / "il-verification")]
+        for reference in references:
+            verify += ["--reference-dir", reference]
+        if args.install_ilverify:
+            verify += ["--install-tool"]
+        run("il-verification", verify)
+        verification = json.loads((directory / "il-verification/result.json").read_text(encoding="utf-8"))
+        if verification["status"] != "passed":
+            raise ValueError("Typed IL verification did not pass")
+        receipt["stages"]["managedIl"] = {"status": "passed", "toolVersion": verification["actual_tool_version"]}
+
+        replacement = directory / "replacement"
+        run("replacement", fixture_command + ["--source-dir", str(project / "Assets/Recovered" / assembly),
+                                              "--run-dir", str(replacement)], args.timeout * 2 + 30)
+        rebuilt = json.loads((replacement / "receipt.json").read_text(encoding="utf-8"))
+        if rebuilt["status"] != "passed" or rebuilt["sourceKind"] != "replacement-source":
+            raise ValueError("Recovered-source fixture did not pass its independent gates")
+        settings = ("unityVersion", "target", "backend", "compilerConfiguration", "apiCompatibility", "stripping",
+                    "codeGeneration", "stripEngineCode", "scriptingDefineSymbols", "development")
+        if any(original["stages"]["nativeBuild"][key] != rebuilt["stages"]["nativeBuild"][key] for key in settings):
+            raise ValueError("Original and recovered native build settings differ")
+        receipt["stages"]["recovered"] = rebuilt["stages"]
+        receipt["artifacts"] = [{"path": str(path.relative_to(directory)), "sha256": digest(path)}
+                                for path in sorted(recovered.rglob("*")) if path.is_file()]
+        for item in receipt["inputFiles"]:
+            if digest(player / item["path"]) != item["sha256"]:
+                raise ValueError("Recovery input changed during validation")
+        for item in receipt["toolFiles"]:
+            if digest(tool_directory / item["path"]) != item["sha256"]:
+                raise ValueError("Recovery tool snapshot changed during validation")
+        receipt["status"] = "passed"
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        receipt["status"] = "failed"
+        receipt["error"] = str(error)
+    finally:
+        write_json(directory / "roundtrip.json", receipt)
+    print(receipt["status"] + ": " + str(directory / "roundtrip.json"))
+    return 0 if receipt["status"] == "passed" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

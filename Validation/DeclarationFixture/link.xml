@@ -1,0 +1,3 @@
+<linker>
+  <assembly fullname="DeclarationFixture" preserve="all" />
+</linker>
