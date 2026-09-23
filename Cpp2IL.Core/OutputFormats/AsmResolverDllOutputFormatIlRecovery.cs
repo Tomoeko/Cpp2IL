@@ -10,6 +10,7 @@ using AsmResolver.PE.DotNet.Cil;
 using AssetRipper.CIL;
 using Cpp2IL.Core.Extensions;
 using Cpp2IL.Core.Graphs;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Logging;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Reporting;
@@ -154,6 +155,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             {
                 FillMethodBodyWithStub(methodDefinition);
                 Record(methodContext, MethodRecoveryDisposition.SkippedMethodSize, "Native body exceeds the configured analysis size limit; emitted body is a stub.");
+                return;
+            }
+
+            if (X64CatchDivideRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Managed catch IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 

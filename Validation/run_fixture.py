@@ -4,6 +4,7 @@
 import argparse
 import array_access
 import array_call
+import catch_divide
 import reference_field
 import exception_regions
 import field_guard
@@ -30,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VALIDATION = ROOT / "Validation"
 VALUES = [-(2**31), -(2**31) + 1, -17, -1, 0, 1, 17, 2**31 - 2, 2**31 - 1]
 PROFILES = {
+    "catch-divide": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "CatchDivideFixture", "methods": 1},
     "exception-regions": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "ExceptionRegionFixture", "methods": 2},
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 6},
@@ -62,6 +64,8 @@ def int32(value):
 
 
 def verify_behavior(path, stage, profile="arithmetic"):
+    if profile == "catch-divide":
+        return catch_divide.verify(path, stage, VERSION)
     if profile == "exception-regions":
         return exception_regions.verify(path, stage, VERSION)
     if profile == "array-access":
@@ -363,7 +367,7 @@ def copy_sources(source, destination):
 def copy_harness(profile, destination):
     if profile == "arithmetic":
         return copy_sources(VALIDATION / "Harness", destination)
-    harness = {"exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "reference-field": "ReferenceFieldHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
+    harness = {"catch-divide": "CatchDivideHarness", "exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "reference-field": "ReferenceFieldHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
                "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
     copied = copy_sources(VALIDATION / harness, destination)
     for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):

@@ -3,6 +3,7 @@ using System.Linq;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 using Iced.Intel;
+using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core.InstructionSets;
 
@@ -29,9 +30,15 @@ internal static class X64CatchDivideBodyProof
             return null;
 
         method.EnsureRawBytes();
-        var native = X86Utils.Iterate(method).ToArray();
+        if (X64UnwindProof.ForApplication(app) is not { } index ||
+            index.GetHandler(method.UnderlyingPointer) is not { } region ||
+            region.Start != method.UnderlyingPointer)
+            return null;
+        var native = X86Utils.Iterate(method).TakeWhile(instruction => instruction.IP < region.End).ToArray();
         var metadataHelper = app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata;
-        if (native.Length != 28 || metadataHelper == 0 ||
+        if (native.Length is < 28 or > 44 || app.Binary is not PE pe ||
+            native.Skip(28).Any(instruction => instruction.Code != Code.Int3) ||
+            !HasInt3Padding(pe, native[27].NextIP, region.End) || metadataHelper == 0 ||
             !Push(native[0], Register.RBX) || !Stack(native[1], Mnemonic.Sub, 0x30) ||
             !Move(native[2], Register.R8D, Register.EDX) ||
             !Test(native[3], Register.EDX) || !Branch(native[4], Mnemonic.Je, native[13].IP) ||
@@ -65,7 +72,34 @@ internal static class X64CatchDivideBodyProof
             allocator == 0 || nullGuard == 0 || raiser == 0)
             return null;
 
+        // This native body starts its EH state at the potentially throwing metadata
+        // initialization and leaves that state only after the terminal raise. A
+        // different state map needs its own managed-region proof.
+        if (X64Eh4MapProof.Parse(pe.GetRawBinaryContent(), index, region) is not
+                { TryBlocks: [{ LowState: 0, HighState: 0, CatchHighState: 1 }],
+                  IpStates: [{ Rva: var tryStart, State: 0 }, { Rva: var tryEnd, State: -1 }] } ||
+            native[14].IP < index.ImageBase || native[27].NextIP < index.ImageBase ||
+            region.End < index.ImageBase ||
+            tryStart != native[14].IP - index.ImageBase ||
+            tryEnd < native[27].NextIP - index.ImageBase ||
+            tryEnd > region.End - index.ImageBase)
+            return null;
+
         return new Evidence(catchProof.CheckedClass, constructor, caughtReturn, allocator, nullGuard, raiser);
+    }
+
+    private static bool HasInt3Padding(PE pe, ulong start, ulong end)
+    {
+        if (end < start || end - start > 16)
+            return false;
+        if (end == start)
+            return true;
+        var first = pe.MapVirtualAddressToRaw(start, false);
+        var last = pe.MapVirtualAddressToRaw(end - 1, false);
+        var bytes = pe.GetRawBinaryContent();
+        return first >= 0 && last >= first && (ulong)(last - first) == end - start - 1 &&
+               last < bytes.Length && bytes.Slice((int)first, (int)(end - start)).ToArray()
+                   .All(value => value == 0xCC);
     }
 
     private static bool Push(Instruction i, Register register) => i.Mnemonic == Mnemonic.Push &&

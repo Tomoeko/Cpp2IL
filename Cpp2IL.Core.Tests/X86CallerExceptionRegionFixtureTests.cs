@@ -14,6 +14,36 @@ namespace Cpp2IL.Core.Tests;
 public class X86CallerExceptionRegionFixtureTests
 {
     [Test]
+    public void CatchOnlyControlHasCompleteNativeProof()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_CATCH_DIVIDE_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_CATCH_DIVIDE_FIXTURE_INPUT to the exact synthetic catch-only player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var method = app.GetAssemblyByName("ExceptionRegionFixture")!.Types
+                .Single(type => type.FullName == "ExceptionRegionFixture.ExceptionMethods")
+                .Methods.Single(candidate => candidate.Name == "CatchZero");
+            var funclet = X64CatchFuncletClassProof.Find(method);
+            Assert.That(funclet, Is.Not.Null);
+            Assert.That(funclet!.CheckedClass.FullName, Is.EqualTo("System.DivideByZeroException"));
+            Assert.That(funclet.ConstantContinuationReturn, Is.EqualTo(-17));
+            Assert.That(X64CatchFuncletFlowProof.Check(method, funclet), Is.True);
+            var body = X64CatchDivideBodyProof.Find(method);
+            Assert.That(body, Is.Not.Null);
+            Assert.That(X64CatchDivideHelperProof.Check(method, body!), Is.True);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
     public void AuthoredDriverCatchMethodsCannotPassAnOrdinaryControlFlowOnlyRecovery()
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_LOOP_CALL_FIXTURE_INPUT");
