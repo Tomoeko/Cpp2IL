@@ -9,12 +9,24 @@ namespace ArrayAccessFixture
         {
             return values[index];
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static uint ReadUnsigned(uint[] values, int index)
+        {
+            return values[index];
+        }
     }
 
     public static class ArrayWrites
     {
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static void Write(int[] values, int index, int value)
+        {
+            values[index] = value;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static void WriteUnsigned(uint[] values, int index, uint value)
         {
             values[index] = value;
         }

@@ -12,7 +12,7 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Closed exact-profile int[] access: prove both runtime exception exits and the only
+/// Closed exact-profile 32-bit integer array access: prove both runtime exception exits and the only
 /// successful memory access before replacing the diamond with managed ldelem or stelem.
 /// This does not generalize to unchecked native array access or other element widths.
 /// </summary>
@@ -54,7 +54,8 @@ internal static class X86IntArrayAccessProof
             array.Attributes != array.DefaultAttributes || index.Attributes != index.DefaultAttributes ||
             array.OverrideParameterType != null || index.OverrideParameterType != null ||
             array.ParameterType is not SzArrayTypeAnalysisContext { ElementType: var element } ||
-            !ReferenceEquals(element, app.SystemTypes.SystemInt32Type) ||
+            (!ReferenceEquals(element, app.SystemTypes.SystemInt32Type) &&
+             !ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)) ||
             !ReferenceEquals(index.ParameterType, app.SystemTypes.SystemInt32Type) ||
             array.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
@@ -65,9 +66,9 @@ internal static class X86IntArrayAccessProof
             (isWrite
                 ? !ReferenceEquals(context.ReturnType, app.SystemTypes.SystemVoidType) ||
                   rawReturn.Type != Il2CppTypeEnum.IL2CPP_TYPE_VOID ||
-                  !ValidStoredParameter(context, definition, app)
-                : !ReferenceEquals(context.ReturnType, app.SystemTypes.SystemInt32Type) ||
-                  rawReturn.Type != Il2CppTypeEnum.IL2CPP_TYPE_I4) ||
+                  !ValidStoredParameter(context, definition, element)
+                : !ReferenceEquals(context.ReturnType, element) ||
+                  rawReturn.Type != RawElementType(app, element)) ||
             body.Count < 12 || body[0].IP != context.UnderlyingPointer)
             return null;
 
@@ -80,7 +81,7 @@ internal static class X86IntArrayAccessProof
                 new HashSet<ulong> { nullCall.IP, boundsCall.IP }) != null)
             return null;
 
-        // ArrayRecovery recognizes this typed offset/scale as int[] element access.
+        // ArrayRecovery recognizes this typed offset/scale as a 32-bit element access.
         // The emitter preserves null-first and unsigned bounds failure via ldelem/stelem.
         var memory = new ISIL.MemoryOperand(new IsilRegister(null, "rcx"),
             new IsilRegister(null, "rdx"), 0x20, 4);
@@ -99,16 +100,20 @@ internal static class X86IntArrayAccessProof
     }
 
     private static bool ValidStoredParameter(MethodAnalysisContext context,
-        LibCpp2IL.Metadata.Il2CppMethodDefinition definition, ApplicationAnalysisContext app)
+        LibCpp2IL.Metadata.Il2CppMethodDefinition definition, TypeAnalysisContext element)
     {
         var value = context.Parameters[2];
         return value.Definition != null && value.Definition == definition.InternalParameterData![2] &&
                value.ParameterIndex == 2 && ReferenceEquals(value.DeclaringMethod, context) &&
                !value.IsRef && value.Attributes == value.DefaultAttributes && value.OverrideParameterType == null &&
-               ReferenceEquals(value.ParameterType, app.SystemTypes.SystemInt32Type) &&
-               value.Definition.RawType is { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4,
-                   NumMods: 0, Byref: 0, Pinned: 0 };
+               ReferenceEquals(value.ParameterType, element) &&
+               value.Definition.RawType is { NumMods: 0, Byref: 0, Pinned: 0 } raw &&
+               raw.Type == RawElementType(context.AppContext, element);
     }
+
+    private static Il2CppTypeEnum RawElementType(ApplicationAnalysisContext app, TypeAnalysisContext element)
+        => ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)
+            ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
 
     internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite)
     {

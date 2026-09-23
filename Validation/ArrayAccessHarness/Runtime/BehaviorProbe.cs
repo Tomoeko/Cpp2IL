@@ -24,6 +24,19 @@ namespace RecoveryValidation
             }
             Record(observations, "null", null);
             RecordWrite(observations, "null", null);
+            var unsignedArrays = new[]
+            {
+                new { Label = "empty", Values = new uint[0] },
+                new { Label = "single", Values = new[] { uint.MaxValue } },
+                new { Label = "mixed", Values = new[] { 0U, 1U, 0x80000000U, uint.MaxValue } }
+            };
+            foreach (var array in unsignedArrays)
+            {
+                RecordUnsigned(observations, array.Label, array.Values);
+                RecordUnsignedWrite(observations, array.Label, array.Values);
+            }
+            RecordUnsigned(observations, "null", null);
+            RecordUnsignedWrite(observations, "null", null);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -66,6 +79,44 @@ namespace RecoveryValidation
                 observations.Add(new Dictionary<string, object>
                 {
                     { "kind", "write:" + label }, { "index", index }, { "result", result }, { "exception", exception }
+                });
+            }
+        }
+
+        private static void RecordUnsigned(List<object> observations, string label, uint[] values)
+        {
+            var length = values == null ? 0 : values.Length;
+            foreach (var index in new[] { int.MinValue, -1, 0, 1, length - 1, length, int.MaxValue })
+            {
+                object result = null;
+                var exception = "none";
+                try { result = ArrayReads.ReadUnsigned(values, index); }
+                catch (Exception error) { exception = error.GetType().FullName; }
+                observations.Add(new Dictionary<string, object>
+                {
+                    { "kind", "unsigned:" + label }, { "index", index }, { "result", result }, { "exception", exception }
+                });
+            }
+        }
+
+        private static void RecordUnsignedWrite(List<object> observations, string label, uint[] values)
+        {
+            var length = values == null ? 0 : values.Length;
+            foreach (var index in new[] { int.MinValue, -1, 0, 1, length - 1, length, int.MaxValue })
+            {
+                var copy = values == null ? null : (uint[])values.Clone();
+                var value = (index & 1) == 0 ? uint.MaxValue : 0x80000000U;
+                object result = null;
+                var exception = "none";
+                try
+                {
+                    ArrayWrites.WriteUnsigned(copy, index, value);
+                    result = copy == null ? null : (object)copy[index];
+                }
+                catch (Exception error) { exception = error.GetType().FullName; }
+                observations.Add(new Dictionary<string, object>
+                {
+                    { "kind", "unsigned-write:" + label }, { "index", index }, { "result", result }, { "exception", exception }
                 });
             }
         }
