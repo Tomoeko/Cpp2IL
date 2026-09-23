@@ -21,9 +21,16 @@ public static class ConstantFolder
 
     private static bool TryFold(Instruction instruction)
     {
+        if (instruction.IntegerBitWidth is not (0 or 32 or 64))
+            return false;
+        // Replacing native-width arithmetic with a move would erase its truncation/width contract.
+        // Comparisons can fold because their result is always a normalized boolean.
+        if (instruction.IntegerBitWidth != 0 && !instruction.OpCode.IsComparison())
+            return false;
+
         // Unary constant folds.
         if (instruction is { OpCode: OpCode.Not, Operands: [_, Immediate n] })
-            return ToConstant(instruction, ~n.Value);
+            return ToConstant(instruction, IsBoolean(instruction.Operands[0]) ? n.Value == 0 ? 1 : 0 : ~n.Value);
         if (instruction is { OpCode: OpCode.Negate, Operands: [_, Immediate m] })
             return ToConstant(instruction, -m.Value);
 
@@ -35,6 +42,27 @@ public static class ConstantFolder
         // Binary constant folds.
         if (BinaryConstants(instruction, out var a, out var b))
         {
+            if (instruction.IntegerBitWidth == 32)
+            {
+                a = unchecked((int)a);
+                b = unchecked((int)b);
+            }
+            if (instruction.IntegerBitWidth is 32 or 64)
+            {
+                var unsignedA = instruction.IntegerBitWidth == 32 ? unchecked((uint)a) : unchecked((ulong)a);
+                var unsignedB = instruction.IntegerBitWidth == 32 ? unchecked((uint)b) : unchecked((ulong)b);
+                switch (instruction.OpCode)
+                {
+                    case OpCode.CheckLess: return ToConstant(instruction, a < b ? 1 : 0);
+                    case OpCode.CheckGreater: return ToConstant(instruction, a > b ? 1 : 0);
+                    case OpCode.CheckLessOrEqual: return ToConstant(instruction, a <= b ? 1 : 0);
+                    case OpCode.CheckGreaterOrEqual: return ToConstant(instruction, a >= b ? 1 : 0);
+                    case OpCode.CheckLessUnsigned: return ToConstant(instruction, unsignedA < unsignedB ? 1 : 0);
+                    case OpCode.CheckGreaterUnsigned: return ToConstant(instruction, unsignedA > unsignedB ? 1 : 0);
+                    case OpCode.CheckLessOrEqualUnsigned: return ToConstant(instruction, unsignedA <= unsignedB ? 1 : 0);
+                    case OpCode.CheckGreaterOrEqualUnsigned: return ToConstant(instruction, unsignedA >= unsignedB ? 1 : 0);
+                }
+            }
             switch (instruction.OpCode)
             {
                 case OpCode.CheckEqual: return ToConstant(instruction, a == b ? 1 : 0);
@@ -110,8 +138,13 @@ public static class ConstantFolder
 
     private static bool ToConstant(Instruction instruction, long value)
     {
+        for (var index = 1; index < instruction.Operands.Count; index++)
+            if (!OperandEffects.IsPureValue(instruction.Operands[index]))
+                return false;
+
         instruction.OpCode = OpCode.Move;
         instruction.SetOperands(instruction.Operands[0], new Immediate(value));
+        instruction.IntegerBitWidth = 0;
         return true;
     }
 

@@ -250,6 +250,88 @@ public class IlGeneratorParameterTests
         Assert.Throws<DecompilerException>(() => IlGenerator.GenerateIl(context, definition));
     }
 
+    [TestCase(OpCode.CheckLessUnsigned, 32)]
+    [TestCase(OpCode.CheckGreaterUnsigned, 32)]
+    [TestCase(OpCode.CheckLessOrEqualUnsigned, 32)]
+    [TestCase(OpCode.CheckGreaterOrEqualUnsigned, 32)]
+    [TestCase(OpCode.CheckLessUnsigned, 64)]
+    [TestCase(OpCode.CheckGreaterUnsigned, 64)]
+    [TestCase(OpCode.CheckLessOrEqualUnsigned, 64)]
+    [TestCase(OpCode.CheckGreaterOrEqualUnsigned, 64)]
+    public void UnsignedComparisonsPreserveHighBitValues(OpCode opcode, int width)
+    {
+        var integer = width == 32 ? _app.SystemTypes.SystemInt32Type : _app.SystemTypes.SystemInt64Type;
+        var (context, definition, parameters) = CreateMethod("Compare", _app.SystemTypes.SystemBooleanType, [integer, integer]);
+        var result = new LocalVariable("result", new Register(900, "result"), _app.SystemTypes.SystemBooleanType);
+        context.Locals.Add(result);
+        Emit(context, definition,
+        [
+            new(0, opcode, result, parameters[0], parameters[1]) { IntegerBitWidth = width },
+            new(1, OpCode.Return, result),
+        ]);
+        using var runtime = Load();
+        long[] values = width == 32 ? [int.MinValue, -1, 0, 1, int.MaxValue] : [long.MinValue, -1, 0, 1, long.MaxValue];
+        foreach (var left in values)
+        foreach (var right in values)
+        {
+            var a = width == 32 ? unchecked((uint)left) : unchecked((ulong)left);
+            var b = width == 32 ? unchecked((uint)right) : unchecked((ulong)right);
+            var expected = opcode switch
+            {
+                OpCode.CheckLessUnsigned => a < b,
+                OpCode.CheckGreaterUnsigned => a > b,
+                OpCode.CheckLessOrEqualUnsigned => a <= b,
+                OpCode.CheckGreaterOrEqualUnsigned => a >= b,
+                _ => throw new InvalidOperationException()
+            };
+            object[] args = width == 32 ? [(int)left, (int)right] : [left, right];
+            Assert.That(runtime.Type.GetMethod("Compare")!.Invoke(null, args), Is.EqualTo(expected), $"{left}, {right}");
+        }
+    }
+
+    [TestCase(32, uint.MaxValue)]
+    [TestCase(64, 1L)]
+    public void ComparisonImmediatesUseNativeOperandWidth(int width, long literal)
+    {
+        var integer = width == 32 ? _app.SystemTypes.SystemInt32Type : _app.SystemTypes.SystemInt64Type;
+        var (context, definition, parameters) = CreateMethod("Below", _app.SystemTypes.SystemBooleanType, [integer]);
+        var result = new LocalVariable("result", new Register(900, "result"), _app.SystemTypes.SystemBooleanType);
+        context.Locals.Add(result);
+        Emit(context, definition,
+        [
+            new(0, OpCode.CheckLessUnsigned, result, parameters[0], Imm(literal)) { IntegerBitWidth = width },
+            new(1, OpCode.Return, result),
+        ]);
+        using var runtime = Load();
+        object[] args = width == 32 ? [int.MaxValue] : [0L];
+        Assert.That(runtime.Type.GetMethod("Below")!.Invoke(null, args), Is.True);
+    }
+
+    [Test]
+    public void NativeWidthMismatchCannotSilentlyChangeComparisonSemantics()
+    {
+        var (context, definition, parameters) = CreateMethod("Compare", _app.SystemTypes.SystemBooleanType,
+            [_app.SystemTypes.SystemInt64Type, _app.SystemTypes.SystemInt64Type]);
+        var result = new LocalVariable("result", new Register(900, "result"), _app.SystemTypes.SystemBooleanType);
+        context.Locals.Add(result);
+        context.ControlFlowGraph = new ISILControlFlowGraph(
+        [
+            new(0, OpCode.CheckLess, result, parameters[0], parameters[1]) { IntegerBitWidth = 32 },
+            new(1, OpCode.Return, result),
+        ]);
+        Assert.Throws<DecompilerException>(() => IlGenerator.GenerateIl(context, definition));
+    }
+
+    [Test]
+    public void SmallInt64ReturnLiteralIsAnInt64StackValue()
+    {
+        var (context, definition, _) = CreateMethod("One", _app.SystemTypes.SystemInt64Type, []);
+        Emit(context, definition, [new(0, OpCode.Return, Imm(1))]);
+        Assert.That(definition.CilMethodBody!.Instructions[0].OpCode, Is.EqualTo(CilOpCodes.Ldc_I8));
+        using var runtime = Load();
+        Assert.That(runtime.Type.GetMethod("One")!.Invoke(null, null), Is.EqualTo(1L));
+    }
+
     private (InjectedMethodAnalysisContext Context, MethodDefinition Definition, LocalVariable[] Parameters) CreateMethod(
         string name, TypeAnalysisContext returnType, TypeAnalysisContext[] parameterTypes, bool instance = false)
     {

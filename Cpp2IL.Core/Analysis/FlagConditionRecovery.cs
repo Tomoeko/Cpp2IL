@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
@@ -6,200 +8,191 @@ using Cpp2IL.Core.Model.Contexts;
 namespace Cpp2IL.Core.Analysis;
 
 /// <summary>
-/// Recovers high-level relational conditions from the explicit EFLAGS computations the lifter emits.
-///
-/// The x86 lifter models a <c>cmp</c>/<c>test</c> as a cluster of flag pseudo-registers
-/// (ZF = (a-b)==0, SF = (a-b)&lt;0, OF = signed overflow, ...) and lowers each <c>jcc</c> into a
-/// boolean expression over those flags. This pass recognises those canonical shapes for every
-/// <see cref="OpCode.ConditionalJump"/> condition and rewrites the condition's defining instruction
-/// into a single relational comparison (==, !=, &lt;, &lt;=, &gt;, &gt;=) on the original compare
-/// operands. The now-orphaned flag arithmetic is removed by the dead-code pass that runs next.
-///
-/// Runs in SSA form, where each flag/temporary has a single, version-stable definition, so the
-/// operands referenced at the branch are provably the ones captured at the compare.
-///
-/// Note: the lifter lowers the unsigned conditions (ja/jae/jb/jbe) with the same flag expressions as
-/// their signed counterparts, so they are recovered as signed comparisons too - matching the
-/// existing (signed) behaviour rather than introducing a new inaccuracy.
+/// Recovers comparisons from complete, matching SSA flag definitions. Signed conditions require
+/// both SF and OF from the same subtraction; unsigned conditions use CF and ZF. SF alone tests
+/// the wrapped subtraction result and cannot be replaced by a comparison of its inputs.
 /// </summary>
 public static class FlagConditionRecovery
 {
+    private readonly record struct Comparison(OpCode Opcode, IOperand Left, IOperand Right, int Width)
+    {
+        public bool SameInputs(Comparison other) => Equals(Left, other.Left) && Equals(Right, other.Right) && Width == other.Width;
+    }
+
     public static void Run(MethodAnalysisContext method) => Run(method.ControlFlowGraph!);
 
     public static void Run(ISILControlFlowGraph cfg)
     {
-        var defOf = BuildDefMap(cfg);
-
-        foreach (var block in cfg.Blocks)
+        var definitions = new Dictionary<LocalVariable, Instruction>();
+        var ambiguous = new HashSet<LocalVariable>();
+        foreach (var instruction in cfg.Blocks.SelectMany(b => b.Instructions))
         {
-            foreach (var instruction in block.Instructions)
+            if (instruction.Destination is not LocalVariable local)
+                continue;
+            if (definitions.ContainsKey(local))
+                ambiguous.Add(local);
+            else
+                definitions.Add(local, instruction);
+        }
+        foreach (var local in ambiguous)
+            definitions.Remove(local);
+
+        // Classify against an unchanged graph: an early rewrite of ZF must not invalidate a later
+        // SF/OF/ZF proof. This also covers setcc results which never feed a conditional branch.
+        var rewrites = new List<(Instruction Instruction, Comparison Comparison)>();
+        foreach (var pair in definitions)
+        {
+            if (TryClassify(pair.Key, definitions, new HashSet<LocalVariable>(), out var comparison))
+                rewrites.Add((pair.Value, comparison));
+        }
+        foreach (var (instruction, comparison) in rewrites)
+        {
+            instruction.OpCode = comparison.Opcode;
+            instruction.SetOperands(instruction.Operands[0], comparison.Left, comparison.Right);
+            instruction.IntegerBitWidth = comparison.Width;
+        }
+    }
+
+    private static bool TryClassify(LocalVariable local, Dictionary<LocalVariable, Instruction> definitions,
+        HashSet<LocalVariable> visiting, out Comparison comparison)
+    {
+        comparison = default;
+        if (!definitions.TryGetValue(local, out var definition) || !visiting.Add(local))
+            return false;
+        try
+        {
+            if (TryZeroFlag(local, definitions, out comparison))
+                return true;
+            if (TrySignedFlags(local, definitions, out comparison))
+                return true;
+            if (definition.OpCode.IsUnsignedComparison() && definition.Operands.Count == 3)
             {
-                if (instruction.OpCode != OpCode.ConditionalJump)
-                    continue;
-
-                if (instruction.Operands[1] is not LocalVariable condition)
-                    continue;
-
-                if (!TryClassify(condition, defOf, out var relop, out var op0, out var op1))
-                    continue;
-
-                // Rewrite the condition's defining instruction in place into a single comparison.
-                // Its destination (the condition local the branch reads) is preserved.
-                var definition = defOf[condition];
-                definition.OpCode = relop;
-                definition.SetOperands(definition.Operands[0], op0!, op1!);
+                comparison = new(definition.OpCode, definition.Operands[1], definition.Operands[2], definition.IntegerBitWidth);
+                return true;
             }
+            if (definition.Operands is [_, LocalVariable source] && definition.OpCode is (OpCode.Move or OpCode.Not) &&
+                TryClassify(source, definitions, visiting, out comparison))
+            {
+                if (definition.OpCode == OpCode.Not)
+                    comparison = comparison with { Opcode = Invert(comparison.Opcode) };
+                return true;
+            }
+            if (definition.OpCode == OpCode.CheckEqual && definition.Operands is [_, LocalVariable tested, Immediate { Value: 0 }] &&
+                TryClassify(tested, definitions, visiting, out comparison))
+            {
+                comparison = comparison with { Opcode = Invert(comparison.Opcode) };
+                return true;
+            }
+            if (definition.OpCode is not (OpCode.And or OpCode.Or) ||
+                definition.Operands is not [_, LocalVariable left, LocalVariable right] ||
+                !TryClassify(left, definitions, visiting, out var leftComparison) ||
+                !TryClassify(right, definitions, visiting, out var rightComparison) ||
+                !leftComparison.SameInputs(rightComparison))
+                return false;
+
+            if (definition.OpCode == OpCode.And)
+            {
+                if (rightComparison.Opcode == OpCode.CheckNotEqual)
+                    comparison = leftComparison;
+                else if (leftComparison.Opcode == OpCode.CheckNotEqual)
+                    comparison = rightComparison;
+                else
+                    return false;
+                comparison = comparison with
+                {
+                    Opcode = comparison.Opcode switch
+                    {
+                        OpCode.CheckGreaterOrEqual => OpCode.CheckGreater,
+                        OpCode.CheckGreaterOrEqualUnsigned => OpCode.CheckGreaterUnsigned,
+                        _ => default,
+                    }
+                };
+            }
+            else
+            {
+                if (rightComparison.Opcode == OpCode.CheckEqual)
+                    comparison = leftComparison;
+                else if (leftComparison.Opcode == OpCode.CheckEqual)
+                    comparison = rightComparison;
+                else
+                    return false;
+                comparison = comparison with
+                {
+                    Opcode = comparison.Opcode switch
+                    {
+                        OpCode.CheckLess => OpCode.CheckLessOrEqual,
+                        OpCode.CheckLessUnsigned => OpCode.CheckLessOrEqualUnsigned,
+                        _ => default,
+                    }
+                };
+            }
+            return comparison.Opcode != default;
         }
-    }
-
-    private static Dictionary<LocalVariable, Instruction> BuildDefMap(ISILControlFlowGraph cfg)
-    {
-        var defs = new Dictionary<LocalVariable, Instruction>();
-
-        foreach (var block in cfg.Blocks)
-            foreach (var instruction in block.Instructions)
-                if (instruction.Destination is LocalVariable destination)
-                    defs[destination] = instruction;
-
-        return defs;
-    }
-
-    private static bool TryClassify(LocalVariable condition, Dictionary<LocalVariable, Instruction> defOf,
-        out OpCode relop, out IOperand? op0, out IOperand? op1)
-    {
-        relop = default;
-
-        // ZF on its own  =>  a == b   (je)
-        if (IsZeroFlag(condition, defOf, out op0, out op1)) { relop = OpCode.CheckEqual; return true; }
-        // SF on its own  =>  a < b    (js; exact for the common test-against-self case)
-        if (IsSignFlag(condition, defOf, out op0, out op1)) { relop = OpCode.CheckLess; return true; }
-
-        var definition = Def(condition, defOf);
-        if (definition == null)
-            return false;
-
-        switch (definition.OpCode)
+        finally
         {
-            case OpCode.Not:
-                var inner = AsLocal(definition.Operands[1]);
-                if (IsZeroFlag(inner, defOf, out op0, out op1)) { relop = OpCode.CheckNotEqual; return true; }          // !ZF        => !=  (jne)
-                if (IsSignFlag(inner, defOf, out op0, out op1)) { relop = OpCode.CheckGreaterOrEqual; return true; }    // !SF        => >=  (jns)
-                if (IsSignEqualsOverflow(inner, defOf, out op0, out op1)) { relop = OpCode.CheckLess; return true; }    // !(SF==OF)  => <   (jl/jb)
-                return false;
-
-            case OpCode.CheckEqual:
-                // SF == OF  =>  a >= b   (jge/jae)
-                if (IsSignFlag(AsLocal(definition.Operands[1]), defOf, out op0, out op1)) { relop = OpCode.CheckGreaterOrEqual; return true; }
-                return false;
-
-            case OpCode.And:
-                // (SF==OF) && !ZF  =>  a > b   (jg/ja)
-                if (IsSignGreater(definition, defOf, out op0, out op1)) { relop = OpCode.CheckGreater; return true; }
-                return false;
-
-            case OpCode.Or:
-                // !(SF==OF) || ZF  =>  a <= b   (jle/jbe)
-                if (IsSignLessOrEqual(definition, defOf, out op0, out op1)) { relop = OpCode.CheckLessOrEqual; return true; }
-                return false;
-
-            default:
-                return false;
+            visiting.Remove(local);
         }
     }
 
-    // ZF: local := CheckEqual(t, 0) where t := Subtract(a, b)
-    private static bool IsZeroFlag(LocalVariable? local, Dictionary<LocalVariable, Instruction> defOf, out IOperand? op0, out IOperand? op1)
+    private static OpCode Invert(OpCode opcode) => opcode switch
     {
-        op0 = op1 = null;
-        var def = Def(local, defOf);
-        if (def is not { OpCode: OpCode.CheckEqual } || !IsZeroConstant(def.Operands[2]))
-            return false;
-        return IsSubtraction(AsLocal(def.Operands[1]), defOf, out op0, out op1);
-    }
+        OpCode.CheckEqual => OpCode.CheckNotEqual,
+        OpCode.CheckNotEqual => OpCode.CheckEqual,
+        OpCode.CheckLess => OpCode.CheckGreaterOrEqual,
+        OpCode.CheckGreaterOrEqual => OpCode.CheckLess,
+        OpCode.CheckGreater => OpCode.CheckLessOrEqual,
+        OpCode.CheckLessOrEqual => OpCode.CheckGreater,
+        OpCode.CheckLessUnsigned => OpCode.CheckGreaterOrEqualUnsigned,
+        OpCode.CheckGreaterOrEqualUnsigned => OpCode.CheckLessUnsigned,
+        OpCode.CheckGreaterUnsigned => OpCode.CheckLessOrEqualUnsigned,
+        OpCode.CheckLessOrEqualUnsigned => OpCode.CheckGreaterUnsigned,
+        _ => throw new ArgumentOutOfRangeException(nameof(opcode)),
+    };
 
-    // SF: local := CheckLess(t, 0) where t := Subtract(a, b)
-    private static bool IsSignFlag(LocalVariable? local, Dictionary<LocalVariable, Instruction> defOf, out IOperand? op0, out IOperand? op1)
+    private static bool TryZeroFlag(LocalVariable local, Dictionary<LocalVariable, Instruction> definitions, out Comparison comparison)
     {
-        op0 = op1 = null;
-        var def = Def(local, defOf);
-        if (def is not { OpCode: OpCode.CheckLess } || !IsZeroConstant(def.Operands[2]))
+        comparison = default;
+        if (Get(local, definitions) is not { OpCode: OpCode.CheckEqual, Operands: [_, LocalVariable difference, Immediate { Value: 0 }] } flag ||
+            Get(difference, definitions) is not { OpCode: OpCode.Subtract, Operands: [_, var left, var right] } subtraction ||
+            flag.IntegerBitWidth != subtraction.IntegerBitWidth)
             return false;
-        return IsSubtraction(AsLocal(def.Operands[1]), defOf, out op0, out op1);
-    }
-
-    // local := Subtract(a, b)
-    private static bool IsSubtraction(LocalVariable? local, Dictionary<LocalVariable, Instruction> defOf, out IOperand? op0, out IOperand? op1)
-    {
-        op0 = op1 = null;
-        var def = Def(local, defOf);
-        if (def is not { OpCode: OpCode.Subtract })
-            return false;
-        op0 = def.Operands[1];
-        op1 = def.Operands[2];
+        comparison = new(OpCode.CheckEqual, left, right, subtraction.IntegerBitWidth);
         return true;
     }
 
-    // local := CheckEqual(SF, OF) - the signed "not less" test. Operands are taken from the SF side.
-    private static bool IsSignEqualsOverflow(LocalVariable? local, Dictionary<LocalVariable, Instruction> defOf, out IOperand? op0, out IOperand? op1)
+    private static bool TrySignedFlags(LocalVariable local, Dictionary<LocalVariable, Instruction> definitions, out Comparison comparison)
     {
-        op0 = op1 = null;
-        var def = Def(local, defOf);
-        if (def is not { OpCode: OpCode.CheckEqual })
+        comparison = default;
+        if (Get(local, definitions) is not { OpCode: OpCode.CheckEqual or OpCode.CheckNotEqual, Operands: [_, LocalVariable first, LocalVariable second] } condition)
             return false;
-        return IsSignFlag(AsLocal(def.Operands[1]), defOf, out op0, out op1);
-    }
-
-    // local := Not(CheckEqual(SF, OF))
-    private static bool IsNotSignEqualsOverflow(LocalVariable? local, Dictionary<LocalVariable, Instruction> defOf, out IOperand? op0, out IOperand? op1)
-    {
-        op0 = op1 = null;
-        var def = Def(local, defOf);
-        if (def is not { OpCode: OpCode.Not })
+        if (!TrySignAndOverflow(first, second, definitions, out comparison) && !TrySignAndOverflow(second, first, definitions, out comparison))
             return false;
-        return IsSignEqualsOverflow(AsLocal(def.Operands[1]), defOf, out op0, out op1);
+        comparison = comparison with { Opcode = condition.OpCode == OpCode.CheckEqual ? OpCode.CheckGreaterOrEqual : OpCode.CheckLess };
+        return true;
     }
 
-    // local := Not(ZF)
-    private static bool IsNotZeroFlag(LocalVariable? local, Dictionary<LocalVariable, Instruction> defOf)
+    private static bool TrySignAndOverflow(LocalVariable sign, LocalVariable overflow, Dictionary<LocalVariable, Instruction> definitions, out Comparison comparison)
     {
-        var def = Def(local, defOf);
-        return def is { OpCode: OpCode.Not } && IsZeroFlag(AsLocal(def.Operands[1]), defOf, out _, out _);
+        comparison = default;
+        if (Get(sign, definitions) is not { OpCode: OpCode.CheckLess, Operands: [_, LocalVariable difference, Immediate { Value: 0 }] } signDefinition ||
+            Get(difference, definitions) is not { OpCode: OpCode.Subtract, Operands: [_, var left, var right] } subtraction ||
+            Get(overflow, definitions) is not { OpCode: OpCode.CheckLess, Operands: [_, LocalVariable bits, Immediate { Value: 0 }] } overflowDefinition ||
+            Get(bits, definitions) is not { OpCode: OpCode.And, Operands: [_, LocalVariable first, LocalVariable second] } and)
+            return false;
+        var width = subtraction.IntegerBitWidth;
+        if (signDefinition.IntegerBitWidth != width || overflowDefinition.IntegerBitWidth != width || and.IntegerBitWidth != width)
+            return false;
+        if (!(IsXor(first, left, right, width, definitions) && IsXor(second, left, difference, width, definitions)) &&
+            !(IsXor(second, left, right, width, definitions) && IsXor(first, left, difference, width, definitions)))
+            return false;
+        comparison = new(OpCode.CheckGreaterOrEqual, left, right, width);
+        return true;
     }
 
-    // And((SF==OF), !ZF), in either operand order
-    private static bool IsSignGreater(Instruction and, Dictionary<LocalVariable, Instruction> defOf, out IOperand? op0, out IOperand? op1)
-    {
-        var left = AsLocal(and.Operands[1]);
-        var right = AsLocal(and.Operands[2]);
+    private static bool IsXor(LocalVariable local, IOperand left, IOperand right, int width, Dictionary<LocalVariable, Instruction> definitions) =>
+        Get(local, definitions) is { OpCode: OpCode.Xor, Operands: [_, var first, var second] } xor && xor.IntegerBitWidth == width &&
+        (Equals(first, left) && Equals(second, right) || Equals(first, right) && Equals(second, left));
 
-        if (IsSignEqualsOverflow(left, defOf, out op0, out op1) && IsNotZeroFlag(right, defOf))
-            return true;
-        if (IsSignEqualsOverflow(right, defOf, out op0, out op1) && IsNotZeroFlag(left, defOf))
-            return true;
-
-        op0 = op1 = null;
-        return false;
-    }
-
-    // Or(!(SF==OF), ZF), in either operand order
-    private static bool IsSignLessOrEqual(Instruction or, Dictionary<LocalVariable, Instruction> defOf, out IOperand? op0, out IOperand? op1)
-    {
-        var left = AsLocal(or.Operands[1]);
-        var right = AsLocal(or.Operands[2]);
-
-        if (IsNotSignEqualsOverflow(left, defOf, out op0, out op1) && IsZeroFlag(right, defOf, out _, out _))
-            return true;
-        if (IsNotSignEqualsOverflow(right, defOf, out op0, out op1) && IsZeroFlag(left, defOf, out _, out _))
-            return true;
-
-        op0 = op1 = null;
-        return false;
-    }
-
-    private static Instruction? Def(LocalVariable? local, Dictionary<LocalVariable, Instruction> defOf)
-        => local != null && defOf.TryGetValue(local, out var def) ? def : null;
-
-    private static LocalVariable? AsLocal(IOperand operand) => operand as LocalVariable;
-
-    private static bool IsZeroConstant(IOperand operand) => operand is Immediate { Value: 0 };
+    private static Instruction? Get(LocalVariable local, Dictionary<LocalVariable, Instruction> definitions) =>
+        definitions.TryGetValue(local, out var definition) ? definition : null;
 }

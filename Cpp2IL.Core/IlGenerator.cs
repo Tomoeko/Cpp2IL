@@ -6,6 +6,7 @@ using AsmResolver.DotNet.Code.Cil;
 using AsmResolver.DotNet.Collections;
 using AsmResolver.DotNet.Signatures;
 using AsmResolver.PE.DotNet.Cil;
+using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
@@ -78,7 +79,7 @@ public static class IlGenerator
             if (call.Destination is not { } destination)
                 continue;
             if (destination is not LocalVariable result || context.ControlFlowGraph.Instructions.Any(i =>
-                    i.Operands.Where((_, index) => index != DestinationIndex(i)).Any(o => ReferencesLocal(o, result))))
+                    OperandEffects.ReadLocals(i).Contains(result)))
                 throw new DecompilerException("A void managed call has a consumed native return value");
         }
 
@@ -244,21 +245,6 @@ public static class IlGenerator
             throw new DecompilerException("Generated IL has invalid control flow or stack depth", exception);
         }
     }
-
-    private static int DestinationIndex(Instruction instruction) => instruction.Destination is not LocalVariable
-        ? -1
-        : instruction.OpCode is OpCode.Call or OpCode.IndirectCall ? 1 : 0;
-
-    private static bool ReferencesLocal(IOperand? operand, LocalVariable local) => operand switch
-    {
-        LocalVariable other => ReferenceEquals(other, local),
-        AddressOf address => ReferencesLocal(address.Target, local),
-        MemoryOperand memory => ReferencesLocal(memory.Base, local) || ReferencesLocal(memory.Index, local),
-        FieldReference { Field.IsStatic: false } field => ReferenceEquals(field.Local, local),
-        ArrayAccess array => ReferenceEquals(array.Array, local) || ReferencesLocal(array.Index, local),
-        ArrayLength length => ReferenceEquals(length.Array, local),
-        _ => false
-    };
 
     private static Block? TryResolveJumpTargetBlock(Instruction jumpInstruction, ISILControlFlowGraph cfg)
     {
@@ -480,6 +466,10 @@ public static class IlGenerator
             case OpCode.CheckNotEqual:
             case OpCode.CheckGreaterOrEqual:
             case OpCode.CheckLessOrEqual:
+            case OpCode.CheckLessUnsigned:
+            case OpCode.CheckGreaterUnsigned:
+            case OpCode.CheckLessOrEqualUnsigned:
+            case OpCode.CheckGreaterOrEqualUnsigned:
 
             case OpCode.Add:
             case OpCode.Subtract:
@@ -502,10 +492,10 @@ public static class IlGenerator
                 // operands are coerced to the (float) result type. A no-op when they already match.
                 var floatConversion = FloatArithmeticConversion(instruction);
 
-                LoadOperand(instruction.Operands[1], method, locals);
+                LoadArithmeticOperand(instruction.Operands[1], instruction.IntegerBitWidth, method, locals);
                 if (floatConversion is { } conv1)
                     instructions.Add(conv1);
-                LoadOperand(instruction.Operands[2], method, locals);
+                LoadArithmeticOperand(instruction.Operands[2], instruction.IntegerBitWidth, method, locals);
                 if (floatConversion is { } conv2)
                     instructions.Add(conv2);
 
@@ -514,6 +504,8 @@ public static class IlGenerator
                     case OpCode.CheckEqual: instructions.Add(CilOpCodes.Ceq); break;
                     case OpCode.CheckGreater: instructions.Add(CilOpCodes.Cgt); break;
                     case OpCode.CheckLess: instructions.Add(CilOpCodes.Clt); break;
+                    case OpCode.CheckGreaterUnsigned: instructions.Add(CilOpCodes.Cgt_Un); break;
+                    case OpCode.CheckLessUnsigned: instructions.Add(CilOpCodes.Clt_Un); break;
 
                     // a != b  ==  (a == b) == 0
                     case OpCode.CheckNotEqual:
@@ -530,6 +522,16 @@ public static class IlGenerator
                     // a <= b  ==  !(a > b)
                     case OpCode.CheckLessOrEqual:
                         instructions.Add(CilOpCodes.Cgt);
+                        instructions.Add(CilOpCodes.Ldc_I4_0);
+                        instructions.Add(CilOpCodes.Ceq);
+                        break;
+                    case OpCode.CheckGreaterOrEqualUnsigned:
+                        instructions.Add(CilOpCodes.Clt_Un);
+                        instructions.Add(CilOpCodes.Ldc_I4_0);
+                        instructions.Add(CilOpCodes.Ceq);
+                        break;
+                    case OpCode.CheckLessOrEqualUnsigned:
+                        instructions.Add(CilOpCodes.Cgt_Un);
                         instructions.Add(CilOpCodes.Ldc_I4_0);
                         instructions.Add(CilOpCodes.Ceq);
                         break;
@@ -618,6 +620,42 @@ public static class IlGenerator
         };
     }
 
+    private static int IntegerStackWidth(TypeAnalysisContext? type)
+    {
+        if (type?.IsEnumType == true)
+            type = type.EnumUnderlyingType;
+        return type?.FullName switch
+        {
+            "System.Boolean" or "System.Byte" or "System.SByte" or "System.Char" or
+                "System.Int16" or "System.UInt16" or "System.Int32" or "System.UInt32" => 32,
+            "System.Int64" or "System.UInt64" => 64,
+            _ => 0
+        };
+    }
+
+    private static void LoadArithmeticOperand(IOperand operand, int nativeWidth, MethodDefinition method, EmissionLocals locals)
+    {
+        if (nativeWidth == 0)
+        {
+            LoadOperand(operand, method, locals);
+            return;
+        }
+        if (nativeWidth is not (32 or 64))
+            throw new DecompilerException("Native integer width is not supported by managed arithmetic emission");
+        if (operand is Immediate immediate)
+        {
+            var instructions = method.CilMethodBody!.Instructions;
+            if (nativeWidth == 32)
+                instructions.Add(CilOpCodes.Ldc_I4, unchecked((int)immediate.Value));
+            else
+                instructions.Add(CilOpCodes.Ldc_I8, immediate.Value);
+            return;
+        }
+        if (IntegerStackWidth(DestinationType(operand)) != nativeWidth)
+            throw new DecompilerException("Native integer operand width does not match its recovered managed type");
+        LoadOperand(operand, method, locals);
+    }
+
     private static void LoadOperand(IOperand operand, MethodDefinition method,
         EmissionLocals locals,
         TypeAnalysisContext? expectedType = null)
@@ -637,6 +675,12 @@ public static class IlGenerator
 
         switch (operand)
         {
+            case Immediate immediate when IntegerStackWidth(expectedType) == 64:
+                instructions.Add(CilOpCodes.Ldc_I8, immediate.Value);
+                break;
+            case Immediate immediate when IntegerStackWidth(expectedType) == 32:
+                instructions.Add(CilOpCodes.Ldc_I4, unchecked((int)immediate.Value));
+                break;
             case Immediate { Value: >= int.MinValue and <= int.MaxValue } immediate:
                 instructions.Add(CilOpCodes.Ldc_I4, (int)immediate.Value);
                 break;

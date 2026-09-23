@@ -70,8 +70,8 @@ public class SimplifierTests
         var aLocal = new LocalVariable("a", new Register(null, "a"));
         var bLocal = new LocalVariable("b", new Register(null, "b"));
 
-        // a := [0xAAAA]; f(a); b := [0xBBBB]; g(b).  Inlining a's constant load must not touch the
-        // unrelated constant address [0xBBBB] - they are distinct absolute addresses.
+        // a := [0xAAAA]; f(a); b := [0xBBBB]; g(b). Preserve distinct reads at their original
+        // positions: propagating a read into a later use can change faults or observed memory.
         var instructions = new List<Instruction>
         {
             new(0, OpCode.Move, aLocal, new MemoryOperand(null, null, 0xAAAA, 0)),
@@ -89,14 +89,15 @@ public class SimplifierTests
         var live = graph.Blocks.SelectMany(b => b.Instructions).ToList();
 
         var gCall = live.Single(i => i.OpCode == OpCode.CallVoid && i.Operands[0] is StringLiteral { Value: "g" });
-        Assert.That(gCall.Operands[1], Is.InstanceOf<MemoryOperand>());
-        Assert.That(((MemoryOperand)gCall.Operands[1]).Addend, Is.EqualTo(0xBBBBL),
+        Assert.That(gCall.Operands[1], Is.SameAs(bLocal));
+        var bLoad = live.Single(i => i.OpCode == OpCode.Move && ReferenceEquals(i.Destination, bLocal));
+        Assert.That(((MemoryOperand)bLoad.Operands[1]).Addend, Is.EqualTo(0xBBBBL),
             "an unrelated constant address must not be rewritten by another inline");
 
-        // The intended inline still happens.
         var fCall = live.Single(i => i.OpCode == OpCode.CallVoid && i.Operands[0] is StringLiteral { Value: "f" });
-        Assert.That(fCall.Operands[1], Is.InstanceOf<MemoryOperand>());
-        Assert.That(((MemoryOperand)fCall.Operands[1]).Addend, Is.EqualTo(0xAAAAL));
+        Assert.That(fCall.Operands[1], Is.SameAs(aLocal));
+        var aLoad = live.Single(i => i.OpCode == OpCode.Move && ReferenceEquals(i.Destination, aLocal));
+        Assert.That(((MemoryOperand)aLoad.Operands[1]).Addend, Is.EqualTo(0xAAAAL));
     }
 
     [Test]

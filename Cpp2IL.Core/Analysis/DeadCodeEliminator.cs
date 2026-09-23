@@ -59,69 +59,10 @@ public static class DeadCodeEliminator
 
         foreach (var block in cfg.Blocks)
             foreach (var instruction in block.Instructions)
-                foreach (var used in UsedLocals(instruction))
+                foreach (var used in OperandEffects.ReadLocals(instruction))
                     counts[used] = counts.TryGetValue(used, out var c) ? c + 1 : 1;
 
         return counts;
-    }
-
-    /// <summary>
-    /// Every local read by the instruction. The single write position - a plain local destination -
-    /// is excluded. Memory and field operands always contribute their address/object locals as
-    /// reads, even when they are the destination of a store.
-    /// </summary>
-    private static IEnumerable<LocalVariable> UsedLocals(Instruction instruction)
-    {
-        var destination = instruction.Destination as LocalVariable;
-        var destinationIndex = instruction.OpCode is OpCode.Call or OpCode.IndirectCall ? 1 : 0;
-
-        for (var index = 0; index < instruction.Operands.Count; index++)
-        {
-            var operand = instruction.Operands[index];
-            if (index == destinationIndex && ReferenceEquals(operand, destination))
-                continue;
-
-            switch (operand)
-            {
-                case LocalVariable local:
-                    yield return local;
-                    break;
-                case MemoryOperand memory:
-                    if (memory.Base is LocalVariable baseLocal)
-                        yield return baseLocal;
-                    if (memory.Index is LocalVariable indexLocal)
-                        yield return indexLocal;
-                    break;
-                // A static field access doesn't read the storage pointer it was resolved from, so that
-                // pointer (and the class load feeding it) is free to die.
-                case FieldReference { Field.IsStatic: false, Local: { } fieldLocal }:
-                    yield return fieldLocal;
-                    break;
-                // Handing out a slot's address is a read of it as far as we can tell, whatever the callee then does with it.
-                case AddressOf { Target: LocalVariable addressed }:
-                    yield return addressed;
-                    break;
-                case AddressOf { Target: ArrayAccess addressedElement }:
-                    foreach (var used in ArrayAccessLocals(addressedElement))
-                        yield return used;
-                    break;
-                case ArrayAccess access:
-                    foreach (var used in ArrayAccessLocals(access))
-                        yield return used;
-                    break;
-                case ArrayLength { Array: { } lengthArray }:
-                    yield return lengthArray;
-                    break;
-            }
-        }
-    }
-
-    private static IEnumerable<LocalVariable> ArrayAccessLocals(ArrayAccess access)
-    {
-        yield return access.Array;
-
-        if (access.Index is LocalVariable index)
-            yield return index;
     }
 
     /// <summary>
@@ -137,7 +78,7 @@ public static class DeadCodeEliminator
                 or OpCode.ShiftLeft or OpCode.ShiftRight
                 or OpCode.And or OpCode.Or or OpCode.Xor
                 or OpCode.Not or OpCode.Negate => true,
-            >= OpCode.CheckEqual and <= OpCode.CheckLessOrEqual => true,
+            var comparison when comparison.IsComparison() => true,
             _ => false
         };
         if (!pureOperation)
@@ -148,8 +89,7 @@ public static class DeadCodeEliminator
         // array element's address can throw. Divide/remainder also remain until proven safe.
         for (var index = 1; index < instruction.Operands.Count; index++)
         {
-            if (instruction.Operands[index] is not (LocalVariable or Register or Immediate
-                or FloatLiteral or DoubleLiteral or StringLiteral or AddressOf { Target: LocalVariable }))
+            if (!OperandEffects.IsPureValue(instruction.Operands[index]))
                 return false;
         }
 

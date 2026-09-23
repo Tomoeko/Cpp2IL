@@ -704,22 +704,28 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
                 break;
             case Mnemonic.Test:
-                if (instruction.Op0Kind == OpKind.Register && instruction.Op1Kind == OpKind.Register && instruction.Op0Register == instruction.Op1Register)
+            case Mnemonic.Cmp:
+                operandSize = (instruction.Op0Kind == OpKind.Register ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize()) * 8;
+                if (operandSize is not (32 or 64))
                 {
-                    AddCompareInstruction(instruction.IP, ConvertOperand(instruction, 0), Imm(0));
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("Narrow integer comparison requires partial-register semantics: " + FormatInstruction(instruction)));
                     break;
                 }
-                AddTestInstruction(instruction.IP, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+                if (instruction.Mnemonic == Mnemonic.Cmp ||
+                    instruction.Op0Kind == OpKind.Register && instruction.Op1Kind == OpKind.Register && instruction.Op0Register == instruction.Op1Register)
+                    AddCompareInstruction(instruction.IP, ConvertOperand(instruction, 0), instruction.Mnemonic == Mnemonic.Test ? Imm(0) : ConvertOperand(instruction, 1), operandSize);
+                else
+                    AddTestInstruction(instruction.IP, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1), operandSize);
                 break;
-            case Mnemonic.Cmp:
-                AddCompareInstruction(instruction.IP, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
-                break;
-            case Mnemonic.Comiss: //comiss is just a floating point compare dest[31:0] == src[31:0]
-            case Mnemonic.Ucomiss: // same, but unsigned
-                AddCompareInstruction(instruction.IP, ConvertOperand(instruction, 0), ConvertScalarFloatOperand(instruction, 1, true, context));
+            case Mnemonic.Comiss:
+            case Mnemonic.Ucomiss:
+            case Mnemonic.Maxss:
+            case Mnemonic.Minss:
+                // These operations have unordered/NaN and signed-zero behavior which integer flags do not model.
+                Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("Floating comparison semantics are not recovered: " + FormatInstruction(instruction)));
                 break;
 
-            case Mnemonic.Cmove: // move if condition
+            case Mnemonic.Cmove:
             case Mnemonic.Cmovne:
             case Mnemonic.Cmova:
             case Mnemonic.Cmovg:
@@ -731,150 +737,31 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Cmovle:
             case Mnemonic.Cmovs:
             case Mnemonic.Cmovns:
-                switch (instruction.Mnemonic)
+                if (instruction.Op1Kind == OpKind.Memory)
                 {
-                    case Mnemonic.Cmove: // equals
-                        Add(instruction.IP, ISIL.OpCode.Not, new ISIL.Register(null, "TEMP"), new ISIL.Register(null, "ZF")); // TEMP = !ZF
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), new ISIL.Register(null, "TEMP")); // skip if not eq
-                        break;
-                    case Mnemonic.Cmovne: // not equals
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), new ISIL.Register(null, "ZF")); // skip if eq
-                        break;
-                    case Mnemonic.Cmovs: // sign
-                        Add(instruction.IP, ISIL.OpCode.Not, new ISIL.Register(null, "TEMP"), new ISIL.Register(null, "SF")); // TEMP = !SF
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), new ISIL.Register(null, "TEMP")); // skip if not sign
-                        break;
-                    case Mnemonic.Cmovns: // not sign
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), new ISIL.Register(null, "SF")); // skip if sign
-                        break;
-                    case Mnemonic.Cmova:
-                    case Mnemonic.Cmovg: // greater
-                        var temp = new ISIL.Register(null, "TEMP");
-                        Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                        Add(instruction.IP, ISIL.OpCode.Not, temp, temp); // TEMP = !TEMP
-                        Add(instruction.IP, ISIL.OpCode.Or, temp, temp, new ISIL.Register(null, "ZF")); // TEMP = TEMP || ZF
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), temp); // skip if not gt
-                        break;
-                    case Mnemonic.Cmovae:
-                    case Mnemonic.Cmovge: // greater or eq
-                        temp = new ISIL.Register(null, "TEMP");
-                        Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                        Add(instruction.IP, ISIL.OpCode.Not, temp, temp); // TEMP = !TEMP
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), temp); // skip if not gt or eq
-                        break;
-                    case Mnemonic.Cmovb:
-                    case Mnemonic.Cmovl: // less
-                        temp = new ISIL.Register(null, "TEMP");
-                        Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), temp); // skip if not lt
-                        break;
-                    case Mnemonic.Cmovbe:
-                    case Mnemonic.Cmovle: // less or eq
-                        temp = new ISIL.Register(null, "TEMP");
-                        var temp2 = new ISIL.Register(null, "TEMP2");
-                        Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                        Add(instruction.IP, ISIL.OpCode.Not, temp2, new ISIL.Register(null, "ZF")); // TEMP2 = !ZF
-                        Add(instruction.IP, ISIL.OpCode.And, temp, temp, temp2); // TEMP = TEMP && TEMP2
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), temp); // skip if not lt or eq
-                        break;
+                    // The native memory read occurs even when the move condition is false.
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("Conditional move with an unconditional memory read is not recovered: " + FormatInstruction(instruction)));
+                    break;
                 }
-                Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1)); // set if cond
+                Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), FlagCondition(instruction.IP, instruction.ConditionCode, invert: true));
+                Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
                 Add(instruction.IP + 1, ISIL.OpCode.Nop);
                 break;
 
-            // Convert a flag condition into the (byte) destination as 0/1, mirroring the Cmov conditions.
-            case Mnemonic.Sete: // ZF
-            case Mnemonic.Setne: // !ZF
-            case Mnemonic.Seta: // above: !CF && !ZF
-            case Mnemonic.Setae: // above or equal: !CF
-            case Mnemonic.Setb: // below: CF
-            case Mnemonic.Setbe: // below or equal: CF || ZF
-            case Mnemonic.Setg: // greater: !ZF && SF == OF
-            case Mnemonic.Setge: // greater or equal: SF == OF
-            case Mnemonic.Setl: // less: SF != OF
-            case Mnemonic.Setle: // less or equal: ZF || SF != OF
-            case Mnemonic.Sets: // SF
-            case Mnemonic.Setns: // !SF
-                {
-                    var dest = ConvertOperand(instruction, 0);
-                    var cf = new ISIL.Register(null, "CF");
-                    var zf = new ISIL.Register(null, "ZF");
-                    var sf = new ISIL.Register(null, "SF");
-                    var of = new ISIL.Register(null, "OF");
-                    var temp = new ISIL.Register(null, "TEMP");
-
-                    switch (instruction.Mnemonic)
-                    {
-                        case Mnemonic.Sete:
-                            Add(instruction.IP, ISIL.OpCode.Move, dest, zf);
-                            break;
-                        case Mnemonic.Setne:
-                            Add(instruction.IP, ISIL.OpCode.CheckEqual, dest, zf, Imm(0));
-                            break;
-                        case Mnemonic.Setb:
-                            Add(instruction.IP, ISIL.OpCode.Move, dest, cf);
-                            break;
-                        case Mnemonic.Setae:
-                            Add(instruction.IP, ISIL.OpCode.CheckEqual, dest, cf, Imm(0));
-                            break;
-                        case Mnemonic.Seta:
-                            Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, cf, Imm(0)); // TEMP = !CF
-                            Add(instruction.IP, ISIL.OpCode.CheckEqual, dest, zf, Imm(0)); // dest = !ZF
-                            Add(instruction.IP, ISIL.OpCode.And, dest, dest, temp); // dest = !CF && !ZF
-                            break;
-                        case Mnemonic.Setbe:
-                            Add(instruction.IP, ISIL.OpCode.Or, dest, cf, zf); // dest = CF || ZF
-                            break;
-                        case Mnemonic.Sets:
-                            Add(instruction.IP, ISIL.OpCode.Move, dest, sf);
-                            break;
-                        case Mnemonic.Setns:
-                            Add(instruction.IP, ISIL.OpCode.CheckEqual, dest, sf, Imm(0));
-                            break;
-                        case Mnemonic.Setge:
-                            Add(instruction.IP, ISIL.OpCode.CheckEqual, dest, sf, of); // dest = SF == OF
-                            break;
-                        case Mnemonic.Setl:
-                            Add(instruction.IP, ISIL.OpCode.CheckNotEqual, dest, sf, of); // dest = SF != OF
-                            break;
-                        case Mnemonic.Setg:
-                            Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, sf, of); // TEMP = SF == OF
-                            Add(instruction.IP, ISIL.OpCode.CheckEqual, dest, zf, Imm(0)); // dest = !ZF
-                            Add(instruction.IP, ISIL.OpCode.And, dest, dest, temp); // dest = !ZF && SF == OF
-                            break;
-                        case Mnemonic.Setle:
-                            Add(instruction.IP, ISIL.OpCode.CheckNotEqual, temp, sf, of); // TEMP = SF != OF
-                            Add(instruction.IP, ISIL.OpCode.Or, dest, temp, zf); // dest = ZF || SF != OF
-                            break;
-                    }
-                    break;
-                }
-
-            case Mnemonic.Maxss: // dest < src ? src : dest
-            case Mnemonic.Minss: // dest > src ? src : dest
-                {
-                    var dest = ConvertOperand(instruction, 0);
-                    var src = ConvertOperand(instruction, 1);
-                    AddCompareInstruction(instruction.IP, dest, src); // compare dest & src
-                    if (instruction.Mnemonic == Mnemonic.Maxss)
-                    {
-                        var temp = new ISIL.Register(null, "TEMP");
-                        Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), temp); // enter if dest < src
-                    }
-                    else
-                    {
-                        var temp = new ISIL.Register(null, "TEMP");
-                        Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                        Add(instruction.IP, ISIL.OpCode.Not, temp, temp); // TEMP = !TEMP
-                        Add(instruction.IP, ISIL.OpCode.Or, temp, temp, new ISIL.Register(null, "ZF")); // TEMP = TEMP || ZF
-                        Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), temp); // enter if dest > src
-                    }
-
-                    Add(instruction.IP, ISIL.OpCode.Move, dest, src); // dest = src
-                    Add(instruction.IP + 1, ISIL.OpCode.Nop); // exit for IF
-                    break;
-                }
+            case Mnemonic.Sete:
+            case Mnemonic.Setne:
+            case Mnemonic.Seta:
+            case Mnemonic.Setae:
+            case Mnemonic.Setb:
+            case Mnemonic.Setbe:
+            case Mnemonic.Setg:
+            case Mnemonic.Setge:
+            case Mnemonic.Setl:
+            case Mnemonic.Setle:
+            case Mnemonic.Sets:
+            case Mnemonic.Setns:
+                Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), FlagCondition(instruction.IP, instruction.ConditionCode));
+                break;
 
             case Mnemonic.Cmpxchg: // compare and exchange
                 {
@@ -888,7 +775,13 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     });
                     var dest = ConvertOperand(instruction, 0);
                     var src = ConvertOperand(instruction, 1);
-                    AddCompareInstruction(instruction.IP, accumulator, dest); // compare dest & accumulator
+                    operandSize = instruction.Op1Register.GetSize() * 8;
+                    if (operandSize is not (32 or 64))
+                    {
+                        Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("Narrow compare-exchange is not recovered: " + FormatInstruction(instruction)));
+                        break;
+                    }
+                    AddCompareInstruction(instruction.IP, accumulator, dest, operandSize); // compare dest & accumulator
                     Add(instruction.IP, ISIL.OpCode.Not, new ISIL.Register(null, "TEMP"), new ISIL.Register(null, "ZF")); // TEMP = !ZF
                     Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.IP + 1), new ISIL.Register(null, "TEMP")); // if accumulator == dest
                                                                                                                            // SET ZF = 1
@@ -929,104 +822,19 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
                 goto default;
             case Mnemonic.Je:
-                if (instruction.Op0Kind != OpKind.Register)
-                {
-                    var jumpTarget = instruction.NearBranchTarget;
-
-                    Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(jumpTarget), new ISIL.Register(null, "ZF")); // if ZF == 1
-                    break;
-                }
-
-                goto default;
             case Mnemonic.Jne:
-                if (instruction.Op0Kind != OpKind.Register)
-                {
-                    var jumpTarget = instruction.NearBranchTarget;
-
-                    Add(instruction.IP, ISIL.OpCode.Not, new ISIL.Register(null, "TEMP"), new ISIL.Register(null, "ZF")); // TEMP = !ZF
-                    Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(jumpTarget), new ISIL.Register(null, "TEMP"));
-                    break;
-                }
-                goto default;
             case Mnemonic.Js:
-                if (instruction.Op0Kind != OpKind.Register)
-                {
-                    var jumpTarget = instruction.NearBranchTarget;
-
-                    Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(jumpTarget), new ISIL.Register(null, "SF")); // if SF == 1
-                    break;
-                }
-
-                goto default;
             case Mnemonic.Jns:
-                if (instruction.Op0Kind != OpKind.Register)
-                {
-                    var jumpTarget = instruction.NearBranchTarget;
-
-                    Add(instruction.IP, ISIL.OpCode.Not, new ISIL.Register(null, "TEMP"), new ISIL.Register(null, "SF")); // TEMP = !SF
-                    Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(jumpTarget), new ISIL.Register(null, "TEMP"));
-                    break;
-                }
-
-                goto default;
             case Mnemonic.Jg:
             case Mnemonic.Ja:
-                if (instruction.Op0Kind != OpKind.Register)
-                {
-                    var jumpTarget = instruction.NearBranchTarget;
-                    var temp = new ISIL.Register(null, "TEMP");
-                    var temp2 = new ISIL.Register(null, "TEMP2");
-
-                    Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                    Add(instruction.IP, ISIL.OpCode.Not, temp2, new ISIL.Register(null, "ZF")); // TEMP2 = !ZF
-                    Add(instruction.IP, ISIL.OpCode.And, temp, temp, temp2); // TEMP = TEMP && TEMP2
-                    Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(jumpTarget), temp);
-                    break;
-                }
-
-                goto default;
             case Mnemonic.Jl:
             case Mnemonic.Jb:
-                if (instruction.Op0Kind != OpKind.Register)
-                {
-                    var jumpTarget = instruction.NearBranchTarget;
-                    var temp = new ISIL.Register(null, "TEMP");
-
-                    Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                    Add(instruction.IP, ISIL.OpCode.Not, temp, temp); // TEMP = !TEMP
-                    Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(jumpTarget), temp);
-                    break;
-                }
-
-                goto default;
             case Mnemonic.Jge:
             case Mnemonic.Jae:
-                if (instruction.Op0Kind != OpKind.Register)
-                {
-                    var jumpTarget = instruction.NearBranchTarget;
-                    var temp = new ISIL.Register(null, "TEMP");
-
-                    Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                    Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(jumpTarget), temp);
-                    break;
-                }
-
-                goto default;
             case Mnemonic.Jle:
             case Mnemonic.Jbe:
-                if (instruction.Op0Kind != OpKind.Register)
-                {
-                    var jumpTarget = instruction.NearBranchTarget;
-                    var temp = new ISIL.Register(null, "TEMP");
-
-                    Add(instruction.IP, ISIL.OpCode.CheckEqual, temp, new ISIL.Register(null, "SF"), new ISIL.Register(null, "OF")); // TEMP = SF == OF
-                    Add(instruction.IP, ISIL.OpCode.Not, temp, temp); // TEMP = !TEMP
-                    Add(instruction.IP, ISIL.OpCode.Or, temp, temp, new ISIL.Register(null, "ZF")); // TEMP = TEMP || ZF
-                    Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(jumpTarget), temp);
-                    break;
-                }
-
-                goto default;
+                Add(instruction.IP, ISIL.OpCode.ConditionalJump, Imm(instruction.NearBranchTarget), FlagCondition(instruction.IP, instruction.ConditionCode));
+                break;
             case Mnemonic.Xchg:
                 Add(instruction.IP, ISIL.OpCode.Move, new ISIL.Register(null, "TEMP"), ConvertOperand(instruction, 0)); // TEMP = op0
                 Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1)); // op0 = op1
@@ -1047,40 +855,108 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 break;
         }
 
-        void AddCompareInstruction(ulong ip, ISIL.IOperand op0, ISIL.IOperand op1)
+        // Jcc, setcc, and cmovcc share the same architectural flag predicates. Keep their
+        // boolean operations unannotated: a comparison's result is a 0/1 value, not a native-width integer.
+        ISIL.IOperand FlagCondition(ulong ip, ConditionCode condition, bool invert = false)
         {
-            var temp1 = new ISIL.Register(null, "TEMP1");
-            var temp2 = new ISIL.Register(null, "TEMP2");
-            var temp3 = new ISIL.Register(null, "TEMP3");
-            var temp4 = new ISIL.Register(null, "TEMP4");
-            var temp5 = new ISIL.Register(null, "TEMP5");
-
-            Add(ip, ISIL.OpCode.CheckLess, new ISIL.Register(null, "CF"), op0, op1); // CF = op1 < op2
-            Add(ip, ISIL.OpCode.Subtract, temp1, op0, op1); // temp1 = op1 - op2
-            Add(ip, ISIL.OpCode.Xor, temp2, op0, op1); // temp2 = op1 ^ op2
-            Add(ip, ISIL.OpCode.Xor, temp3, op0, temp1); // temp3 = op1 ^ temp1
-            Add(ip, ISIL.OpCode.And, temp4, temp2, temp3); // temp4 = temp2 & temp3
-            Add(ip, ISIL.OpCode.CheckLess, new ISIL.Register(null, "OF"), temp4, Imm(0)); // OF = temp4 < 0
-            Add(ip, ISIL.OpCode.CheckLess, new ISIL.Register(null, "SF"), temp1, Imm(0)); // SF = temp1 < 0
-            Add(ip, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), temp1, Imm(0)); // ZF = temp1 == 0
-            Add(ip, ISIL.OpCode.And, temp5, temp2, Imm(1)); // temp5 = tmp2 & 1
-            Add(ip, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "PF"), temp5, Imm(0)); // PF = temp5 == 0
+            var cf = new ISIL.Register(null, "CF");
+            var zf = new ISIL.Register(null, "ZF");
+            var sf = new ISIL.Register(null, "SF");
+            var of = new ISIL.Register(null, "OF");
+            var temp = new ISIL.Register(null, "CONDITION");
+            var temp2 = new ISIL.Register(null, "CONDITION2");
+            ISIL.IOperand result;
+            switch (condition)
+            {
+                case ConditionCode.e: result = zf; break;
+                case ConditionCode.ne:
+                    Add(ip, ISIL.OpCode.CheckEqual, temp, zf, Imm(0));
+                    result = temp;
+                    break;
+                case ConditionCode.b: result = cf; break;
+                case ConditionCode.ae:
+                    Add(ip, ISIL.OpCode.CheckEqual, temp, cf, Imm(0));
+                    result = temp;
+                    break;
+                case ConditionCode.a:
+                    Add(ip, ISIL.OpCode.CheckEqual, temp, cf, Imm(0));
+                    Add(ip, ISIL.OpCode.CheckEqual, temp2, zf, Imm(0));
+                    Add(ip, ISIL.OpCode.And, temp, temp, temp2);
+                    result = temp;
+                    break;
+                case ConditionCode.be:
+                    Add(ip, ISIL.OpCode.Or, temp, cf, zf);
+                    result = temp;
+                    break;
+                case ConditionCode.s: result = sf; break;
+                case ConditionCode.ns:
+                    Add(ip, ISIL.OpCode.CheckEqual, temp, sf, Imm(0));
+                    result = temp;
+                    break;
+                case ConditionCode.ge:
+                case ConditionCode.l:
+                    Add(ip, condition == ConditionCode.ge ? ISIL.OpCode.CheckEqual : ISIL.OpCode.CheckNotEqual, temp, sf, of);
+                    result = temp;
+                    break;
+                case ConditionCode.g:
+                    Add(ip, ISIL.OpCode.CheckEqual, temp, sf, of);
+                    Add(ip, ISIL.OpCode.CheckEqual, temp2, zf, Imm(0));
+                    Add(ip, ISIL.OpCode.And, temp, temp, temp2);
+                    result = temp;
+                    break;
+                case ConditionCode.le:
+                    Add(ip, ISIL.OpCode.CheckNotEqual, temp, sf, of);
+                    Add(ip, ISIL.OpCode.Or, temp, temp, zf);
+                    result = temp;
+                    break;
+                default: throw new ArgumentOutOfRangeException(nameof(condition));
+            }
+            if (!invert)
+                return result;
+            Add(ip, ISIL.OpCode.CheckEqual, temp, result, Imm(0));
+            return temp;
         }
 
-        void AddTestInstruction(ulong ip, ISIL.IOperand op0, ISIL.IOperand op1)
+        void AddCompareInstruction(ulong ip, ISIL.IOperand op0, ISIL.IOperand op1, int width)
         {
-            var temp = new ISIL.Register(null, "TEMP");
-            var temp2 = new ISIL.Register(null, "TEMP2");
-            var temp5 = new ISIL.Register(null, "TEMP5");
+            op0 = CaptureComparisonOperand(ip, op0, "COMPARE_LEFT");
+            op1 = CaptureComparisonOperand(ip, op1, "COMPARE_RIGHT");
+            var difference = new ISIL.Register(null, "TEMP1");
+            var operandsXor = new ISIL.Register(null, "TEMP2");
+            var resultXor = new ISIL.Register(null, "TEMP3");
+            var overflowBits = new ISIL.Register(null, "TEMP4");
 
-            Add(ip, ISIL.OpCode.And, temp, op0, op1); // temp = op0 & op1
-            Add(ip, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), temp, Imm(0)); // ZF = temp == 0
-            Add(ip, ISIL.OpCode.CheckLess, new ISIL.Register(null, "SF"), temp, Imm(0)); // SF = temp < 0
-            Add(ip, ISIL.OpCode.Move, new ISIL.Register(null, "CF"), Imm(0));  // CF = 0
-            Add(ip, ISIL.OpCode.Move, new ISIL.Register(null, "OF"), Imm(0));  // OF = 0
-            Add(ip, ISIL.OpCode.Xor, temp2, temp, Imm(0)); // temp2 = temp ^ 0
-            Add(ip, ISIL.OpCode.And, temp5, temp2, Imm(1)); // temp5 = temp2 & 1
-            Add(ip, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "PF"), temp5, Imm(0)); // PF = temp5 == 0
+            Add(ip, ISIL.OpCode.CheckLessUnsigned, new ISIL.Register(null, "CF"), op0, op1).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.Subtract, difference, op0, op1).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.Xor, operandsXor, op0, op1).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.Xor, resultXor, op0, difference).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.And, overflowBits, operandsXor, resultXor).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.CheckLess, new ISIL.Register(null, "OF"), overflowBits, Imm(0)).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.CheckLess, new ISIL.Register(null, "SF"), difference, Imm(0)).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), difference, Imm(0)).IntegerBitWidth = width;
+            // Parity consumers remain unsupported; do not fabricate a parity value from the low bit.
+        }
+
+        void AddTestInstruction(ulong ip, ISIL.IOperand op0, ISIL.IOperand op1, int width)
+        {
+            op0 = CaptureComparisonOperand(ip, op0, "COMPARE_LEFT");
+            op1 = CaptureComparisonOperand(ip, op1, "COMPARE_RIGHT");
+            var bits = new ISIL.Register(null, "TEMP");
+            Add(ip, ISIL.OpCode.And, bits, op0, op1).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), bits, Imm(0)).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.CheckLess, new ISIL.Register(null, "SF"), bits, Imm(0)).IntegerBitWidth = width;
+            Add(ip, ISIL.OpCode.Move, new ISIL.Register(null, "CF"), Imm(0));
+            Add(ip, ISIL.OpCode.Move, new ISIL.Register(null, "OF"), Imm(0));
+        }
+
+        ISIL.IOperand CaptureComparisonOperand(ulong ip, ISIL.IOperand operand, string name)
+        {
+            if (operand is not ISIL.MemoryOperand)
+                return operand;
+            // Native CMP reads each operand once, even though several flags depend on it.
+            var captured = new ISIL.Register(null, name);
+            Add(ip, ISIL.OpCode.Move, captured, operand);
+            return captured;
         }
     }
 

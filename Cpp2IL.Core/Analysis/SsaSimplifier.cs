@@ -17,13 +17,16 @@ public static class SsaSimplifier
         // dest -> value for every forwardable copy/constant. SSA's single-assignment property means a
         // local is defined at most once, so there is never a conflicting entry for the same key.
         var forwarded = new Dictionary<LocalVariable, IOperand>();
+        var mutableStorage = OperandEffects.LocalsWithMutableStorage(cfg.Instructions);
 
         foreach (var block in cfg.Blocks)
             foreach (var instruction in block.Instructions)
-                if (instruction.OpCode == OpCode.Move
+                if (instruction.OpCode == OpCode.Move && instruction.IntegerBitWidth == 0
                     && instruction.Operands[0] is LocalVariable dest
                     && !parameterLocals.Contains(dest)
-                    && IsForwardable(instruction.Operands[1]))
+                    && !mutableStorage.Contains(dest)
+                    && OperandEffects.IsPureValue(instruction.Operands[1])
+                    && (instruction.Operands[1] is not LocalVariable source || !mutableStorage.Contains(source)))
                     forwarded[dest] = instruction.Operands[1];
 
         if (forwarded.Count == 0)
@@ -101,48 +104,16 @@ public static class SsaSimplifier
         }
     }
 
-    // Every local read by some instruction. The single write position (a plain local destination) is
-    // excluded; memory and field operands always contribute their address/object locals as reads.
+    // Include nested operands and addressed slots, excluding only the actual destination position.
     private static HashSet<LocalVariable> CollectReadLocals(ISILControlFlowGraph cfg)
     {
         var reads = new HashSet<LocalVariable>();
 
         foreach (var block in cfg.Blocks)
             foreach (var instruction in block.Instructions)
-            {
-                var destination = instruction.Destination;
-
-                foreach (var operand in instruction.Operands)
-                {
-                    switch (operand)
-                    {
-                        case LocalVariable local when !ReferenceEquals(local, destination):
-                            reads.Add(local);
-                            break;
-                        case MemoryOperand memory:
-                            if (memory.Base is LocalVariable baseLocal)
-                                reads.Add(baseLocal);
-                            if (memory.Index is LocalVariable indexLocal)
-                                reads.Add(indexLocal);
-                            break;
-                        case FieldReference field when field.Local is { } fieldLocal:
-                            reads.Add(fieldLocal);
-                            break;
-                    }
-                }
-            }
+                foreach (var local in OperandEffects.ReadLocals(instruction))
+                    reads.Add(local);
 
         return reads;
     }
-
-    // Pure values that are safe to duplicate across uses: other locals (copies) and constants. Memory
-    // and field loads are excluded so a load is never re-executed; they are handled post-SSA instead.
-    private static bool IsForwardable(IOperand value) =>
-        value switch
-        {
-            LocalVariable => true,
-            MemoryOperand => false,
-            FieldReference => false,
-            _ => true
-        };
 }

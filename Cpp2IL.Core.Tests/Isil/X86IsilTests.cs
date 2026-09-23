@@ -38,12 +38,10 @@ public class X86IsilTests
         var OF = new Register(null, "OF");
         var SF = new Register(null, "SF");
         var ZF = new Register(null, "ZF");
-        var PF = new Register(null, "PF");
         var TEMP1 = new Register(null, "TEMP1");
         var TEMP2 = new Register(null, "TEMP2");
         var TEMP3 = new Register(null, "TEMP3");
         var TEMP4 = new Register(null, "TEMP4");
-        var TEMP5 = new Register(null, "TEMP5");
 
         var instructions = new List<Instruction>();
 
@@ -51,7 +49,7 @@ public class X86IsilTests
             instructions.Add(new Instruction(index, opCode, Ops(operands)));
         
         Add(0, OpCode.Move, rax, new MemoryOperand(rcx, null, 0x48));
-        Add(1, OpCode.CheckLess, CF, rax, 0);
+        Add(1, OpCode.CheckLessUnsigned, CF, rax, 0);
         Add(2, OpCode.Subtract, TEMP1, rax, 0);
         Add(3, OpCode.Xor, TEMP2, rax, 0);
         Add(4, OpCode.Xor, TEMP3, rax, TEMP1);
@@ -59,17 +57,17 @@ public class X86IsilTests
         Add(6, OpCode.CheckLess, OF, TEMP4, 0);
         Add(7, OpCode.CheckLess, SF, TEMP1, 0);
         Add(8, OpCode.CheckEqual, ZF, TEMP1, 0);
-        Add(9, OpCode.And, TEMP5, TEMP2, 1);
-        Add(10, OpCode.CheckEqual, PF, TEMP5, 0);
-        Add(11, OpCode.ConditionalJump, 18, ZF);
-        Add(12, OpCode.Move, rdx, rcx);
-        Add(13, OpCode.Move, r9, 0);
-        Add(14, OpCode.Move, rcx, rax);
-        Add(15, OpCode.Move, r8, 0);
-        Add(16, OpCode.CallVoid, (ulong)0x180267A70, rcx, rdx, r8, r9);
-        Add(17, OpCode.Return);
-        Add(18, OpCode.Return);
-        
+        for (var i = 1; i <= 8; i++)
+            instructions[i].IntegerBitWidth = 64;
+        Add(9, OpCode.ConditionalJump, 16, ZF);
+        Add(10, OpCode.Move, rdx, rcx);
+        Add(11, OpCode.Move, r9, 0);
+        Add(12, OpCode.Move, rcx, rax);
+        Add(13, OpCode.Move, r8, 0);
+        Add(14, OpCode.CallVoid, (ulong)0x180267A70, rcx, rdx, r8, r9);
+        Add(15, OpCode.Return);
+        Add(16, OpCode.Return);
+
         Assert.That(isil.Count == instructions.Count,
             $"expected instruction count to be {instructions.Count}, but got {isil.Count}");
 

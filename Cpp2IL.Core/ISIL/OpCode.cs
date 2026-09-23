@@ -125,5 +125,14 @@ public enum OpCode
     /// <summary>
     /// Throws a new instance of the exception type described by op 1.
     /// </summary>
-    Throw
+    Throw,
+
+    /// <summary>Unsigned integer comparison: op 2 is less than op 3.</summary>
+    CheckLessUnsigned,
+    /// <summary>Unsigned integer comparison: op 2 is greater than op 3.</summary>
+    CheckGreaterUnsigned,
+    /// <summary>Unsigned integer comparison: op 2 is less than or equal to op 3.</summary>
+    CheckLessOrEqualUnsigned,
+    /// <summary>Unsigned integer comparison: op 2 is greater than or equal to op 3.</summary>
+    CheckGreaterOrEqualUnsigned,
 }

@@ -11,6 +11,9 @@ public class Instruction : IOperand
 {
     public int Index;
 
+    /// <summary>Native integer operand width in bits; zero means unspecified. This is not the width of a Boolean result.</summary>
+    public int IntegerBitWidth { get; set; }
+
     public OpCode OpCode
     {
         get;
@@ -111,6 +114,10 @@ public class Instruction : IOperand
             case OpCode.CheckNotEqual:
             case OpCode.CheckGreaterOrEqual:
             case OpCode.CheckLessOrEqual:
+            case OpCode.CheckLessUnsigned:
+            case OpCode.CheckGreaterUnsigned:
+            case OpCode.CheckLessOrEqualUnsigned:
+            case OpCode.CheckGreaterOrEqualUnsigned:
             case OpCode.Newobj:
             case OpCode.Box:
                 if (newDestination != null)
@@ -171,6 +178,7 @@ public class Instruction : IOperand
             OpCode.CallVoid or OpCode.Phi => _operands.Skip(1).ToList(),
             OpCode.CheckEqual or OpCode.CheckGreater or OpCode.CheckLess
                 or OpCode.CheckNotEqual or OpCode.CheckGreaterOrEqual or OpCode.CheckLessOrEqual
+                or OpCode.CheckLessUnsigned or OpCode.CheckGreaterUnsigned or OpCode.CheckLessOrEqualUnsigned or OpCode.CheckGreaterOrEqualUnsigned
                 => [_operands[1], _operands[2]],
 
             _ => []
@@ -224,7 +232,7 @@ public class Instruction : IOperand
         operand switch
         {
             Register or StackOffset or LocalVariable => false,
-            AddressOf or ArrayAccess or ArrayLength => false,
+            AddressOf or ArrayAccess or ArrayLength or FieldReference => false,
             MemoryOperand memory => memory.IsConstant,
             _ => true
         };
@@ -241,6 +249,9 @@ public class Instruction : IOperand
             return false;
 
         if (OpCode != other.OpCode)
+            return false;
+
+        if (IntegerBitWidth != other.IntegerBitWidth)
             return false;
 
         if (Index != other.Index)

@@ -329,7 +329,7 @@ public static class LocalVariables
 
         foreach (var instruction in method.ControlFlowGraph!.Instructions)
         {
-            if (instruction.OpCode is < OpCode.CheckEqual or > OpCode.CheckLessOrEqual)
+            if (!instruction.OpCode.IsComparison())
                 continue;
 
             if (instruction.Destination is LocalVariable destination)

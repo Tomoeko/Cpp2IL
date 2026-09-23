@@ -26,14 +26,12 @@ public static class Simplifier
 
     private readonly ref struct SimplifierContext(MethodAnalysisContext method)
     {
-        private readonly Dictionary<Block, Dictionary<Instruction, OperandList>> _sourceCache = [];
         private readonly MethodAnalysisContext _method = method;
         private readonly ISILControlFlowGraph _graph = method.ControlFlowGraph!;
+        private readonly HashSet<LocalVariable> _mutableStorage = OperandEffects.LocalsWithMutableStorage(method.ControlFlowGraph!.Instructions);
 
         public void Process()
         {
-            PopulateSourceCache();
-
             InlineLocals();
 
             // Repeat until no change
@@ -44,29 +42,6 @@ public static class Simplifier
 
             _graph.RemoveNops();
             _graph.RemoveEmptyBlocks();
-        }
-
-        private void PopulateSourceCache()
-        {
-            #if NET5_0_OR_GREATER
-            _sourceCache.EnsureCapacity(_graph.Blocks.Count);
-            #endif
-
-            foreach (var block in _graph.Blocks)
-            {
-                var sourceCache = new Dictionary<Instruction, OperandList>(block.Instructions.Count);
-                foreach (var instruction in block.Instructions)
-                {
-                    sourceCache[instruction] = instruction.Sources;
-                }
-
-                _sourceCache[block] = sourceCache;
-            }
-        }
-
-        private void UpdateSourceCache(Block block, Instruction instruction)
-        {
-            _sourceCache[block][instruction] = instruction.Operands;
         }
 
         private bool InlineConstantsSinglePass()
@@ -93,7 +68,11 @@ public static class Simplifier
                     var instruction = block.Instructions[i];
 
                     // If it's move and it moves something to local, replace and remove it
-                    if (instruction.OpCode == OpCode.Move && instruction.Operands[0] is LocalVariable local)
+                    if (instruction.OpCode == OpCode.Move && instruction.IntegerBitWidth == 0
+                        && instruction.Operands[0] is LocalVariable local
+                        && !_mutableStorage.Contains(local)
+                        && OperandEffects.IsPureValue(instruction.Operands[1])
+                        && (instruction.Operands[1] is not LocalVariable source || !_mutableStorage.Contains(source)))
                     {
                         if (IsLocalUsedAfterInstruction(block, i + 1, local, out var usedByMemory))
                         {
@@ -102,7 +81,8 @@ public static class Simplifier
 
                             // A local with several definitions is not in SSA form, so its value at a join
                             // depends on the path taken; don't carry this definition across that join.
-                            var stopAtJoins = definitionCounts.TryGetValue(local, out var defs) && defs > 1;
+                            var stopAtJoins = (definitionCounts.TryGetValue(local, out var defs) && defs > 1)
+                                || (instruction.Operands[1] is LocalVariable copied && definitionCounts.ContainsKey(copied));
 
                             // Replace local
                             ReplaceLocalsUntilReassignment(block, i + 1, local, instruction.Operands[1], stopAtJoins);
@@ -115,7 +95,6 @@ public static class Simplifier
                             // Change that move to nop
                             instruction.OpCode = OpCode.Nop;
                             instruction.SetOperands();
-                            UpdateSourceCache(block, instruction);
 
                             changed = true;
                         }
@@ -155,11 +134,13 @@ public static class Simplifier
                     var instruction = block.Instructions[i];
 
                     // If it's move and it moves local to local, replace and remove it
-                    if (instruction is { OpCode: OpCode.Move, Operands: [LocalVariable local, LocalVariable source] })
+                    if (instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0, Operands: [LocalVariable local, LocalVariable source] }
+                        && !_mutableStorage.Contains(local) && !_mutableStorage.Contains(source))
                     {
                         // A local with several definitions is not in SSA form, so its value at a join
                         // depends on the path taken; don't carry this definition across that join.
-                        var stopAtJoins = definitionCounts.TryGetValue(local, out var defs) && defs > 1;
+                        var stopAtJoins = (definitionCounts.TryGetValue(local, out var defs) && defs > 1)
+                            || definitionCounts.ContainsKey(source);
 
                         // Replace local with source
                         ReplaceLocalsUntilReassignment(block, i + 1, local, source, stopAtJoins);
@@ -175,7 +156,6 @@ public static class Simplifier
                         // Change that move to nop
                         instruction.OpCode = OpCode.Nop;
                         instruction.SetOperands();
-                        UpdateSourceCache(block, instruction);
                     }
                 }
 
@@ -225,8 +205,10 @@ public static class Simplifier
                 {
                     var instruction = currentBlock.Instructions[i];
 
-                    // Stop on this branch when reassigned
-                    if (instruction.Destination is LocalVariable destLocal && destLocal == local)
+                    // A copied value is a snapshot: it cannot become a read of a later assignment
+                    // to the source slot. Conservatively stop before either slot is reassigned.
+                    if (instruction.Destination is LocalVariable destLocal &&
+                        (destLocal == local || ReferenceEquals(destLocal, replacement)))
                         return;
 
                     // Replace operands
@@ -237,7 +219,6 @@ public static class Simplifier
                         if (operand is LocalVariable usedLocal && usedLocal == local)
                         {
                             instruction.SetOperand(j, replacement);
-                            UpdateSourceCache(currentBlock, instruction);
                         }
 
                         // A memory operand's base/index holds an address, so only a local replacement may
@@ -252,7 +233,6 @@ public static class Simplifier
                                 memory.Index = replacement;
 
                             instruction.SetOperand(j, memory);
-                            UpdateSourceCache(currentBlock, instruction);
                         }
 
                         // The object a field is accessed on is an address just like a memory base.
@@ -296,66 +276,16 @@ public static class Simplifier
             {
                 var (currentBlock, index) = remaining.Pop();
 
-                var blockSources = _sourceCache[currentBlock];
-
                 // Process instructions
                 for (var i = index; i < currentBlock.Instructions.Count; i++)
                 {
                     var instruction = currentBlock.Instructions[i];
-                    var sources = blockSources[instruction];
-
-                    // Direct usage check
-                    if (sources.Contains(local))
+                    if (OperandEffects.ReadLocals(instruction).Contains(local))
+                    {
+                        // Nested operands read their receiver/address even in store destinations.
+                        usedByMemory = instruction.Operands.Any(operand => operand is not LocalVariable
+                            && OperandEffects.ReadLocals(operand).Contains(local));
                         return true;
-
-                    // A field access reads the object it is on, whether the field is being read or written,
-                    // so the destination has to be considered too - a store is not in Sources.
-                    foreach (var operand in instruction.Operands)
-                    {
-                        if (operand is FieldReference field && field.Local == local)
-                        {
-                            usedByMemory = true;
-                            return true;
-                        }
-
-                        // Likewise, an array element or length reads the array, and taking a slot's address reads it
-                        // however the callee uses it - none of which are in Sources when they sit in a destination position.
-                        if (operand is ArrayAccess array && (array.Array == local || array.Index == local as IOperand))
-                        {
-                            usedByMemory = true;
-                            return true;
-                        }
-
-                        if (operand is ArrayLength length && length.Array == local)
-                        {
-                            usedByMemory = true;
-                            return true;
-                        }
-
-                        if (operand is AddressOf { Target: LocalVariable addressed } && addressed == local)
-                        {
-                            usedByMemory = true;
-                            return true;
-                        }
-                    }
-
-                    // Used in memory operand
-                    foreach (var source in sources)
-                    {
-                        if (source is MemoryOperand memory)
-                        {
-                            if (memory.Base is LocalVariable memLocal && memLocal == local)
-                            {
-                                usedByMemory = true;
-                                return true;
-                            }
-
-                            if (memory.Index is LocalVariable memLocal2 && memLocal2 == local)
-                            {
-                                usedByMemory = true;
-                                return true;
-                            }
-                        }
                     }
                 }
 
