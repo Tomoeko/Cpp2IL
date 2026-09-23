@@ -187,35 +187,10 @@ public static class MetadataResolver
             //Non-key function call. Try to find a single match
             if (!method.AppContext.MethodsByAddress.TryGetValue(target, out var targetMethods))
             {
-                // Not a managed method at all. It may be one of the runtime helpers built around an exception
-                // type, which either throw it themselves or build it and hand it back for the caller to raise.
-                if (ThrowHelperRecovery.GetThrownException(method.AppContext, target) is { } thrown)
-                {
-                    if (callInstruction.Destination is LocalVariable produced && method.ControlFlowGraph!.Instructions.Any(i => i.Sources.Any(s => ReferenceEquals(s, produced))))
-                    {
-                        callInstruction.OpCode = OpCode.Newobj;
-                        callInstruction.SetOperands(produced, thrown);
-                    }
-                    else
-                    {
-                        callInstruction.OpCode = OpCode.Throw;
-                        callInstruction.SetOperands(thrown);
-                    }
-
-                    continue;
-                }
-
-                // Otherwise it may be one of the raisers, which throw the exception they are given
-                var raisedIndex = callInstruction.OpCode == OpCode.CallVoid ? 1 : 2;
-
-                if (callInstruction.Operands.Count > raisedIndex && ThrowHelperRecovery.IsExceptionRaiser(method.AppContext, target))
-                {
-                    var raised = callInstruction.Operands[raisedIndex];
-
-                    callInstruction.OpCode = OpCode.Throw;
-                    callInstruction.SetOperands(raised);
-                }
-
+                // A referenced exception name or a reachable raiser does not prove this call's
+                // arguments, effects, return behavior or exception identity. Preserve the entire
+                // unresolved call for strict emission to diagnose. Key-function handling above is
+                // a separate recovery path, not authorized by these former helper heuristics.
                 continue;
             }
 
