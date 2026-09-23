@@ -1,0 +1,3 @@
+# Exception-region control
+
+Build this synthetic fixture with Unity 2021.3.35f1 Windows x64 Release IL2CPP. Its two retained methods explicitly raise a managed divide-by-zero exception, then exercise a typed catch and a finally block that mutates a by-reference counter on both normal and exceptional exits. The explicit throw keeps native integer-fault handling separate from the EH control. The independent harness checks results, exception types, and the counter after each call. This fixture is an investigation baseline until strict player-only recovery, exact-editor compilation, and a recovered Release player round trip pass.
