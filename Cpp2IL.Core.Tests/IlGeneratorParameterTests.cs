@@ -21,6 +21,7 @@ using ReflectionTypeAttributes = System.Reflection.TypeAttributes;
 namespace Cpp2IL.Core.Tests;
 
 /// <summary>Executes synthetic recovered IL on the test runtime; this is not Unity validation.</summary>
+[NonParallelizable]
 public partial class IlGeneratorParameterTests
 {
     private ApplicationAnalysisContext _app = null!;
@@ -29,14 +30,26 @@ public partial class IlGeneratorParameterTests
     private TypeDefinition _type = null!;
     private InjectedTypeAnalysisContext _typeContext = null!;
 
-    [SetUp]
-    public void SetUp()
+    [OneTimeSetUp]
+    public void LoadPublicTypeModel()
     {
         Cpp2IlApi.ResetInternalState();
         _app = TestGameLoader.LoadSimple2019Game();
         // Populate managed type identities from the public fixture; none of its method bodies
         // are executed. All instructions under test below are synthetic.
         _ = new AsmResolverDllOutputFormatEmpty().BuildAssemblies(_app);
+    }
+
+    [OneTimeTearDown]
+    public void ReleasePublicTypeModel()
+    {
+        Cpp2IlApi.ResetInternalState();
+    }
+
+    [SetUp]
+    public void SetUp()
+    {
+        // Each case still gets a fresh synthetic module, type, and method graph.
         var name = "Cpp2IL.Synthetic.Parameters." + Guid.NewGuid().ToString("N");
         _assembly = new AssemblyDefinition(name, new Version(1, 0, 0, 0));
         _module = new ModuleDefinition(name + ".dll", KnownCorLibs.MsCorLib_v4_0_0_0);

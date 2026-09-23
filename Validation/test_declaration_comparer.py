@@ -1,6 +1,7 @@
 """Mutation checks for the read-only declaration comparison boundary."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import shutil
 import subprocess
@@ -75,14 +76,22 @@ def main():
             run(["dotnet", "build", str(folder / "Fixture.csproj"), "-c", "Release", "--nologo", "-v", "quiet"])
             return folder / "bin/Release/net10.0/DeclarationFixtureTest.dll"
 
-        baseline = compile_case("baseline", SOURCE)
-        mutation = compile_case("mutation", SOURCE.replace("Pack = 4", "Pack = 8")
-                                .replace("UnmanagedType.U1", "UnmanagedType.I1")
-                                .replace("Limit = 31", "Limit = 37").replace("Marker(7)", "Marker(9)")
-                                .replace("where T : class", "where T : struct").replace("extra = 3", "extra = 4"))
-        body_only = compile_case("body-only", SOURCE.replace("return value + extra", "return value - extra"))
-        constructor_only = compile_case("attribute-constructor", SOURCE.replace(
-            'Choice((object)"fixture")', 'Choice("fixture")'))
+        # These projects have distinct output directories and no references to each other.
+        # Build them together; the subsequent comparisons still run in a fixed order.
+        with ThreadPoolExecutor(max_workers=4) as builds:
+            baseline_build = builds.submit(compile_case, "baseline", SOURCE)
+            mutation_build = builds.submit(compile_case, "mutation", SOURCE.replace("Pack = 4", "Pack = 8")
+                                           .replace("UnmanagedType.U1", "UnmanagedType.I1")
+                                           .replace("Limit = 31", "Limit = 37").replace("Marker(7)", "Marker(9)")
+                                           .replace("where T : class", "where T : struct").replace("extra = 3", "extra = 4"))
+            body_build = builds.submit(compile_case, "body-only", SOURCE.replace(
+                "return value + extra", "return value - extra"))
+            constructor_build = builds.submit(compile_case, "attribute-constructor", SOURCE.replace(
+                'Choice((object)"fixture")', 'Choice("fixture")'))
+            baseline = baseline_build.result()
+            mutation = mutation_build.result()
+            body_only = body_build.result()
+            constructor_only = constructor_build.result()
 
         def compare(label, candidate, expected):
             output = work / label
@@ -114,9 +123,13 @@ def main():
             run(["dotnet", "build", str(folder / "Reference.csproj"), "-c", "Release", "--nologo", "-v", "quiet"])
             return folder / "bin/Release/net10.0/Synthetic.EnumReference.dll"
 
-        enum_v1 = compile_enum_reference("enum-v1", "1.0.0.0")
-        enum_v2 = compile_enum_reference("enum-v2", "2.0.0.0")
-        enum_culture = compile_enum_reference("enum-culture", "1.0.0.0", "fr")
+        with ThreadPoolExecutor(max_workers=3) as builds:
+            enum_v1_build = builds.submit(compile_enum_reference, "enum-v1", "1.0.0.0")
+            enum_v2_build = builds.submit(compile_enum_reference, "enum-v2", "2.0.0.0")
+            enum_culture_build = builds.submit(compile_enum_reference, "enum-culture", "1.0.0.0", "fr")
+            enum_v1 = enum_v1_build.result()
+            enum_v2 = enum_v2_build.result()
+            enum_culture = enum_culture_build.result()
         external = compile_case("external-enum", SOURCE + '''
 public sealed class EnumMarkerAttribute : Attribute
 {

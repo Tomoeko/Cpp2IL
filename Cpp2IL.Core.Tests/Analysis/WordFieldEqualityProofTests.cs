@@ -7,15 +7,22 @@ using Cpp2IL.Core.Model.Contexts;
 
 namespace Cpp2IL.Core.Tests.Analysis;
 
+[NonParallelizable]
 public class WordFieldEqualityProofTests
 {
     private ApplicationAnalysisContext _app = null!;
 
-    [SetUp]
-    public void SetUp()
+    [OneTimeSetUp]
+    public void LoadPublicTypeModel()
     {
         Cpp2IlApi.ResetInternalState();
         _app = TestGameLoader.LoadSimple2019Game();
+    }
+
+    [OneTimeTearDown]
+    public void ReleasePublicTypeModel()
+    {
+        Cpp2IlApi.ResetInternalState();
     }
 
     [TestCase("short", OpCode.CheckEqual)]
