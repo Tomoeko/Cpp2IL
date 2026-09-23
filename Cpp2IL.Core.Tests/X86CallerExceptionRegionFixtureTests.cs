@@ -93,10 +93,14 @@ public class X86CallerExceptionRegionFixtureTests
                     Does.Contain("unsupported native handlers"));
                 Assert.That(app.InstructionSet.GetIsilFromMethod(method).Select(instruction => instruction.OpCode),
                     Is.EqualTo(new[] { OpCode.NotImplemented }));
-                return evidence.Value;
+                return (Evidence: evidence.Value,
+                    NativeTypeDescriptorRva: map.TryBlocks[0].Handlers[0].NativeTypeDescriptorRva);
             }).ToArray();
-            Assert.That(handlers[0].HandlerAddress, Is.EqualTo(handlers[1].HandlerAddress));
-            Assert.That(handlers[0].HandlerDataAddress, Is.Not.EqualTo(handlers[1].HandlerDataAddress));
+            Assert.That(handlers[0].Evidence.HandlerAddress, Is.EqualTo(handlers[1].Evidence.HandlerAddress));
+            Assert.That(handlers[0].Evidence.HandlerDataAddress, Is.Not.EqualTo(handlers[1].Evidence.HandlerDataAddress));
+            Assert.That(handlers[0].NativeTypeDescriptorRva, Is.Not.Null);
+            Assert.That(handlers[0].NativeTypeDescriptorRva, Is.EqualTo(handlers[1].NativeTypeDescriptorRva),
+                "A shared native C++ handler type does not identify a managed catch or finally clause.");
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }

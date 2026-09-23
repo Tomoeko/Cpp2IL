@@ -15,7 +15,7 @@ internal static class X64Eh4MapProof
     internal sealed record UnwindAction(uint NextOffset, byte Kind, uint? ActionRva, uint? ObjectOffset);
     internal sealed record TryBlock(uint LowState, uint HighState, uint CatchHighState,
         IReadOnlyList<Handler> Handlers);
-    internal sealed record Handler(byte Header, uint? Adjectives, uint? TypeRva,
+    internal sealed record Handler(byte Header, uint? Adjectives, uint? NativeTypeDescriptorRva,
         uint? CatchObjectOffset, uint FuncletRva, IReadOnlyList<uint> ContinuationRvas);
     internal sealed record IpState(uint Rva, int State);
 
@@ -146,8 +146,10 @@ internal static class X64Eh4MapProof
             }
             if ((header & 2) != 0)
             {
-                // MSVC type descriptors may reside in writable .data. Their bytes are
-                // not immutable type-identity evidence for managed catch matching.
+                // This is the native C++ handler type descriptor. The exact target's
+                // managed catch and finally share it; the managed catch type must be
+                // established separately from the funclet's runtime class check.
+                // Its bytes may also reside in writable .data.
                 if (!cursor.ReadUInt32(out var value) || !index.IsReadableFileBackedRva(value))
                     return false;
                 typeRva = value;
