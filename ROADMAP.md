@@ -145,6 +145,8 @@ A separate scalar-truncation baseline preserves two binary64-to-signed-integer m
 
 Exact-profile x64 recovery now checks the PE exception directory and every reachable native instruction before lifting. Malformed, chained or handler-bearing unwind regions remain unsupported; frame-free leaves require independent register and control-flow checks. Sixty-two focused checks pass, including two original native catch methods that the production lifter explicitly rejects. This protects reporting while catch/finally recovery remains unfinished. A separate null-throw helper investigation found constructor-exception suppression in the runtime; ordinary allocation/construction/throw lowering remains disabled until that behavior is preserved.
 
+A later SIMD audit removes eleven unproved scalar aliases: raw-bit and full-vector moves, packed bitwise operations, and incomplete shuffle/interleave expansion. Unsupported cases remain explicit even when their results are overwritten; 56 focused decoding, dead-code and emission checks pass. This change follows the completed scalar-truncation native checkpoint; its accepted-scope refresh is pending.
+
 Prioritize measured failure categories rather than adding broad pattern collections without evidence.
 
 | Feature group | Required focus |

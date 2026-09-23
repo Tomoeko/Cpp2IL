@@ -302,13 +302,24 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         switch (instruction.Mnemonic)
         {
             case Mnemonic.Mov:
-            case Mnemonic.Movaps: // Movaps is basically just a mov but with the potential future detail that the size is dependent on reg size
-            case Mnemonic.Movups: // Movaps but unaligned
-            case Mnemonic.Movd: // Mov but specifically dword
-            case Mnemonic.Movq: // Mov but specifically qword
-            case Mnemonic.Movdqa: // Movaps but multiple integers at once in theory
-            case Mnemonic.Movdqu: // DEST[127:0] := SRC[127:0]
                 Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+                break;
+            case Mnemonic.Movd:
+            case Mnemonic.Movq:
+            case Mnemonic.Movaps:
+            case Mnemonic.Movups:
+            case Mnemonic.Movdqa:
+            case Mnemonic.Movdqu:
+            case Mnemonic.Shufps:
+            case Mnemonic.Unpcklps:
+            case Mnemonic.Andps:
+            case Mnemonic.Orps:
+            case Mnemonic.Xorps:
+                // Raw-bit transfers, packed lanes and full-width memory accesses are not
+                // ordinary typed scalar moves/arithmetic. Even self-XOR requires an
+                // independently proved scalar projection before emitting a managed zero.
+                Add(instruction.IP, ISIL.OpCode.NotImplemented,
+                    new ISIL.StringLiteral("SIMD operation requires proved bit, lane and memory-width semantics: " + FormatInstruction(instruction)));
                 break;
             case Mnemonic.Cvtdq2ps:
             case Mnemonic.Cvtps2pd:
@@ -439,7 +450,6 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 Add(instruction.IP, ISIL.OpCode.Move, destination, ConvertOperand(instruction, 1, true));
                 break;
             case Mnemonic.Xor:
-            case Mnemonic.Xorps: //xorps is just floating point xor
                 if (instruction.Op0Kind == OpKind.Register && instruction.Op1Kind == OpKind.Register && instruction.Op0Register == instruction.Op1Register)
                     Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), Imm(0));
                 else
@@ -464,11 +474,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 Add(instruction.IP, shiftOpcode, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1)).IntegerBitWidth = shiftWidth;
                 break;
             case Mnemonic.And:
-            case Mnemonic.Andps: //Floating point and
                 Add(instruction.IP, ISIL.OpCode.And, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
                 break;
             case Mnemonic.Or:
-            case Mnemonic.Orps: //Floating point or
                 Add(instruction.IP, ISIL.OpCode.Or, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
                 break;
             case Mnemonic.Bts: // CF = old bit, then set it
@@ -663,71 +671,6 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Inc:
                 Add(instruction.IP, ISIL.OpCode.Add, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), Imm(1));
                 break;
-
-            case Mnemonic.Shufps: // Packed Interleave Shuffle of Quadruplets of Single Precision Floating-Point Values
-                {
-                    if (instruction.Op1Kind == OpKind.Memory)
-                        goto default;
-
-                    var imm = instruction.Immediate8;
-                    var src1 = X86Utils.GetRegisterName(instruction.Op0Register);
-                    var src2 = X86Utils.GetRegisterName(instruction.Op1Register);
-
-                    // Element selection
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        new ISIL.Register(null, "XMM_TEMP" + "_0"),
-                        new ISIL.Register(null, $"{src1}_{imm & 0b11}"));
-
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        new ISIL.Register(null, "XMM_TEMP" + "_1"),
-                        new ISIL.Register(null, $"{src1}_{(imm >> 2) & 0b11}"));
-
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        new ISIL.Register(null, "XMM_TEMP" + "_2"),
-                        new ISIL.Register(null, $"{src2}_{(imm >> 4) & 0b11}"));
-
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        new ISIL.Register(null, "XMM_TEMP" + "_3"),
-                        new ISIL.Register(null, $"{src2}_{(imm >> 6) & 0b11}"));
-
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        ConvertOperand(instruction, 0),
-                        new ISIL.Register(null, "XMM_TEMP"));
-
-                    break;
-                }
-
-            case Mnemonic.Unpcklps: // Unpack and Interleave Low Packed Single Precision Floating-Point Values
-                {
-                    if (instruction.Op1Kind == OpKind.Memory)
-                        goto default;
-
-                    var src1 = X86Utils.GetRegisterName(instruction.Op0Register);
-                    var src2 = X86Utils.GetRegisterName(instruction.Op1Register);
-
-                    // Interleaving lanes
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        new ISIL.Register(null, (string?)"XMM_TEMP" + "_0"),
-                        new ISIL.Register(null, $"{src1}_0")); // SRC1[31:0]
-
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        new ISIL.Register(null, (string?)"XMM_TEMP" + "_1"),
-                        new ISIL.Register(null, $"{src2}_0")); // SRC2[31:0]
-
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        new ISIL.Register(null, (string?)"XMM_TEMP" + "_2"),
-                        new ISIL.Register(null, $"{src1}_1")); // SRC1[63:32]
-
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        new ISIL.Register(null, (string?)"XMM_TEMP" + "_3"),
-                        new ISIL.Register(null, $"{src2}_1")); // SRC2[63:32]
-
-                    Add(instruction.IP, ISIL.OpCode.Move,
-                        ConvertOperand(instruction, 0),
-                        new ISIL.Register(null, (string?)"XMM_TEMP"));
-
-                    break;
-                }
 
             case Mnemonic.Call:
                 if (instruction.CodeSize == CodeSize.Code64 &&
