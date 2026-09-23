@@ -70,6 +70,7 @@ namespace FieldGuardFixture
     public sealed class BooleanBox
     {
         public bool Value;
+        public int Neighbor;
     }
 
     public static class BooleanFieldReads
@@ -96,6 +97,17 @@ namespace FieldGuardFixture
         public static void Clear(BooleanBox box)
         {
             box.Value = false;
+        }
+    }
+
+    public static class BooleanCallBranches
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static int Select(BooleanBox box)
+        {
+            if (BooleanFieldReads.Read(box))
+                return 17;
+            return -17;
         }
     }
 

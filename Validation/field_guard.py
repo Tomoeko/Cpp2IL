@@ -33,6 +33,13 @@ def observations():
                          "exception": "System.NullReferenceException"})
     expected.append({"kind": "bool-clear:null", "result": None,
                      "exception": "System.NullReferenceException"})
+    for initial in (False, True):
+        expected.append({"kind": "bool-call-branch:" + str(initial).lower(),
+                         "result": 17 if initial else -17,
+                         "valueAfter": initial, "neighborAfter": 23, "exception": "none"})
+    expected.append({"kind": "bool-call-branch:null", "result": None,
+                     "valueAfter": None, "neighborAfter": None,
+                     "exception": "System.NullReferenceException"})
     for initial in (-(1 << 31), 0, (1 << 31) - 1):
         expected.append({"kind": "nested-clear:" + str(initial), "result": 0,
                          "exception": "none"})
@@ -63,6 +70,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Field-guard behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 11,
+    return {"status": "passed", "observations": len(expected), "methods": 12,
             "platform": report["platform"], "profile": "field-guard",
-            "scope": "signed 32/64-bit access, direct and nested zero stores, Boolean reads, and nested Boolean literal stores with null receivers; not whole-program equivalence"}
+            "scope": "signed 32/64-bit access, direct and nested zero stores, Boolean reads and guarded call branches, and nested Boolean literal stores with null receivers; not whole-program equivalence"}

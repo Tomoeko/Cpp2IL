@@ -38,6 +38,10 @@ namespace RecoveryValidation
             RecordBooleanInstanceRead(observations, "box-null", booleanReader, null);
             RecordBooleanInstanceRead(observations, "reader-null", null, new BooleanBox());
             RecordBooleanClear(observations, "null", null);
+            foreach (var initial in new[] { false, true })
+                RecordBooleanBranch(observations, initial.ToString().ToLowerInvariant(),
+                    new BooleanBox { Value = initial, Neighbor = 23 });
+            RecordBooleanBranch(observations, "null", null);
             foreach (var initial in new[] { int.MinValue, 0, int.MaxValue })
                 RecordNestedClear(observations, initial.ToString(),
                     new NestedFieldBox { Inner = new FieldBox(initial) });
@@ -184,6 +188,21 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "bool-clear:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordBooleanBranch(List<object> observations, string kind, BooleanBox box)
+        {
+            object result = null;
+            var exception = "none";
+            try { result = BooleanCallBranches.Select(box); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "bool-call-branch:" + kind }, { "result", result },
+                { "valueAfter", box != null ? (object)box.Value : null },
+                { "neighborAfter", box != null ? (object)box.Neighbor : null },
+                { "exception", exception }
             });
         }
 

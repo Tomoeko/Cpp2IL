@@ -67,6 +67,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return QualifyExceptionRegions(integerExtension);
         if (X86ScalarTruncationProof.TryLift(context, nativeInstructions) is { } scalarTruncation)
             return QualifyExceptionRegions(scalarTruncation);
+        var booleanReturnSelfTests = X86BooleanReturnSelfTestProof.Find(context, nativeInstructions);
         var singleWidthDividends = X86DivisionProof.FindSingleWidthDividends(nativeInstructions);
         var shiftCountExtensions = X86ShiftCountExtensionProof.Find(context, nativeInstructions);
         var metadataGuard = X86MetadataGuardProof.Find(context, nativeInstructions);
@@ -82,9 +83,19 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             if (metadataGuard?.RemovedAddresses.Contains(instruction.IP) == true)
                 continue;
             var firstLiftedIndex = instructions.Count;
-            ConvertInstructionStatement(instruction, instructions, addresses, context,
-                singleWidthDividends.Contains(instruction.IP), shiftCountExtensions.Contains(instruction.IP),
-                unresolvedMetadataGuards.Contains(instruction.IP));
+            if (booleanReturnSelfTests.Contains(instruction.IP))
+            {
+                // The adjacent managed call defines a Boolean result in AL. Only its zero
+                // predicate is proved; native RAX's unused upper bits and TEST's PF/SF are
+                // deliberately not represented. The proof excludes every other live flag use.
+                addresses.Add(instruction.IP);
+                instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.CheckEqual,
+                    new ISIL.Register(null, "ZF"), new ISIL.Register(null, "rax"), Imm(0)));
+            }
+            else
+                ConvertInstructionStatement(instruction, instructions, addresses, context,
+                    singleWidthDividends.Contains(instruction.IP), shiftCountExtensions.Contains(instruction.IP),
+                    unresolvedMetadataGuards.Contains(instruction.IP));
             if (instruction.Code == Code.Call_rel32_64 &&
                 instructions.Skip(firstLiftedIndex).Any(lifted => lifted.OpCode == ISIL.OpCode.RuntimeNullThrow))
                 noReturnCalls.Add(instruction.IP);
