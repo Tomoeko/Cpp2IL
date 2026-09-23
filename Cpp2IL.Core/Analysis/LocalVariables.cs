@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using Cpp2IL.Core.ISIL;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 
@@ -98,8 +99,10 @@ public static class LocalVariables
                 thisLocal.IsThis = true;
                 paramLocals.Add(thisLocal);
             }
-            else
+            else if (!X86UnusedReceiverProof.IsUnused(method, thisOperand))
             {
+                // An unused incoming receiver needs no SSA local. Only an independent native
+                // no-use proof distinguishes this from a lost or ambiguous parameter mapping.
                 method.AddWarning($"'this' local not found (operand: {thisOperand})");
             }
         }
