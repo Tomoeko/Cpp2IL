@@ -16,3 +16,6 @@ launchsettings.json
 artifacts/
 
 .DS_Store
+
+# Local tools, private inputs, and recovery/build evidence.
+/Files/
