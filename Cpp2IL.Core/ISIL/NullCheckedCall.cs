@@ -20,7 +20,7 @@ internal static class NullCheckedCall
             (candidate.ImplAttributes & (MethodImplAttributes.CodeTypeMask | MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) != 0 ||
             candidate.GenericParameters.Count != 0 || candidate.Definition?.GenericContainer != null ||
             candidate.DeclaringType is not { } owner || !IsReferenceClass(owner) ||
-            !ReferenceEquals(candidate.ReturnType, candidate.DefaultReturnType) ||
+            candidate.OverrideReturnType != null ||
             (!candidate.IsVoid && !IsOrdinaryValue(candidate.ReturnType)))
             return false;
 
@@ -36,7 +36,7 @@ internal static class NullCheckedCall
             return false;
         if (instruction.OpCode == OpCode.Call &&
             (instruction.Operands[1] is not LocalVariable result || candidate.IsVoid ||
-             !ReferenceEquals(result.Type, candidate.ReturnType)))
+            !SameOrdinaryType(result.Type, candidate.ReturnType)))
             return false;
 
         for (var index = 0; index < candidate.Parameters.Count; index++)
@@ -44,7 +44,7 @@ internal static class NullCheckedCall
             var parameter = candidate.Parameters[index];
             if (parameter.ParameterIndex != index || !ReferenceEquals(parameter.DeclaringMethod, candidate) ||
                 parameter.IsRef || parameter.Attributes != parameter.DefaultAttributes ||
-                !ReferenceEquals(parameter.ParameterType, parameter.DefaultParameterType) ||
+                parameter.OverrideParameterType != null ||
                 !IsOrdinaryValue(parameter.ParameterType) ||
                 !CanLoadWithoutEffects(instruction.Operands[receiverIndex + 1 + index], parameter.ParameterType))
                 return false;
@@ -60,16 +60,37 @@ internal static class NullCheckedCall
         (type.Type is Il2CppTypeEnum.IL2CPP_TYPE_CLASS or Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or Il2CppTypeEnum.IL2CPP_TYPE_STRING) &&
         type.Attributes == type.DefaultAttributes && ReferenceEquals(type.BaseType, type.DefaultBaseType);
 
-    private static bool IsOrdinaryValue(TypeAnalysisContext type) => IsReferenceClass(type) || IsNumeric(type);
+    private static bool IsOrdinaryValue(TypeAnalysisContext type) =>
+        IsReferenceClass(type) || IsBoundedArrayReference(type) || IsNumeric(type);
 
     public static bool CanLoadWithoutEffects(IOperand operand, TypeAnalysisContext expected) => operand switch
     {
-        LocalVariable local => ReferenceEquals(local.Type, expected) && IsOrdinaryValue(expected),
-        Immediate number => IsInteger(expected) || number.Value == 0 && IsReferenceClass(expected),
+        LocalVariable local => SameOrdinaryType(local.Type, expected) && IsOrdinaryValue(expected),
+        Immediate number => IsInteger(expected) || number.Value == 0 &&
+            (IsReferenceClass(expected) || IsBoundedArrayReference(expected)),
         FloatLiteral => ReferenceEquals(expected, expected.AppContext.SystemTypes.SystemSingleType),
         DoubleLiteral => ReferenceEquals(expected, expected.AppContext.SystemTypes.SystemDoubleType),
         _ => false,
     };
+
+    internal static bool SameOrdinaryType(TypeAnalysisContext? left, TypeAnalysisContext? right) =>
+        ReferenceEquals(left, right) ||
+        left is SzArrayTypeAnalysisContext leftArray && right is SzArrayTypeAnalysisContext rightArray &&
+        IsBoundedArrayReference(leftArray) && IsBoundedArrayReference(rightArray) &&
+        ReferenceEquals(leftArray.ElementType, rightArray.ElementType);
+
+    private static bool IsBoundedArrayReference(TypeAnalysisContext type) =>
+        type is SzArrayTypeAnalysisContext array &&
+        !array.ElementType.IsGenericInstance && array.ElementType.GenericParameters.Count == 0 &&
+        array.ElementType.Type is
+            Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN or Il2CppTypeEnum.IL2CPP_TYPE_CHAR or
+            Il2CppTypeEnum.IL2CPP_TYPE_I1 or Il2CppTypeEnum.IL2CPP_TYPE_U1 or
+            Il2CppTypeEnum.IL2CPP_TYPE_I2 or Il2CppTypeEnum.IL2CPP_TYPE_U2 or
+            Il2CppTypeEnum.IL2CPP_TYPE_I4 or Il2CppTypeEnum.IL2CPP_TYPE_U4 or
+            Il2CppTypeEnum.IL2CPP_TYPE_I8 or Il2CppTypeEnum.IL2CPP_TYPE_U8 or
+            Il2CppTypeEnum.IL2CPP_TYPE_R4 or Il2CppTypeEnum.IL2CPP_TYPE_R8 or
+            Il2CppTypeEnum.IL2CPP_TYPE_CLASS or Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or
+            Il2CppTypeEnum.IL2CPP_TYPE_STRING or Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE;
 
     private static bool IsNumeric(TypeAnalysisContext type) => IsInteger(type) ||
         ReferenceEquals(type, type.AppContext.SystemTypes.SystemSingleType) ||

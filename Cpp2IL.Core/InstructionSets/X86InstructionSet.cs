@@ -23,6 +23,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
     private static ISIL.Immediate Imm(long value) => new(value);
     private static ISIL.Immediate Imm(ulong value) => new(unchecked((long)value));
 
+    internal static bool TargetsOutsideMethod(ulong target, ulong methodStart, int bodyLength) =>
+        target < methodStart || target - methodStart >= (ulong)bodyLength;
+
     private static string FormatInstructionInternal(Instruction instruction)
     {
         Formatter.Format(instruction, Output);
@@ -925,10 +928,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 {
                     var jumpTarget = instruction.NearBranchTarget;
 
-                    var methodEnd = instruction.IP + (ulong)context.RawBytes.Length;
                     var methodStart = context.UnderlyingPointer;
 
-                    if (jumpTarget < methodStart || jumpTarget > methodEnd)
+                    if (TargetsOutsideMethod(jumpTarget, methodStart, context.RawBytes.Length))
                     {
                         callNoReturn = true;
                         goto case Mnemonic.Call;

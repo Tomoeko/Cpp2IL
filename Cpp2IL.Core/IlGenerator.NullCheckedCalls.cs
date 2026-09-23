@@ -30,8 +30,8 @@ public static partial class IlGenerator
         foreach (var local in OperandEffects.ReadLocals(call))
         {
             if (locals.ParameterContexts.TryGetValue(local, out var parameter) &&
-                (parameter.IsRef || !ReferenceEquals(parameter.ParameterType, local.Type) ||
-                 !ReferenceEquals(parameter.DefaultParameterType, local.Type)))
+                (parameter.IsRef || parameter.OverrideParameterType != null ||
+                 !NullCheckedCall.SameOrdinaryType(parameter.ParameterType, local.Type)))
                 throw new DecompilerException("Null-checked invocation cannot reinterpret a changed or by-reference managed parameter");
             if (local.IsThis && !ReferenceEquals(local.Type, locals.Context.DeclaringType))
                 throw new DecompilerException("Null-checked invocation cannot reinterpret the current instance parameter");
