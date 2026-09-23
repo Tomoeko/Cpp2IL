@@ -72,6 +72,7 @@ public static class AsmResolverAssemblyPopulator
             CustomAttributePrimitiveParameter primitiveParameter => parameter.Owner.Constructor.AppContext.SystemTypes.GetPrimitive(primitiveParameter.PrimitiveType).ToTypeSignature(),
             CustomAttributeEnumParameter enumParameter => enumParameter.EnumTypeContext.ToTypeSignature(),
             BaseCustomAttributeTypeParameter => parameter.Owner.Constructor.AppContext.SystemTypes.SystemTypeType.ToTypeSignature(),
+            CustomAttributeArrayParameter { EnumType: not null } arrayParameter => parameter.Owner.Constructor.AppContext.ResolveIl2CppType(arrayParameter.EnumType).ToTypeSignature().MakeSzArrayType(),
             CustomAttributeArrayParameter arrayParameter => parameter.Owner.Constructor.AppContext.SystemTypes.GetPrimitive(arrayParameter.ArrType).ToTypeSignature().MakeSzArrayType(),
             _ => throw new ArgumentException("Unknown custom attribute parameter type: " + parameter.GetType().FullName)
         };
