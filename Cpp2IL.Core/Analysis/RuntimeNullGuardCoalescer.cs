@@ -42,6 +42,10 @@ internal static class RuntimeNullGuardCoalescer
                 Field.Attributes != Attributes || Field.IsStatic || Access.Offset != Offset || Field.Offset != Offset ||
                 RequireNativeBinding && !HasUnchangedNativeField(method, Access))
                 return false;
+            if (ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemStringType))
+                return StoredValue == null &&
+                       ProvedNativeStringFieldRead(method, Access) is { } stringRead &&
+                       ValidFieldReceiver(method, stringRead.ReceiverField);
             return UnchangedParameter(method, Receiver, Owner);
         }
 
@@ -57,21 +61,22 @@ internal static class RuntimeNullGuardCoalescer
                 ReferenceEquals(ValueType, proof.StoreWidth == 1
                     ? method.AppContext.SystemTypes.SystemBooleanType
                     : method.AppContext.SystemTypes.SystemInt32Type) &&
-                ValidZeroStoreReceiver(method, proof),
+                ValidFieldReceiver(method, proof.ReceiverField),
             _ => false,
         };
 
-        private bool ValidZeroStoreReceiver(MethodAnalysisContext method,
-            X86GuardedZeroStoreProof.Proof proof)
+        private bool ValidFieldReceiver(MethodAnalysisContext method,
+            FieldAnalysisContext? receiverField)
         {
-            if (proof.ReceiverField == null)
-                return method.ParameterLocals.Contains(Receiver);
+            if (receiverField == null)
+                return method.ParameterLocals.Contains(Receiver) &&
+                       UnchangedParameter(method, Receiver, Owner);
             var definitions = method.ControlFlowGraph!.Instructions
                 .Where(instruction => ReferenceEquals(instruction.Destination, Receiver)).ToArray();
             if (definitions is not [{ OpCode: OpCode.Move, IntegerBitWidth: 0,
                     Operands: [LocalVariable destination, FieldReference source] }] ||
                 !ReferenceEquals(destination, Receiver) ||
-                !ReferenceEquals(source.Field, proof.ReceiverField) ||
+                !ReferenceEquals(source.Field, receiverField) ||
                 !ReferenceEquals(source.Field.FieldType, Owner) ||
                 !source.Local.IsThis || !method.ParameterLocals.Contains(source.Local) ||
                 !ReferenceEquals(source.Local.Type, method.DeclaringType) ||
@@ -274,6 +279,8 @@ internal static class RuntimeNullGuardCoalescer
                             Operands: [FieldReference writeAccess, var value] } &&
                         ReferenceEquals(writeAccess.Local, receiver) &&
                         receiver.Type != null && NullCheckedCall.IsReferenceClass(receiver.Type) &&
+                        !ReferenceEquals(writeAccess.Field.FieldType,
+                            method.AppContext.SystemTypes.SystemStringType) &&
                         ReferenceEquals(writeAccess.Field.DeclaringType, receiver.Type) &&
                         !writeAccess.Field.IsStatic && writeAccess.Offset >= 0 &&
                         writeAccess.Offset == writeAccess.Field.Offset &&
@@ -348,13 +355,23 @@ internal static class RuntimeNullGuardCoalescer
         var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) ? 32 :
             ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 :
             ReferenceEquals(field.FieldType, types.SystemBooleanType) ? 8 : 0;
+        var stringRead = ReferenceEquals(field.FieldType, types.SystemStringType);
         if (width == 8 && !HasProvedNativeZeroStore(method, access) &&
             !HasProvedNativeBooleanFieldRead(method, access))
             return false;
         return field.Name == field.DefaultName &&
-               width != 0 &&
                owner.Fields.Contains(field) && NullCheckedCall.IsReferenceClass(owner) &&
-               NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, width);
+               (stringRead
+                   ? NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access) &&
+                     ProvedNativeStringFieldRead(method, access) != null
+                   : width != 0 && NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, width));
+    }
+
+    private static X86StringFieldReadProof.Proof? ProvedNativeStringFieldRead(
+        MethodAnalysisContext method, FieldReference access)
+    {
+        var proof = X86StringFieldReadProof.Find(method, X86Utils.Iterate(method).ToArray());
+        return ReferenceEquals(proof?.Field, access.Field) ? proof : null;
     }
 
     private static bool HasProvedNativeZeroStore(MethodAnalysisContext method, FieldReference access)
