@@ -15,7 +15,7 @@ namespace Cpp2IL.Core.InstructionSets;
 internal static class X64UnwindProof
 {
     internal enum SpanKind { Unsupported, NoEntry, HandlerFree }
-    internal readonly record struct SpanClassification(SpanKind Kind, ulong Start, ulong End);
+    internal readonly record struct SpanClassification(SpanKind Kind, ulong Start, ulong End, ulong RootStart = 0);
     private sealed record CacheEntry(Index? Value);
     // PE owns the read-only input bytes. Context/metadata overrides do not change this input.
     private static readonly ConditionalWeakTable<PE, CacheEntry> Cache = new();
@@ -32,8 +32,10 @@ internal static class X64UnwindProof
 
     internal readonly record struct Section(uint Rva, uint VirtualSize, uint Raw, uint RawSize, uint Characteristics);
     internal sealed record Unwind(byte PrologSize, byte FrameRegister, byte[] Codes,
-        byte Flags = 0, uint HandlerRva = 0, uint HandlerDataRva = 0);
-    internal readonly record struct Function(uint Start, uint End, Unwind? Info);
+        byte Flags = 0, uint HandlerRva = 0, uint HandlerDataRva = 0,
+        uint ChainStart = 0, uint ChainEnd = 0, uint ChainUnwindRva = 0);
+    internal readonly record struct Function(uint Start, uint End, Unwind? Info,
+        uint UnwindRva = 0, uint RootStart = 0);
     // Structural PE evidence only. The target and its language-specific data still need
     // independent semantic validation before any managed exception region can be emitted.
     internal readonly record struct HandlerInfo(ulong Start, ulong End, byte Flags,
@@ -74,8 +76,10 @@ internal static class X64UnwindProof
             if (index < _functions.Length && _functions[index].Start < endRva)
             {
                 var function = _functions[index];
-                return function.Start <= rva && endRva <= function.End && function.Info is { Flags: 0 }
-                    ? new(SpanKind.HandlerFree, _imageBase + function.Start, _imageBase + function.End)
+                return function.Start <= rva && endRva <= function.End &&
+                       function.Info is { Flags: 0 or 4 }
+                    ? new(SpanKind.HandlerFree, _imageBase + function.Start, _imageBase + function.End,
+                        _imageBase + function.RootStart)
                     : new(SpanKind.Unsupported, _imageBase + function.Start, _imageBase + function.End);
             }
             return new(SpanKind.NoEntry, start, end);
@@ -88,7 +92,7 @@ internal static class X64UnwindProof
             var index = Find(rva);
             if (index >= _functions.Length || _functions[index] is not
                 { Start: var start, End: var end, Info: { Flags: var flags, HandlerRva: var handler,
-                    HandlerDataRva: var data } } || start != rva || flags == 0)
+                    HandlerDataRva: var data } } || start != rva || flags is not (1 or 2 or 3))
                 return null;
             if (MapReadOnlyData(_imageBase + data, 1) < 0)
                 return null;
@@ -122,7 +126,7 @@ internal static class X64UnwindProof
             if (span.Kind != SpanKind.HandlerFree || span.Start != start)
                 return false;
             var function = _functions[Find(checked((uint)(start - _imageBase)))];
-            return function.Info!.PrologSize == prologSize && function.Info.FrameRegister == frameRegister &&
+            return function.Info!.Flags == 0 && function.Info.PrologSize == prologSize && function.Info.FrameRegister == frameRegister &&
                    function.Info.Codes.AsSpan().SequenceEqual(codes);
         }
 
@@ -214,7 +218,26 @@ internal static class X64UnwindProof
                     unwind[unwindRva] = info = ReadUnwind(unwindRva);
                 if (info?.PrologSize > end - start)
                     info = null;
-                records[index] = new(start, end, info);
+                records[index] = new(start, end, info, unwindRva, start);
+            }
+            // A chain is evidence for the primary function only when its tuple names an
+            // exact handler-free .pdata record. Do not follow arbitrary or nested chains.
+            var byStart = new Dictionary<uint, Function>();
+            foreach (var record in records)
+                byStart.Add(record.Start, record);
+            for (var index = 0; index < records.Length; index++)
+            {
+                var record = records[index];
+                if (record.Info is not { Flags: 4 } chain)
+                    continue;
+                if (!byStart.TryGetValue(chain.ChainStart, out var root) ||
+                    root.Start == record.Start || root.End != chain.ChainEnd ||
+                    root.UnwindRva != chain.ChainUnwindRva ||
+                    root.Info is not { Flags: 0 } primary ||
+                    primary.FrameRegister != chain.FrameRegister)
+                    records[index] = record with { Info = null };
+                else
+                    records[index] = record with { RootStart = root.Start };
             }
             return new Index(imageBase, _imageSize, _sections, records);
         }
@@ -227,19 +250,32 @@ internal static class X64UnwindProof
             if (at < 0 || (_image[at] & 7) != 1)
                 return null;
             var flags = (byte)(_image[at] >> 3);
-            if (flags > 3)
-                return null; // chained or unknown unwind formats remain unsupported
+            if (flags > 4)
+                return null;
             var prolog = _image[at + 1];
             var count = _image[at + 2];
             var frame = _image[at + 3];
             if (Map(_sections, rva, (uint)(4 + (count + 1) / 2 * 4), false) != at)
                 return null;
             var codes = _image.Slice(at + 4, count * 2).ToArray();
-            if (!ValidCodes(codes, prolog, frame))
+            if (!ValidCodes(codes, prolog, frame, flags == 4))
                 return null;
             if (flags == 0)
                 return new(prolog, frame, codes);
             var handlerField = checked(rva + (uint)(4 + (count + 1) / 2 * 4));
+            if (flags == 4)
+            {
+                var chainField = Map(_sections, handlerField, 12, false);
+                if (chainField < 0)
+                    return null;
+                var chainStart = U32(chainField);
+                var chainEnd = U32(chainField + 4);
+                var chainUnwindRva = U32(chainField + 8);
+                if (chainStart >= chainEnd || chainEnd > _imageSize || chainUnwindRva == 0)
+                    return null;
+                return new(prolog, frame, codes, flags, ChainStart: chainStart,
+                    ChainEnd: chainEnd, ChainUnwindRva: chainUnwindRva);
+            }
             var fieldOffset = Map(_sections, handlerField, 5, false);
             if (fieldOffset < 0)
                 return null;
@@ -255,8 +291,8 @@ internal static class X64UnwindProof
         private ulong U64(int offset) => BinaryPrimitives.ReadUInt64LittleEndian(_image.Slice(offset, 8));
     }
 
-    // Validate the supported ordinary version1 encoding without guessing unknown unwind ops.
-    private static bool ValidCodes(byte[] codes, byte prolog, byte frame)
+    // Validate the supported version1 encoding without guessing unknown unwind ops.
+    private static bool ValidCodes(byte[] codes, byte prolog, byte frame, bool chain)
     {
         var previous = (int)prolog;
         var sawFrame = false;
@@ -265,7 +301,9 @@ internal static class X64UnwindProof
             var offset = codes[at];
             var operation = codes[at + 1] & 15;
             var info = codes[at + 1] >> 4;
-            if (offset == 0 || offset > previous || offset > prolog)
+            // Shrink-wrapped chained fragments can record a save at their first byte.
+            if ((offset == 0 && (!chain || operation is not (4 or 5 or 8 or 9))) ||
+                offset > previous || offset > prolog)
                 return false;
             previous = offset;
             var slots = operation switch

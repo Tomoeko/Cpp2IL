@@ -113,6 +113,67 @@ public class X64UnwindProofTests
         Assert.That(Classify(image, 0x1000, 0x1009).Kind, Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
     }
 
+    [Test]
+    public void ExactHandlerFreeChainNamesItsPrimaryFunction()
+    {
+        var index = X64UnwindProof.Parse(ChainImage())!;
+        var primary = index.ClassifySpan(ImageBase + 0x1000, ImageBase + 0x1001);
+        var fragment = index.ClassifySpan(ImageBase + 0x1100, ImageBase + 0x1101);
+        Assert.That(primary.Kind, Is.EqualTo(X64UnwindProof.SpanKind.HandlerFree));
+        Assert.That(fragment.Kind, Is.EqualTo(X64UnwindProof.SpanKind.HandlerFree));
+        Assert.That(fragment.RootStart, Is.EqualTo(primary.RootStart));
+        Assert.That(fragment.Start, Is.EqualTo(ImageBase + 0x1100));
+        Assert.That(index.GetHandler(ImageBase + 0x1100), Is.Null);
+        Assert.That(index.MatchesUnwind(ImageBase + 0x1100, ImageBase + 0x1120, 0, 0,
+            new byte[] { 0, 0x74, 0x16, 0 }), Is.False);
+    }
+
+    [Test]
+    public void EpilogFragmentWithNoAdditionalUnwindCodesCanShareItsPrimary()
+    {
+        var image = ChainImage();
+        image[0x90A] = 0;
+        U32(image, 0x90C, 0x1000);
+        U32(image, 0x910, 0x1010);
+        U32(image, 0x914, 0x3000);
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.That(index.ClassifySpan(ImageBase + 0x1100, ImageBase + 0x1101).RootStart,
+            Is.EqualTo(ImageBase + 0x1000));
+    }
+
+    [TestCase("wrong-root-start")]
+    [TestCase("wrong-root-end")]
+    [TestCase("wrong-root-unwind")]
+    [TestCase("self-chain")]
+    [TestCase("handler-root")]
+    [TestCase("unknown-save")]
+    [TestCase("truncated-chain")]
+    [TestCase("frame-mismatch")]
+    public void UnprovedChainsStayUnsupported(string defect)
+    {
+        var image = ChainImage();
+        switch (defect)
+        {
+            case "wrong-root-start": U32(image, 0x910, 0x1001); break;
+            case "wrong-root-end": U32(image, 0x914, 0x100F); break;
+            case "wrong-root-unwind": U32(image, 0x918, 0x3040); break;
+            case "self-chain": U32(image, 0x910, 0x1100); U32(image, 0x914, 0x1120); U32(image, 0x918, 0x3008); break;
+            case "handler-root":
+                U32(image, 0x808, 0x3040); U32(image, 0x918, 0x3040);
+                image[0x940] = 1 | 3 << 3;
+                U32(image, 0x944, 0x1300);
+                image[0x948] = 0;
+                break;
+            case "unknown-save": image[0x90D] = 0x70; break;
+            case "truncated-chain": U32(image, 0x1E8, 0x18); break;
+            case "frame-mismatch":
+                image[0x909] = 1; image[0x90A] = 1; image[0x90B] = 5;
+                image[0x90C] = 1; image[0x90D] = 3; // valid SET_FPREG with a different frame register
+                break;
+        }
+        Assert.That(Classify(image, 0x1100, 0x1101).Kind, Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+    }
+
     private static X64UnwindProof.SpanClassification Classify(byte[] image, uint start, uint end)
     {
         var index = X64UnwindProof.Parse(image);
@@ -234,6 +295,23 @@ public class X64UnwindProofTests
         image[0x960] = 2; image[0x961] = 0x10;
         U32(image, 0x962, 0x1300);
         image[0x966] = 4;
+        return image;
+    }
+
+    private static byte[] ChainImage()
+    {
+        var image = Image();
+        image[0x908] = 1 | 4 << 3;
+        image[0x909] = 0;
+        image[0x90A] = 2;
+        image[0x90B] = 0;
+        image[0x90C] = 0;
+        image[0x90D] = 0x74; // SAVE_NONVOL RDI at fragment offset zero
+        image[0x90E] = 0x16;
+        image[0x90F] = 0;
+        U32(image, 0x910, 0x1000);
+        U32(image, 0x914, 0x1010);
+        U32(image, 0x918, 0x3000);
         return image;
     }
 

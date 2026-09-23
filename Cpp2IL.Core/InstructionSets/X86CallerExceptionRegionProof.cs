@@ -45,7 +45,8 @@ internal static class X86CallerExceptionRegionProof
         var entryRegion = classify(entry, body[0].NextIP);
         if (entryRegion.Kind == X64UnwindProof.SpanKind.Unsupported)
             return Reject("the entry has unsupported native handlers or unwind metadata");
-        if (entryRegion.Kind == X64UnwindProof.SpanKind.HandlerFree && entryRegion.Start != entry)
+        if (entryRegion.Kind == X64UnwindProof.SpanKind.HandlerFree &&
+            (entryRegion.Start != entry || entryRegion.RootStart != 0 && entryRegion.RootStart != entry))
             return Reject("the managed entry is inside a different native unwind region");
 
         var pending = new Stack<ulong>();
@@ -65,9 +66,11 @@ internal static class X86CallerExceptionRegionProof
             var region = classify(address, instruction.NextIP);
             if (region.Kind == X64UnwindProof.SpanKind.Unsupported)
                 return Reject("a reachable instruction has unsupported native handlers or unwind metadata");
+            var sameRegion = region.Start == entryRegion.Start && region.End == entryRegion.End;
+            var samePrimary = entryRegion.RootStart != 0 && region.RootStart == entryRegion.RootStart;
             if (region.Kind != entryRegion.Kind ||
                 region.Kind == X64UnwindProof.SpanKind.HandlerFree &&
-                (region.Start != entryRegion.Start || region.End != entryRegion.End ||
+                (!sameRegion && !samePrimary ||
                  region.Start > address || region.End < instruction.NextIP))
                 return Reject("reachable code crosses an unproved native unwind region boundary");
 

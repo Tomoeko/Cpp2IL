@@ -92,6 +92,21 @@ public class X86CallerExceptionRegionProofTests
                 ? new(SpanKind.HandlerFree, 0, 2) : new(SpanKind.HandlerFree, 3, 4)),
             Does.Contain("unproved native unwind region boundary"));
 
+    [Test]
+    public void DirectBranchMayEnterAProvedFragmentOfTheSamePrimaryFunction()
+    {
+        var body = Decode("EB01CCC3", 0x1000);
+        Classification SameRoot(ulong start, ulong end) => start < 0x1002
+            ? new(SpanKind.HandlerFree, 0x1000, 0x1002, 0x1000)
+            : new(SpanKind.HandlerFree, 0x1003, 0x1004, 0x1000);
+        Classification OtherRoot(ulong start, ulong end) => start < 0x1002
+            ? new(SpanKind.HandlerFree, 0x1000, 0x1002, 0x1000)
+            : new(SpanKind.HandlerFree, 0x1003, 0x1004, 0x2000);
+        Assert.That(X86CallerExceptionRegionProof.Check(body, 0x1000, new HashSet<ulong>(), SameRoot), Is.Null);
+        Assert.That(X86CallerExceptionRegionProof.Check(body, 0x1000, new HashSet<ulong>(), OtherRoot),
+            Does.Contain("unproved native unwind region boundary"));
+    }
+
     [TestCase("7501C3")] // conditional target at unproved byte-span end
     [TestCase("FFE0")] // indirect exit
     [TestCase("EBFF")] // middle of an instruction
@@ -107,6 +122,8 @@ public class X86CallerExceptionRegionProofTests
         var body = Decode("C3", 0x100);
         Assert.That(X86CallerExceptionRegionProof.Check(body, 0x100, new HashSet<ulong>(),
             (_, _) => new(SpanKind.HandlerFree, 0xF0, 0x110)), Does.Contain("inside a different native unwind region"));
+        Assert.That(X86CallerExceptionRegionProof.Check(body, 0x100, new HashSet<ulong>(),
+            (_, _) => new(SpanKind.HandlerFree, 0x100, 0x110, 0xF0)), Does.Contain("inside a different native unwind region"));
     }
 
     [Test]
