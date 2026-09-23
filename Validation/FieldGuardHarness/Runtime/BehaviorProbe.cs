@@ -29,8 +29,10 @@ namespace RecoveryValidation
             foreach (var initial in new[] { false, true })
             {
                 var box = new BooleanBox { Value = initial };
+                RecordBooleanRead(observations, initial.ToString(), box);
                 RecordBooleanClear(observations, initial.ToString(), box);
             }
+            RecordBooleanRead(observations, "null", null);
             RecordBooleanClear(observations, "null", null);
             foreach (var initial in new[] { int.MinValue, 0, int.MaxValue })
                 RecordNestedClear(observations, initial.ToString(),
@@ -114,6 +116,18 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "long-write:" + kind }, { "result", result }, { "exception", exception }
+            });
+        }
+
+        private static void RecordBooleanRead(List<object> observations, string kind, BooleanBox box)
+        {
+            object result = null;
+            var exception = "none";
+            try { result = BooleanFieldReads.Read(box); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "bool-read:" + kind }, { "result", result }, { "exception", exception }
             });
         }
 

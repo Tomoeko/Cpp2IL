@@ -1,4 +1,4 @@
-"""Independent oracle for signed field access, Boolean clearing and null receivers."""
+"""Independent oracle for signed field access, Boolean reads/clears and null receivers."""
 
 import json
 
@@ -22,7 +22,10 @@ def observations():
     expected.append({"kind": "long-write:null", "result": None,
                      "exception": "System.NullReferenceException"})
     for initial in (False, True):
+        expected.append({"kind": "bool-read:" + str(initial), "result": initial, "exception": "none"})
         expected.append({"kind": "bool-clear:" + str(initial), "result": False, "exception": "none"})
+    expected.append({"kind": "bool-read:null", "result": None,
+                     "exception": "System.NullReferenceException"})
     expected.append({"kind": "bool-clear:null", "result": None,
                      "exception": "System.NullReferenceException"})
     for initial in (-(1 << 31), 0, (1 << 31) - 1):
@@ -43,6 +46,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Field-guard behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 7,
+    return {"status": "passed", "observations": len(expected), "methods": 8,
             "platform": report["platform"], "profile": "field-guard",
-            "scope": "signed 32/64-bit access, direct and nested zero stores, and Boolean zero store with null receivers; not whole-program equivalence"}
+            "scope": "signed 32/64-bit access, direct and nested zero stores, and Boolean field read and zero store with null receivers; not whole-program equivalence"}

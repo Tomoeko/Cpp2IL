@@ -348,7 +348,8 @@ internal static class RuntimeNullGuardCoalescer
         var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) ? 32 :
             ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 :
             ReferenceEquals(field.FieldType, types.SystemBooleanType) ? 8 : 0;
-        if (width == 8 && !HasProvedNativeZeroStore(method, access))
+        if (width == 8 && !HasProvedNativeZeroStore(method, access) &&
+            !HasProvedNativeBooleanFieldRead(method, access))
             return false;
         return field.Name == field.DefaultName &&
                width != 0 &&
@@ -366,6 +367,18 @@ internal static class RuntimeNullGuardCoalescer
         return current != null && ReferenceEquals(current.Field, proof.Field) &&
                ReferenceEquals(current.ReceiverField, proof.ReceiverField) &&
                current.StoreWidth == proof.StoreWidth;
+    }
+
+    private static bool HasProvedNativeBooleanFieldRead(MethodAnalysisContext method,
+        FieldReference access)
+    {
+        var proof = method.GetExtraData<X86BooleanFieldReadProof.Proof>(
+            X86BooleanFieldReadProof.EvidenceKey);
+        if (proof == null || !ReferenceEquals(proof.Field, access.Field))
+            return false;
+        var current = X86BooleanFieldReadProof.Find(method, X86Utils.Iterate(method).ToArray());
+        return current != null && ReferenceEquals(current.Field, proof.Field) &&
+               current.LoadIp == proof.LoadIp;
     }
 
     private static bool HasOutputOptions(MethodAnalysisContext method)

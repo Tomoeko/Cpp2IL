@@ -70,6 +70,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var unresolvedMetadataGuards = X86MetadataGuardProof.FindUnresolvedInitializationGuards(context, nativeInstructions);
         if (X86GuardedZeroStoreProof.Find(context, nativeInstructions) is { } guardedZeroStore)
             context.PutExtraData(X86GuardedZeroStoreProof.EvidenceKey, guardedZeroStore);
+        if (X86BooleanFieldReadProof.Find(context, nativeInstructions) is { } booleanFieldRead)
+            context.PutExtraData(X86BooleanFieldReadProof.EvidenceKey, booleanFieldRead);
         if (metadataGuard != null)
             context.PutExtraData("X86MetadataLiteralGuardProof", metadataGuard);
         foreach (var instruction in nativeInstructions)
@@ -353,6 +355,14 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertScalarFloatOperand(instruction, 1, instruction.Mnemonic == Mnemonic.Movss, context));
                 break;
             case Mnemonic.Movzx:
+                if (context != null && context.GetExtraData<X86BooleanFieldReadProof.Proof>(
+                        X86BooleanFieldReadProof.EvidenceKey) is { } fieldRead &&
+                    instruction.IP == fieldRead.LoadIp)
+                {
+                    Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0),
+                        ConvertOperand(instruction, 1));
+                    break;
+                }
                 if (shiftCountExtension)
                 {
                     // The source is a proved Int32 parameter (possibly explicitly masked),

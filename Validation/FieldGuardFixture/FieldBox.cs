@@ -72,6 +72,15 @@ namespace FieldGuardFixture
         public bool Value;
     }
 
+    public static class BooleanFieldReads
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static bool Read(BooleanBox box)
+        {
+            return box.Value;
+        }
+    }
+
     public static class BooleanFieldClears
     {
         [MethodImpl(MethodImplOptions.NoInlining)]
