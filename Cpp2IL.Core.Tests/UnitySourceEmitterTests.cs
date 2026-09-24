@@ -51,6 +51,36 @@ public class UnitySourceEmitterTests
     }
 
     [Test]
+    public void ReturnMetadataUncertaintyIsReportedSeparatelyFromSourceGeneration()
+    {
+        var report = new UnitySourceEmissionReport { SourceGeneration = "generated", DeclarationFidelity = "partial" };
+        report.ReturnMetadata.Add(new UnityReturnMetadataAssemblyReport("Synthetic.Application", 3, 3, 3,
+            UnityReturnMetadataAvailability.UnknownInPlayer, UnityReturnMetadataAvailability.UnknownInPlayer));
+        report.DeclarationDiagnostics.Add("DECL001: Return metadata is unknown in the player.");
+
+        var path = Path.Combine(_directory, "source-emission-report.json");
+        report.WriteJson(path);
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.GetProperty("SchemaVersion").GetInt32(), Is.EqualTo(3));
+            Assert.That(root.GetProperty("SourceGeneration").GetString(), Is.EqualTo("generated"));
+            Assert.That(root.GetProperty("DeclarationFidelity").GetString(), Is.EqualTo("partial"));
+            Assert.That(root.GetProperty("Diagnostics").GetArrayLength(), Is.Zero);
+            Assert.That(root.GetProperty("DeclarationDiagnostics")[0].GetString(), Does.StartWith("DECL001:"));
+            var entry = root.GetProperty("ReturnMetadata")[0];
+            Assert.That(entry.GetProperty("Name").GetString(), Is.EqualTo("Synthetic.Application"));
+            Assert.That(entry.GetProperty("PlayerMethodCount").GetInt32(), Is.EqualTo(3));
+            Assert.That(entry.GetProperty("UnknownReturnRowCount").GetInt32(), Is.EqualTo(3));
+            Assert.That(entry.GetProperty("UnknownReturnCustomAttributeCount").GetInt32(), Is.EqualTo(3));
+            Assert.That(entry.GetProperty("EvidenceSource").GetString(), Is.EqualTo("v29-player-metadata"));
+            Assert.That(entry.GetProperty("ReturnRowPresence").GetString(), Is.EqualTo("UnknownInPlayer"));
+            Assert.That(entry.GetProperty("ReturnCustomAttributes").GetString(), Is.EqualTo("UnknownInPlayer"));
+        });
+    }
+
+    [Test]
     public void ExplicitUnityManifestIsCopiedExactlyAndReportedWithoutInputDetails()
     {
         const string manifest = "{\n  \"scopedRegistries\": [{\"name\": \"Example registry\", \"url\": \"https://packages.example.org\", \"scopes\": [\"com.example\"]}],\n" +
@@ -416,6 +446,13 @@ public class UnitySourceEmitterTests
             [Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "authored-input"));
         Assert.That(authoredReport.SourceGeneration, Is.EqualTo("generated"));
         Assert.That(authoredReport.Diagnostics, Has.None.Contains("SOURCE008"));
+
+        var v291Report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "v29.1-input"),
+            playerMetadataVersion: 29.1f);
+        Assert.That(v291Report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(v291Report.Diagnostics.Count(diagnostic => diagnostic.StartsWith("SOURCE008:", StringComparison.Ordinal)),
+            Is.EqualTo(1));
     }
 
     [Test]

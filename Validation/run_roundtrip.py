@@ -305,6 +305,17 @@ def main():
         emission = json.loads((project / "source-emission-report.json").read_text(encoding="utf-8"))
         if emission["SourceGeneration"] != "generated" or emission["Diagnostics"]:
             raise ValueError("Source emission did not complete without diagnostics")
+        return_metadata = [item for item in emission.get("ReturnMetadata", []) if item["Name"] == assembly]
+        if (len(return_metadata) != 1 or return_metadata[0]["PlayerMethodCount"] < 1 or
+                return_metadata[0]["UnknownReturnRowCount"] != return_metadata[0]["PlayerMethodCount"] or
+                return_metadata[0]["UnknownReturnCustomAttributeCount"] != return_metadata[0]["PlayerMethodCount"] or
+                return_metadata[0]["EvidenceSource"] != "v29-player-metadata" or
+                return_metadata[0]["ReturnRowPresence"] != "UnknownInPlayer" or
+                return_metadata[0]["ReturnCustomAttributes"] != "UnknownInPlayer" or
+                emission["DeclarationFidelity"] != "partial" or
+                not any(item.startswith("DECL001:") for item in emission.get("DeclarationDiagnostics", []))):
+            raise ValueError("Source report did not preserve version-29 return metadata uncertainty")
+        receipt["playerOnlyReturnMetadata"] = return_metadata[0]
         if reference_map_sha256 is not None:
             if emission.get("ExternalReferenceMapProvenance") != "explicit-auxiliary":
                 raise ValueError("Source emission did not record the explicit reference map")
@@ -339,6 +350,8 @@ def main():
         receipt["stages"]["managedIl"] = {"status": "passed", "toolVersion": verification["actual_tool_version"]}
 
         # Consult managed validation oracles only after player-only recovery has completed.
+        # A zero-difference comparison validates this fixture, but does not fill the
+        # return-row/attribute facts that are absent from the player-derived model.
         # Snapshot the independent comparer too, since other local work may rebuild it.
         comparison_project = ROOT / "Validation/DeclarationComparer/DeclarationComparer.csproj"
         run("build-declaration-comparer", [args.dotnet, "build", str(comparison_project), "-c", "Release", "--nologo", "-v", "quiet"])

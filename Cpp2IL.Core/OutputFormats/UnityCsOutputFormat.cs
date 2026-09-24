@@ -62,6 +62,13 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
         var sourceReport = UnitySourceProjectEmitter.Emit(assemblies, selected, references, projectDirectory, packageManifest,
             externalReferenceMap, context.MetadataVersion);
         sourceReport.RecoveryReportFile = "../source-recovery-report.json";
+        sourceReport.ReturnMetadata.AddRange(UnityV29ReturnMetadataProvenance.Analyze(context, selected));
+        if (sourceReport.ReturnMetadata.Count != 0)
+        {
+            sourceReport.DeclarationFidelity = "partial";
+            sourceReport.DeclarationDiagnostics.Add(
+                "DECL001: Version-29 player metadata cannot certify absence of return-parameter rows or return custom attributes. An independent managed oracle is required to validate these declaration facts.");
+        }
         foreach (var name in UnityV29AttributeTypeProvenance.GetAffectedAssemblyNames(context, selected))
         {
             sourceReport.SourceGeneration = "partial";

@@ -8,12 +8,12 @@ namespace Cpp2IL.Core.SourceEmission;
 
 public sealed class UnitySourceEmissionReport
 {
-    public int SchemaVersion => 2;
+    public int SchemaVersion => 3;
     public string UnityVersion { get; set; } = "2021.3.35f1";
     public string SourceDialect => "C# 9 with Unity restrictions";
     public string SourceGeneration { get; set; } = "incomplete";
     public string UnityCompilation => "unverified";
-    public string DeclarationFidelity => "unverified";
+    public string DeclarationFidelity { get; set; } = "unverified";
     public string WindowsNativeBuild => "unverified";
     public string BehavioralValidation => "unverified";
     public string ScriptAssetBindings => "unverified";
@@ -23,11 +23,13 @@ public sealed class UnitySourceEmissionReport
     public string? RecoveryReportFile { get; set; }
     public List<UnitySourceAssemblyReport> Assemblies { get; } = [];
     public List<string> Diagnostics { get; } = [];
+    public List<UnityReturnMetadataAssemblyReport> ReturnMetadata { get; } = [];
+    public List<string> DeclarationDiagnostics { get; } = [];
 
     public void WriteJson(string path)
     {
         var json = "{\n" +
-            "  \"SchemaVersion\":2,\n" +
+            "  \"SchemaVersion\":" + SchemaVersion + ",\n" +
             "  \"UnityVersion\":" + JsonText.Quote(UnityVersion) + ",\n" +
             "  \"SourceDialect\":" + JsonText.Quote(SourceDialect) + ",\n" +
             "  \"SourceGeneration\":" + JsonText.Quote(SourceGeneration) + ",\n" +
@@ -50,9 +52,35 @@ public sealed class UnitySourceEmissionReport
                 ",\"ExternalReferenceKinds\":[" + string.Join(",", a.ExternalReferenceKinds.Select(reference =>
                     "{\"Name\":" + JsonText.Quote(reference.Name) + ",\"Kind\":" + JsonText.Quote(reference.Kind) +
                     ",\"Provenance\":" + JsonText.Quote(reference.Provenance) + "}")) + "]}")) + "],\n" +
+            "  \"ReturnMetadata\":[" + string.Join(",", ReturnMetadata.Select(item =>
+                "{\"Name\":" + JsonText.Quote(item.Name) + ",\"PlayerMethodCount\":" + item.PlayerMethodCount +
+                ",\"UnknownReturnRowCount\":" + item.UnknownReturnRowCount +
+                ",\"UnknownReturnCustomAttributeCount\":" + item.UnknownReturnCustomAttributeCount +
+                ",\"EvidenceSource\":" + JsonText.Quote(item.EvidenceSource) +
+                ",\"ReturnRowPresence\":" + JsonText.Quote(item.ReturnRowPresence.ToString()) +
+                ",\"ReturnCustomAttributes\":" + JsonText.Quote(item.ReturnCustomAttributes.ToString()) + "}")) + "],\n" +
+            "  \"DeclarationDiagnostics\":" + JsonText.Array(DeclarationDiagnostics) + ",\n" +
             "  \"Diagnostics\":" + JsonText.Array(Diagnostics) + "\n}\n";
         File.WriteAllText(path, json, new UTF8Encoding(false));
     }
+}
+
+public enum UnityReturnMetadataAvailability
+{
+    UnknownInPlayer,
+    KnownAbsent,
+    KnownPresent,
+}
+
+public sealed record UnityReturnMetadataAssemblyReport(
+    string Name,
+    int PlayerMethodCount,
+    int UnknownReturnRowCount,
+    int UnknownReturnCustomAttributeCount,
+    UnityReturnMetadataAvailability ReturnRowPresence,
+    UnityReturnMetadataAvailability ReturnCustomAttributes)
+{
+    public string EvidenceSource => "v29-player-metadata";
 }
 
 public sealed class UnitySourceAssemblyReport

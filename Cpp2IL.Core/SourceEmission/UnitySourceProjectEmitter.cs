@@ -99,7 +99,7 @@ public static class UnitySourceProjectEmitter
                             report.Diagnostics.Add($"SOURCE004: {name}: {method.FullName}: Parameter {parameter.Sequence} marshaling metadata is unresolved; no MarshalAs value was invented.");
                         // V29 player metadata retains the byref type but not the return signature's
                         // readonly modifier. A known managed modifier remains represented by a wrapper.
-                        if (playerMetadataVersion == 29f && method.Signature?.ReturnType is ByReferenceTypeSignature)
+                        if (playerMetadataVersion is >= 29f and < 30f && method.Signature?.ReturnType is ByReferenceTypeSignature)
                             report.Diagnostics.Add($"SOURCE008: {name}: {method.FullName}: Unity 2021.3 metadata does not distinguish ref from ref readonly returns; return mutability is unresolved.");
                     }
                 }

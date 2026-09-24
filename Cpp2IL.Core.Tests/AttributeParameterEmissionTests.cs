@@ -7,6 +7,7 @@ using System.Reflection.PortableExecutable;
 using AssetRipper.Primitives;
 using Cpp2IL.Core.Model.CustomAttributes;
 using Cpp2IL.Core.OutputFormats;
+using Cpp2IL.Core.SourceEmission;
 using Cpp2IL.Core.Utils.AsmResolver;
 
 namespace Cpp2IL.Core.Tests;
@@ -16,6 +17,56 @@ namespace Cpp2IL.Core.Tests;
 [NonParallelizable]
 public class AttributeParameterEmissionTests
 {
+    [Test]
+    public void V29PlayerCannotCertifyReturnRowsOrReturnCustomAttributes()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_ATTRIBUTE_PARAMETER_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_ATTRIBUTE_PARAMETER_FIXTURE_INPUT to the exact synthetic AttributeParameterFixture player-input directory.");
+
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True,
+            "The supplied directory must contain neutral fixture native inputs; no fallback is used.");
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            Assert.That(app.MetadataVersion, Is.EqualTo(29));
+            var playerAssembly = app.GetAssemblyByName("AttributeParameterFixture")!;
+
+            var provenance = UnityV29ReturnMetadataProvenance.Analyze(app, ["AttributeParameterFixture"]);
+            Assert.That(provenance, Has.Count.EqualTo(1));
+            Assert.Multiple(() =>
+            {
+                Assert.That(provenance[0].PlayerMethodCount, Is.EqualTo(15));
+                Assert.That(provenance[0].PlayerMethodCount,
+                    Is.EqualTo(playerAssembly.Definition!.Image.Types.Sum(type => type.MethodCount)));
+                Assert.That(provenance[0].UnknownReturnRowCount, Is.EqualTo(15));
+                Assert.That(provenance[0].UnknownReturnCustomAttributeCount, Is.EqualTo(15));
+                Assert.That(provenance[0].ReturnRowPresence, Is.EqualTo(UnityReturnMetadataAvailability.UnknownInPlayer));
+                Assert.That(provenance[0].ReturnCustomAttributes, Is.EqualTo(UnityReturnMetadataAvailability.UnknownInPlayer));
+            });
+
+            var managed = new AsmResolverDllOutputFormatDefault().BuildAssemblies(app)
+                .Single(assembly => assembly.Name == "AttributeParameterFixture");
+            var cases = managed.ManifestModule!.GetAllTypes().Single(type => type.Name == "ParameterCases");
+            foreach (var name in new[] { "Marked", "ReadOnlyReturn" })
+            {
+                var method = cases.Methods.Single(candidate => candidate.Name == name);
+                Assert.That(method.ParameterDefinitions, Has.None.Property("Sequence").EqualTo(0),
+                    "An unknown return row must not be invented by the player-only writer.");
+            }
+        }
+        finally
+        {
+            Cpp2IlApi.ResetInternalState();
+        }
+    }
+
     [Test]
     public void PreservesDeclaredNamedArraysAndBoxedTypeAndArrayValues()
     {
