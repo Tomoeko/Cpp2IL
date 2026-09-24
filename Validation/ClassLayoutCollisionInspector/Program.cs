@@ -12,7 +12,15 @@ namespace ClassLayoutCollisionInspector;
 internal static class Program
 {
     private const string AssemblyName = "ClassLayoutCollisionFixture";
-    private static readonly string[] Names = ["ImplicitSize", "ExplicitNaturalSize", "ExplicitLargerSize"];
+    private static readonly LayoutExpectation[] Expectations =
+    [
+        new("ImplicitSize", "ValueType", 0),
+        new("ExplicitNaturalSize", "ValueType", 6),
+        new("ExplicitLargerSize", "ValueType", 8),
+        new("ImplicitClassSize", "Object", 0),
+        new("ExplicitNaturalClassSize", "Object", 6),
+        new("ExplicitLargerClassSize", "Object", 32),
+    ];
 
     private static int Main(string[] args)
     {
@@ -38,6 +46,8 @@ internal static class Program
             ValidateManagedLayouts(unstripped);
             if (stripped.Where((layout, index) => layout.PackingSize != unstripped[index].PackingSize ||
                     layout.DeclaredSize != unstripped[index].DeclaredSize ||
+                    layout.TypeFlags != unstripped[index].TypeFlags ||
+                    layout.BaseTypeName != unstripped[index].BaseTypeName ||
                     !layout.Fields.SequenceEqual(unstripped[index].Fields)).Any())
                 throw new InvalidOperationException("Stripping changed the fixture's managed ClassLayout or fields.");
             Cpp2IlApi.Init();
@@ -51,12 +61,12 @@ internal static class Program
                     throw new InvalidOperationException("Player input is not Unity 2021.3.35f1 Windows x64 metadata version 29.");
 
                 var assembly = app.GetAssemblyByName(AssemblyName) ?? throw new InvalidOperationException("Fixture assembly is absent.");
-                var native = Names.Select(name =>
+                var native = Expectations.Select(expectation =>
                 {
-                    var type = assembly.Types.Single(candidate => candidate.Name == name);
+                    var type = assembly.Types.Single(candidate => candidate.Name == expectation.Name);
                     var definition = type.Definition ?? throw new InvalidOperationException("A fixture type lacks its native definition.");
                     var sizes = definition.RawSizes;
-                    return new NativeLayout(name, definition.Bitfield, definition.ClassSizeIsDefault,
+                    return new NativeLayout(expectation.Name, definition.Bitfield, definition.ClassSizeIsDefault,
                         definition.PackingSizeIsDefault, definition.PackingSize, definition.SpecifiedPackingSize,
                         sizes.native_size, sizes.instance_size,
                         type.Fields.Select(field =>
@@ -73,6 +83,12 @@ internal static class Program
                 if (largerLayout.NativeSize <= naturalLayout.NativeSize)
                     throw new InvalidOperationException("The explicit larger-size control did not increase the native size.");
                 var collision = SamePlayerFacts(implicitLayout, naturalLayout);
+                var implicitClass = native.Single(layout => layout.Name == "ImplicitClassSize");
+                var naturalClass = native.Single(layout => layout.Name == "ExplicitNaturalClassSize");
+                var largerClass = native.Single(layout => layout.Name == "ExplicitLargerClassSize");
+                if (largerClass.NativeSize <= naturalClass.NativeSize)
+                    throw new InvalidOperationException("The explicit larger-class-size control did not increase the native size.");
+                var classCollision = SamePlayerFacts(implicitClass, naturalClass);
                 var report = new
                 {
                     scope = "Exact-target player metadata and original managed ClassLayout; no recovered-source or behavior claim.",
@@ -83,11 +99,11 @@ internal static class Program
                     stripped,
                     unstripped,
                     omittedAndExplicitNaturalSizeHaveSamePlayerFacts = collision,
+                    omittedAndExplicitNaturalClassSizeHaveSamePlayerFacts = classCollision,
                 };
                 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
                 File.WriteAllText(output, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }) + "\n");
-                Console.WriteLine(collision ? "Omitted and explicit natural sizes have identical inspected player facts." :
-                    "Omitted and explicit natural sizes differ in inspected player facts.");
+                Console.WriteLine($"Value type size collision: {collision}; reference class size collision: {classCollision}.");
                 return 0;
             }
             finally
@@ -110,13 +126,14 @@ internal static class Program
 
     private static void ValidateManagedLayouts(ManagedLayout[] layouts)
     {
-        int[] declaredSizes = [0, 6, 8];
         for (var index = 0; index < layouts.Length; index++)
         {
             var layout = layouts[index];
-            if (layout.PackingSize != 2 || layout.DeclaredSize != declaredSizes[index] ||
+            var expected = Expectations[index];
+            if (layout.Name != expected.Name || layout.BaseTypeName != expected.BaseTypeName ||
+                layout.PackingSize != 2 || layout.DeclaredSize != expected.DeclaredSize ||
                 layout.Fields.Length != 3 || !layout.Fields.SequenceEqual(layouts[0].Fields))
-                throw new InvalidOperationException("The fixture's managed layout or field declarations differ from the controlled pair.");
+                throw new InvalidOperationException("The fixture's managed layout or field declarations differ from the controlled cases.");
         }
     }
 
@@ -128,22 +145,31 @@ internal static class Program
         var assembly = reader.GetAssemblyDefinition();
         if (reader.GetString(assembly.Name) != AssemblyName)
             throw new ArgumentException("Managed input has the wrong fixture assembly identity.");
-        return Names.Select(name =>
+        return Expectations.Select(expectation =>
         {
             var handle = reader.TypeDefinitions.Single(candidate =>
             {
                 var type = reader.GetTypeDefinition(candidate);
-                return reader.GetString(type.Namespace) == AssemblyName && reader.GetString(type.Name) == name;
+                return reader.GetString(type.Namespace) == AssemblyName && reader.GetString(type.Name) == expectation.Name;
             });
             var definition = reader.GetTypeDefinition(handle);
             var layout = definition.GetLayout();
+            var baseType = definition.BaseType.Kind switch
+            {
+                HandleKind.TypeReference => reader.GetString(reader.GetTypeReference(
+                    (TypeReferenceHandle)definition.BaseType).Name),
+                HandleKind.TypeDefinition => reader.GetString(reader.GetTypeDefinition(
+                    (TypeDefinitionHandle)definition.BaseType).Name),
+                _ => "unknown",
+            };
             var fields = definition.GetFields().Select(fieldHandle =>
             {
                 var field = reader.GetFieldDefinition(fieldHandle);
                 return new ManagedField(reader.GetString(field.Name), (int)field.Attributes,
                     Convert.ToHexString(reader.GetBlobBytes(field.Signature)));
             }).ToArray();
-            return new ManagedLayout(name, layout.PackingSize, layout.Size, fields);
+            return new ManagedLayout(expectation.Name, (int)definition.Attributes, baseType,
+                layout.PackingSize, layout.Size, fields);
         }).ToArray();
     }
 
@@ -166,7 +192,9 @@ internal static class Program
     }
 
     private sealed record ManagedField(string Name, int Flags, string Signature);
-    private sealed record ManagedLayout(string Name, int PackingSize, int DeclaredSize, ManagedField[] Fields);
+    private sealed record LayoutExpectation(string Name, string BaseTypeName, int DeclaredSize);
+    private sealed record ManagedLayout(string Name, int TypeFlags, string BaseTypeName,
+        int PackingSize, int DeclaredSize, ManagedField[] Fields);
     private sealed record NativeField(string Name, string Type, uint Attributes, int Offset);
     private sealed record NativeLayout(string Name, uint Bitfield, bool ClassSizeIsDefault, bool PackingSizeIsDefault,
         uint PackingSize, uint SpecifiedPackingSize, int NativeSize, uint InstanceSize, NativeField[] Fields);
