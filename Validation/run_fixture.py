@@ -37,6 +37,7 @@ import forwarded_argument
 import struct_forward_call
 import struct_static_forward_call
 import integer_extensions
+import instance_reference_setter
 import iterator_factory
 import iterator_factory_manual
 import iterator_factory_variant
@@ -93,6 +94,7 @@ PROFILES = {
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 4},
     "static-word-getter": {"assembly": "StaticWordGetterFixture", "source": VALIDATION / "StaticWordGetterFixture", "methods": 2},
     "static-scalar-setter": {"assembly": "StaticScalarSetterFixture", "source": VALIDATION / "StaticScalarSetterFixture", "methods": 1},
+    "instance-reference-setter": {"assembly": "InstanceReferenceSetterFixture", "source": VALIDATION / "InstanceReferenceSetterFixture", "methods": 4},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
     "sequential-null-guards": {"assembly": "SequentialNullGuardFixture", "source": VALIDATION / "SequentialNullGuardFixture", "methods": 3},
@@ -211,6 +213,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return static_word_getter.verify(path, stage, VERSION)
     if profile == "static-scalar-setter":
         return static_scalar_setter.verify(path, stage, VERSION)
+    if profile == "instance-reference-setter":
+        return instance_reference_setter.verify(path, stage, VERSION)
     if profile == "reference-field":
         return reference_field.verify(path, stage, VERSION)
     if profile == "reference-null":

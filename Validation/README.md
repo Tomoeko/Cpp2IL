@@ -145,3 +145,14 @@ process exit. Actual Editor/player validation remains a separate integration run
 These public checks also run in the fork's ordinary CI; they require no private
 inputs or licensed editor. The declaration comparer is a read-only managed
 metadata tool, with separate declaration, stripping and body-validation scopes.
+
+For repeated focused core checks after a successful build, the Microsoft Testing
+Platform test assembly can be invoked directly:
+
+```sh
+dotnet Cpp2IL.Core.Tests/bin/Release/net10.0/Cpp2IL.Core.Tests.dll \
+  --filter 'FullyQualifiedName~RecoveryRegionSafetyTests' --minimum-expected-tests 1
+```
+
+Build again after source changes before using this shortcut. The direct invocation
+skips `dotnet test` startup but exercises the same selected tests.
