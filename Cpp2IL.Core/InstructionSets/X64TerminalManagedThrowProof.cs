@@ -49,11 +49,16 @@ internal static class X64TerminalManagedThrowProof
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
             app.Binary is not PE pe || X64UnwindProof.ForApplication(app) is not { } unwind ||
-            !HasCallerIdentity(method) || decoded.Count != 17 ||
-            method.RawBytes.Length != 70 ||
+            !HasCallerIdentity(method) || decoded.Count < 17 ||
+            method.RawBytes.Length < 70 ||
             method.UnderlyingPointer > ulong.MaxValue - 70 ||
-            decoded[0].IP != method.UnderlyingPointer ||
-            !TryProveCallerShape(decoded))
+            decoded[0].IP != method.UnderlyingPointer)
+            return null;
+
+        // A metadata-derived body span can continue into a later native function.
+        // The unwind record bounds this closed terminal-throw body.
+        var body = decoded.Take(17).ToArray();
+        if (!TryProveCallerShape(body))
             return null;
 
         var start = method.UnderlyingPointer;
@@ -62,30 +67,32 @@ internal static class X64TerminalManagedThrowProof
         if (region.Kind != X64UnwindProof.SpanKind.HandlerFree ||
             region.Start != start || region.RootStart != start ||
             region.End < end || region.End - end > 15 ||
-            decoded[^1].NextIP != end ||
+            body[^1].NextIP != end ||
             !unwind.MatchesUnwind(start, region.End, 6, 0, SavedRbxFrame) ||
             !X64NativePaddingProof.HasInt3Padding(pe, end, region.End) ||
-            !FileBacked(pe, start, end, method.RawBytes.AsSpan()) ||
-            !X86Utils.Iterate(method).Take(decoded.Count).SequenceEqual(decoded) ||
-            Enumerable.Range(1, 69).Any(offset => app.MethodsByAddress.ContainsKey(start + (ulong)offset)))
+            !FileBacked(pe, start, end, method.RawBytes.AsSpan().Slice(0, 70)) ||
+            !X86Utils.Iterate(method).TakeWhile(instruction => instruction.IP < region.End)
+                .SequenceEqual(decoded.TakeWhile(instruction => instruction.IP < region.End)) ||
+            Enumerable.Range(1, checked((int)(region.End - start)) - 1)
+                .Any(offset => app.MethodsByAddress.ContainsKey(start + (ulong)offset)))
             return null;
 
-        var metadataTarget = decoded[3].NearBranchTarget;
-        if (decoded[13].NearBranchTarget != metadataTarget ||
+        var metadataTarget = body[3].NearBranchTarget;
+        if (body[13].NearBranchTarget != metadataTarget ||
             metadataTarget != app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata ||
             !X64MetadataInitializationHelperProof.TryIdentifyMethodDefArm(app, pe,
                 unwind, metadataTarget) ||
-            !X64IteratorAllocatorProof.IsAllocator(app, decoded[5].NearBranchTarget) ||
-            !ProveNullCheck(app, pe, unwind, decoded[8].NearBranchTarget) ||
-            !ProveRaiseWrapper(app, pe, unwind, decoded[16].NearBranchTarget))
+            !X64IteratorAllocatorProof.IsAllocator(app, body[5].NearBranchTarget) ||
+            !ProveNullCheck(app, pe, unwind, body[8].NearBranchTarget) ||
+            !ProveRaiseWrapper(app, pe, unwind, body[16].NearBranchTarget))
             return null;
 
         var evidence = BindMetadata(method, pe, unwind,
-            decoded[2].IPRelativeMemoryAddress, decoded[12].IPRelativeMemoryAddress,
-            decoded[11].NearBranchTarget);
+            body[2].IPRelativeMemoryAddress, body[12].IPRelativeMemoryAddress,
+            body[11].NearBranchTarget);
         if (evidence == null ||
-            X86CallerExceptionRegionProof.Check(method, decoded,
-                new HashSet<ulong> { decoded[16].IP }) != null)
+            X86CallerExceptionRegionProof.Check(method, body,
+                new HashSet<ulong> { body[16].IP }) != null)
             return null;
 
         return evidence;

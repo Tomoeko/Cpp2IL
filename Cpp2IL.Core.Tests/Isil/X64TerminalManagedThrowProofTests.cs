@@ -15,6 +15,69 @@ public class X64TerminalManagedThrowProofTests
 {
     [Test]
     [NonParallelizable]
+    public void ExactGeneratedResetUsesUnwindBoundaryWithinAnOverlongReportedSpan()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_ITERATOR_GENERATED_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_ITERATOR_GENERATED_FIXTURE_INPUT to the neutral synthetic player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata",
+            "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var iterator = app.GetAssemblyByName("IteratorFactoryFixture")!.Types.Single(type =>
+                type.Name.Contains("<Iterate>d__", StringComparison.Ordinal));
+            var reset = iterator.Methods.Single(method => method.Name == "System.Collections.IEnumerator.Reset");
+            reset.EnsureRawBytes();
+            var native = X86Utils.Iterate(reset).ToArray();
+            var body = native.Take(17).ToArray();
+            var region = X64UnwindProof.ForApplication(app)!
+                .ClassifySpan(reset.UnderlyingPointer, body[^1].NextIP);
+            Assert.Multiple(() =>
+            {
+                Assert.That(reset.RawBytes.Length, Is.GreaterThan(70));
+                Assert.That(native.Length, Is.GreaterThan(17));
+                Assert.That(body[^1].NextIP - reset.UnderlyingPointer, Is.EqualTo(70));
+                Assert.That(region.Kind, Is.EqualTo(X64UnwindProof.SpanKind.HandlerFree));
+                Assert.That(region.Start, Is.EqualTo(reset.UnderlyingPointer));
+                Assert.That(region.End, Is.GreaterThan(body[^1].NextIP));
+                Assert.That(native[17].IP, Is.EqualTo(body[^1].NextIP));
+                Assert.That(native[17].Code, Is.EqualTo(Code.Int3));
+                Assert.That(native.Any(instruction => instruction.IP >= region.End), Is.True,
+                    "the reported span extends into a later native function");
+                Assert.That(X64TerminalManagedThrowProof.TryProveCallerShape(body), Is.True);
+            });
+
+            var proof = X64TerminalManagedThrowProof.Find(reset, native);
+            Assert.That(proof, Is.Not.Null);
+            Assert.That(proof!.ExceptionType.Name, Is.EqualTo("NotSupportedException"));
+            Assert.That(X64TerminalManagedThrowProof.TryLift(reset, native)!
+                .Select(instruction => instruction.OpCode),
+                Is.EqualTo(new[] { ISIL.OpCode.Newobj, ISIL.OpCode.CallVoid, ISIL.OpCode.Throw }));
+
+            var changedPadding = native.ToArray();
+            changedPadding[17].Code = Code.Nopd;
+            Assert.That(X64TerminalManagedThrowProof.Find(reset, changedPadding), Is.Null,
+                "an executable instruction inside the unwind function cannot be discarded");
+            Assert.That(X64TerminalManagedThrowProof.Find(reset, body), Is.Null,
+                "an omitted instruction inside the unwind function cannot be discarded");
+            var laterFunction = native.ToArray();
+            var laterIndex = Array.FindIndex(laterFunction, instruction => instruction.IP >= region.End);
+            laterFunction[laterIndex].Code = Code.Nopd;
+            Assert.That(X64TerminalManagedThrowProof.Find(reset, laterFunction), Is.Not.Null,
+                "a separate native function is outside this method's proved unwind boundary");
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    [NonParallelizable]
     public void ExactPlayerProvesClosedThrowAndRejectsReturningOrAlteredTargets()
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_THROW_ONLY_FIXTURE_INPUT");
