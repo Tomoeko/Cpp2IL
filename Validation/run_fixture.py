@@ -34,6 +34,7 @@ import boolean_getter_metadata
 import byte_threshold
 import composed_array
 import composed_read
+import parameter_array
 import dense_switch
 import float_array
 import float_comparison
@@ -137,6 +138,7 @@ PROFILES = {
     "dense-switch": {"assembly": "DenseSwitchFixture", "source": VALIDATION / "DenseSwitchFixture", "methods": 2},
     "composed-array": {"assembly": "ComposedArrayFixture", "source": VALIDATION / "ComposedArrayFixture", "methods": 6},
     "composed-read": {"assembly": "ComposedReadFixture", "source": VALIDATION / "ComposedReadFixture", "methods": 4},
+    "parameter-array": {"assembly": "ParameterArrayFixture", "source": VALIDATION / "ParameterArrayFixture", "methods": 3},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
@@ -295,6 +297,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return composed_array.verify(path, stage, VERSION)
     if profile == "composed-read":
         return composed_read.verify(path, stage, VERSION)
+    if profile == "parameter-array":
+        return parameter_array.verify(path, stage, VERSION)
     if profile == "field-guard":
         return field_guard.verify(path, stage, VERSION)
     if profile == "zero-arg-field-call":

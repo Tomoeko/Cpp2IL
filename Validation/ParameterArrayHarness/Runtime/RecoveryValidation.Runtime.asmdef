@@ -1,0 +1,5 @@
+{
+  "name": "RecoveryValidation.Runtime",
+  "noEngineReferences": false,
+  "references": ["ParameterArrayFixture"]
+}
