@@ -35,6 +35,7 @@ import iterator_factory
 import iterator_factory_manual
 import literal_concat
 import metadata_guard_move
+import metadata_guard_parameter
 import loop_calls
 import narrow_array
 import reference_null
@@ -74,6 +75,7 @@ PROFILES = {
     "iterator-factory-manual": {"assembly": "IteratorFactoryManualFixture", "source": VALIDATION / "IteratorFactoryManualFixture", "methods": 7},
     "literal-concat": {"assembly": "LiteralConcatFixture", "source": VALIDATION / "LiteralConcatFixture", "methods": 7},
     "metadata-guard-move": {"assembly": "MetadataGuardMoveFixture", "source": VALIDATION / "MetadataGuardMoveFixture", "methods": 3},
+    "metadata-guard-parameter": {"assembly": "MetadataGuardParameterFixture", "source": VALIDATION / "MetadataGuardParameterFixture", "methods": 1},
     "alias-ambiguity": {"assembly": "AliasAmbiguityFixture", "source": VALIDATION / "AliasAmbiguityFixture", "methods": 3},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
@@ -151,6 +153,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return literal_concat.verify(path, stage, VERSION)
     if profile == "metadata-guard-move":
         return metadata_guard_move.verify(path, stage, VERSION)
+    if profile == "metadata-guard-parameter":
+        return metadata_guard_parameter.verify(path, stage, VERSION)
     if profile == "byte-threshold":
         return byte_threshold.verify(path, stage, VERSION)
     if profile == "field-guard":

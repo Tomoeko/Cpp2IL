@@ -109,7 +109,7 @@ internal static class X64MetadataStaticGetterProof
         (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                                   MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) == 0;
 
-    private static bool OrdinaryOwner(TypeAnalysisContext owner) =>
+    internal static bool OrdinaryOwner(TypeAnalysisContext owner) =>
         !owner.IsValueType && !owner.IsInterface && !owner.IsGenericInstance &&
         owner.GenericParameters.Count == 0 && owner.Definition is
             { HasCctor: false, PackingSizeIsDefault: true, ClassSizeIsDefault: true,
@@ -121,7 +121,7 @@ internal static class X64MetadataStaticGetterProof
         ReferenceEquals(owner.BaseType, owner.DefaultBaseType) &&
         (owner.Attributes & TypeAttributes.LayoutMask) != TypeAttributes.ExplicitLayout;
 
-    private static bool UnchangedField(FieldAnalysisContext field, TypeAnalysisContext returnType,
+    internal static bool UnchangedField(FieldAnalysisContext field, TypeAnalysisContext returnType,
         Il2CppType returnRawType, uint loadSize)
     {
         var app = field.AppContext;
@@ -191,7 +191,7 @@ internal static class X64MetadataStaticGetterProof
                instruction.MemorySize.GetSize() == 4;
     }
 
-    private static bool FileBackedWritableData(PE pe, X64UnwindProof.Index unwind,
+    internal static bool FileBackedWritableData(PE pe, X64UnwindProof.Index unwind,
         ulong address, uint length)
     {
         if (address < unwind.ImageBase || address > ulong.MaxValue - length ||
@@ -210,7 +210,7 @@ internal static class X64MetadataStaticGetterProof
                last - first == length - 1;
     }
 
-    private static bool ZeroInitializedWritableData(X64UnwindProof.Index unwind,
+    internal static bool ZeroInitializedWritableData(X64UnwindProof.Index unwind,
         ulong address, uint length)
     {
         if (address < unwind.ImageBase || address > ulong.MaxValue - length ||
