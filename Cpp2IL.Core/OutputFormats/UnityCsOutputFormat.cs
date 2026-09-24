@@ -69,6 +69,7 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
             sourceReport.DeclarationDiagnostics.Add(
                 "DECL001: Version-29 player metadata cannot certify absence of return-parameter rows or return custom attributes. An independent managed oracle is required to validate these declaration facts.");
         }
+        UnityV29ValueTypeClassLayoutProvenance.AddToReport(sourceReport, UnityV29ValueTypeClassLayoutProvenance.Analyze(context, selected));
         foreach (var name in UnityV29AttributeTypeProvenance.GetAffectedAssemblyNames(context, selected))
         {
             sourceReport.SourceGeneration = "partial";

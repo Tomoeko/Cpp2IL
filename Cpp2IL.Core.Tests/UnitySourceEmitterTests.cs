@@ -64,7 +64,7 @@ public class UnitySourceEmitterTests
         var root = document.RootElement;
         Assert.Multiple(() =>
         {
-            Assert.That(root.GetProperty("SchemaVersion").GetInt32(), Is.EqualTo(3));
+            Assert.That(root.GetProperty("SchemaVersion").GetInt32(), Is.EqualTo(4));
             Assert.That(root.GetProperty("SourceGeneration").GetString(), Is.EqualTo("generated"));
             Assert.That(root.GetProperty("DeclarationFidelity").GetString(), Is.EqualTo("partial"));
             Assert.That(root.GetProperty("Diagnostics").GetArrayLength(), Is.Zero);
