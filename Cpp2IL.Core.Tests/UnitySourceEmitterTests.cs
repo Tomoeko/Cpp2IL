@@ -125,6 +125,31 @@ public class UnitySourceEmitterTests
         Assert.That(definition.RootElement.GetProperty("precompiledReferences").GetArrayLength(), Is.Zero);
     }
 
+    [Test]
+    public void BuiltInNumericsReferenceRequiresTheExactTargetIdentity()
+    {
+        var token = Convert.FromHexString("B77A5C561934E089");
+        var exact = new AsmResolver.DotNet.AssemblyReference("System.Numerics", new Version(4, 0, 0, 0))
+        {
+            PublicKeyOrToken = token,
+        };
+        var wrongVersion = new AsmResolver.DotNet.AssemblyReference("System.Numerics", new Version(5, 0, 0, 0))
+        {
+            PublicKeyOrToken = token,
+        };
+        var wrongToken = new AsmResolver.DotNet.AssemblyReference("System.Numerics", new Version(4, 0, 0, 0))
+        {
+            PublicKeyOrToken = [0, 0, 0, 0, 0, 0, 0, 0],
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(exact), Is.True);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(wrongVersion), Is.False);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(wrongToken), Is.False);
+        });
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void PredefinedAssemblyNeedsExplicitAutoReferenceEvidenceForExternalDependency(bool autoReferenced)

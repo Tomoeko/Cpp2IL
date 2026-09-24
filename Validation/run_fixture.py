@@ -6,6 +6,7 @@ import array_access
 import array_call
 import enum_passthrough
 import external_references
+import numerics_reference
 import static_field_getter
 import catch_divide
 import reference_field
@@ -63,6 +64,7 @@ PROFILES = {
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
     "reference-store": {"assembly": "ReferenceStoreFixture", "source": VALIDATION / "ReferenceStoreFixture", "methods": 2},
     "external-references": {"assembly": "ExternalReferenceFixture", "source": VALIDATION / "ExternalReferenceFixture", "methods": 1},
+    "numerics-reference": {"assembly": "NumericsReferenceFixture", "source": VALIDATION / "NumericsReferenceFixture", "methods": 1},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
@@ -127,6 +129,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return reference_store.verify(path, stage, VERSION)
     if profile == "external-references":
         return external_references.verify(path, stage, VERSION)
+    if profile == "numerics-reference":
+        return numerics_reference.verify(path, stage, VERSION)
     if profile == "byte-threshold":
         return byte_threshold.verify(path, stage, VERSION)
     if profile == "field-guard":

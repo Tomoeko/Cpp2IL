@@ -23,6 +23,9 @@ namespace Cpp2IL.Core.SourceEmission;
 public static class UnitySourceProjectEmitter
 {
     public const string TargetUnityVersion = "2021.3.35f1";
+    // Unity's NET_Unity_4_8 profile supplies this exact framework identity.
+    private static readonly Version TargetSystemNumericsVersion = new(4, 0, 0, 0);
+    private static readonly byte[] TargetSystemNumericsToken = [0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89];
 
     public static DecompilerSettings CreateSettings() => new(LanguageVersion.CSharp9_0)
     {
@@ -111,11 +114,14 @@ public static class UnitySourceProjectEmitter
             {
                 var module = byName[name].ManifestModule!;
                 var references = module.AssemblyReferences.Select(r => r.Name!.ToString()).Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+                var referencesByName = module.AssemblyReferences.GroupBy(r => r.Name!.ToString(), StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
                 var sourceReferences = references.Where(r => selected.Contains(r, StringComparer.Ordinal)).ToList();
                 var externalReferences = references.Except(sourceReferences, StringComparer.Ordinal).ToList();
                 foreach (var reference in module.AssemblyReferences)
                 {
                     var referenceName = reference.Name!.ToString();
+                    // Identity-qualified target references still need cross-assembly conflict checks.
                     if (selected.Contains(referenceName, StringComparer.Ordinal) || IsTargetProvidedAssembly(referenceName))
                         continue;
                     var identity = reference.FullName;
@@ -133,11 +139,15 @@ public static class UnitySourceProjectEmitter
                 foreach (var reference in externalReferences)
                 {
                     var configured = externalReferenceMap.TryGet(reference, out var entry);
-                    if (IsTargetProvidedAssembly(reference))
+                    if (referencesByName[reference].All(IsTargetProvidedAssembly))
                     {
                         if (configured && entry.Kind != "target-provided")
                             report.Diagnostics.Add($"SOURCE007: {name}: {reference}: A known target-provided assembly cannot be classified as an asmdef or plug-in.");
-                        referenceKinds.Add(new UnityExternalReferenceReport { Name = reference, Kind = "target-provided", Provenance = "known-target-name" });
+                        referenceKinds.Add(new UnityExternalReferenceReport
+                        {
+                            Name = reference, Kind = "target-provided",
+                            Provenance = IsTargetProvidedAssembly(reference) ? "known-target-name" : "known-target-identity",
+                        });
                         continue;
                     }
 
@@ -236,6 +246,13 @@ public static class UnitySourceProjectEmitter
             "System.Collections" or "System.Xml" or "System.Xml.Linq" or "Microsoft.CSharp" or "UnityEngine" or "UnityEditor" ||
         name.StartsWith("UnityEngine.", StringComparison.Ordinal) && name.EndsWith("Module", StringComparison.Ordinal) ||
         name.StartsWith("UnityEditor.", StringComparison.Ordinal) && name.EndsWith("Module", StringComparison.Ordinal);
+
+    internal static bool IsTargetProvidedAssembly(AsmResolver.DotNet.AssemblyReference reference) =>
+        IsTargetProvidedAssembly(reference.Name?.ToString() ?? "") ||
+        reference.Name?.ToString() == "System.Numerics" &&
+        reference.Version == TargetSystemNumericsVersion &&
+        string.IsNullOrEmpty(reference.Culture?.ToString()) &&
+        (reference.PublicKeyOrToken ?? []).SequenceEqual(TargetSystemNumericsToken);
 
     private static bool IsReservedSourceAssembly(string name) => IsTargetProvidedAssembly(name) ||
         name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
