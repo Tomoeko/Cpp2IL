@@ -59,6 +59,8 @@ internal static class X86ScalarArrayAccessProof
              !ReferenceEquals(element, app.SystemTypes.SystemSByteType) &&
              !ReferenceEquals(element, app.SystemTypes.SystemInt32Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemUInt32Type) &&
+             !ReferenceEquals(element, app.SystemTypes.SystemInt16Type) &&
+             !ReferenceEquals(element, app.SystemTypes.SystemUInt16Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemInt64Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemUInt64Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemSingleType)) ||
@@ -70,11 +72,11 @@ internal static class X86ScalarArrayAccessProof
             context.OverrideReturnType != null ||
             definition.RawReturnType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawReturn ||
             (isWrite
-                ? !ReferenceEquals(context.ReturnType, app.SystemTypes.SystemVoidType) ||
+                ? IsWordElement(app, element) ||
+                  !ReferenceEquals(context.ReturnType, app.SystemTypes.SystemVoidType) ||
                   rawReturn.Type != Il2CppTypeEnum.IL2CPP_TYPE_VOID ||
                   !ValidStoredParameter(context, definition, element)
-                : !ReferenceEquals(context.ReturnType, element) ||
-                  rawReturn.Type != RawElementType(app, element)) ||
+                : !ValidReadReturn(context, element, rawReturn.Type)) ||
             body.Count < 12 || body[0].IP != context.UnderlyingPointer)
             return null;
 
@@ -82,14 +84,17 @@ internal static class X86ScalarArrayAccessProof
                             ReferenceEquals(element, app.SystemTypes.SystemSByteType);
         var isWideElement = ReferenceEquals(element, app.SystemTypes.SystemInt64Type) ||
                             ReferenceEquals(element, app.SystemTypes.SystemUInt64Type);
+        var isWordElement = IsWordElement(app, element);
         var isSingleElement = ReferenceEquals(element, app.SystemTypes.SystemSingleType);
-        var elementSize = isByteElement ? 1 : isWideElement ? 8 : 4;
+        var elementSize = isByteElement ? 1 : isWordElement ? 2 : isWideElement ? 8 : 4;
+        bool? signedWordRead = isWordElement
+            ? ReferenceEquals(element, app.SystemTypes.SystemInt16Type) : null;
         var nullCall = body[9];
         var boundsCall = body[11];
-        if (!TryProveShape(body, isWrite, elementSize, isSingleElement))
+        if (!TryProveShape(body, isWrite, elementSize, isSingleElement, signedWordRead))
             return null;
-        var provedRegion = isSingleElement
-            ? TryCompleteSingleRegion(app, context.UnderlyingPointer, body)
+        var provedRegion = isSingleElement || isWordElement
+            ? TryCompleteTrapTerminatedRegion(app, context.UnderlyingPointer, body)
             : body;
         if (provedRegion == null ||
             X86RuntimeNullThrowProof.TryIdentify(app, nullCall.NearBranchTarget) == null ||
@@ -100,6 +105,7 @@ internal static class X86ScalarArrayAccessProof
 
         // ArrayRecovery recognizes this typed offset/scale as an element access.
         // The emitter preserves null-first and unsigned bounds failure via ldelem/stelem.
+        // For short/ushort reads, typed ldelem widens to Int32 with the element's signedness.
         var memory = new ISIL.MemoryOperand(new IsilRegister(null, "rcx"),
             new IsilRegister(null, "rdx"), 0x20, elementSize);
         if (isWrite)
@@ -134,6 +140,10 @@ internal static class X86ScalarArrayAccessProof
             return Il2CppTypeEnum.IL2CPP_TYPE_U1;
         if (ReferenceEquals(element, app.SystemTypes.SystemSByteType))
             return Il2CppTypeEnum.IL2CPP_TYPE_I1;
+        if (ReferenceEquals(element, app.SystemTypes.SystemUInt16Type))
+            return Il2CppTypeEnum.IL2CPP_TYPE_U2;
+        if (ReferenceEquals(element, app.SystemTypes.SystemInt16Type))
+            return Il2CppTypeEnum.IL2CPP_TYPE_I2;
         if (ReferenceEquals(element, app.SystemTypes.SystemUInt64Type))
             return Il2CppTypeEnum.IL2CPP_TYPE_U8;
         if (ReferenceEquals(element, app.SystemTypes.SystemInt64Type))
@@ -144,7 +154,21 @@ internal static class X86ScalarArrayAccessProof
             ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
     }
 
-    internal static IReadOnlyList<Instruction>? TryCompleteSingleRegion(ApplicationAnalysisContext app,
+    private static bool IsWordElement(ApplicationAnalysisContext app, TypeAnalysisContext element) =>
+        ReferenceEquals(element, app.SystemTypes.SystemInt16Type) ||
+        ReferenceEquals(element, app.SystemTypes.SystemUInt16Type);
+
+    private static bool ValidReadReturn(MethodAnalysisContext context, TypeAnalysisContext element,
+        Il2CppTypeEnum rawReturn)
+    {
+        var app = context.AppContext;
+        return IsWordElement(app, element)
+            ? ReferenceEquals(context.ReturnType, app.SystemTypes.SystemInt32Type) &&
+              rawReturn == Il2CppTypeEnum.IL2CPP_TYPE_I4
+            : ReferenceEquals(context.ReturnType, element) && rawReturn == RawElementType(app, element);
+    }
+
+    internal static IReadOnlyList<Instruction>? TryCompleteTrapTerminatedRegion(ApplicationAnalysisContext app,
         ulong entry, IReadOnlyList<Instruction> body)
     {
         if (body.Count < 12)
@@ -176,9 +200,11 @@ internal static class X86ScalarArrayAccessProof
     }
 
     internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4,
-        bool isSingleElement = false)
+        bool isSingleElement = false, bool? signedWordRead = null)
     {
-        if (body.Count < 12 || elementSize is not (1 or 4 or 8) || isSingleElement && elementSize != 4)
+        if (body.Count < 12 || elementSize is not (1 or 2 or 4 or 8) ||
+            isSingleElement && elementSize != 4 || signedWordRead.HasValue != (elementSize == 2) ||
+            signedWordRead.HasValue && (isWrite || isSingleElement))
             return false;
         for (var i = 0; i < 12; i++)
         {
@@ -204,7 +230,7 @@ internal static class X86ScalarArrayAccessProof
                boundsBranch.NearBranchTarget == body[11].IP &&
                body[5].Code == Code.Movsxd_r64_rm32 &&
                Registers(body[5], Mnemonic.Movsxd, Register.RAX, Register.EDX) &&
-               SuccessfulElementAccess(element, isWrite, elementSize, isSingleElement) &&
+               SuccessfulElementAccess(element, isWrite, elementSize, isSingleElement, signedWordRead) &&
                Stack(body[7], Mnemonic.Add, 0x28) &&
                body[8].Code == Code.Retnq && body[8].OpCount == 0 &&
                Call(body[9]) && body[10].Code == Code.Int3 &&
@@ -230,7 +256,7 @@ internal static class X86ScalarArrayAccessProof
             ? Memory(instruction, operand, Register.RAX, Register.RCX, 1, 0x20, 1)
             : Memory(instruction, operand, Register.RCX, Register.RAX, elementSize, 0x20, elementSize);
     private static bool SuccessfulElementAccess(Instruction instruction, bool isWrite, int elementSize,
-        bool isSingleElement)
+        bool isSingleElement, bool? signedWordRead)
     {
         if (instruction.OpCount != 2)
             return false;
@@ -242,6 +268,10 @@ internal static class X86ScalarArrayAccessProof
                 : instruction.Code == Code.Movss_xmm_xmmm32 &&
                   instruction.Op0Kind == OpKind.Register && instruction.Op0Register == Register.XMM0 &&
                   ElementMemory(instruction, 1, 4);
+        if (signedWordRead is bool signed)
+            return instruction.Code == (signed ? Code.Movsx_r32_rm16 : Code.Movzx_r32_rm16) &&
+                   instruction.Op0Kind == OpKind.Register && instruction.Op0Register == Register.EAX &&
+                   ElementMemory(instruction, 1, 2);
         if (isWrite)
         {
             var valueRegister = elementSize == 8 ? Register.R8 :

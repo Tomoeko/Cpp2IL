@@ -32,6 +32,7 @@ import reference_null
 import reference_store
 import scalar_truncation
 import xmm_spill
+import word_array
 import word_fields
 import zero_arg_field_call
 
@@ -46,6 +47,7 @@ PROFILES = {
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
+    "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 8},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 3},
@@ -93,6 +95,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return narrow_array.verify(path, stage, VERSION)
     if profile == "float-array":
         return float_array.verify(path, stage, VERSION)
+    if profile == "word-array":
+        return word_array.verify(path, stage, VERSION)
     if profile == "array-call":
         return array_call.verify(path, stage, VERSION)
     if profile == "enum-passthrough":

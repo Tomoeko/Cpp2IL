@@ -43,7 +43,7 @@ public class X86FloatArrayAccessFixtureTests
 
             var native = X86Utils.Iterate(method).ToArray();
             Assert.That(X86ScalarArrayAccessProof.TryProveShape(native, isWrite, 4, true), Is.True);
-            var region = X86ScalarArrayAccessProof.TryCompleteSingleRegion(app, method.UnderlyingPointer, native);
+            var region = X86ScalarArrayAccessProof.TryCompleteTrapTerminatedRegion(app, method.UnderlyingPointer, native);
             Assert.That(region, Is.Not.Null);
             Assert.That(region!, Has.Count.EqualTo(13));
             Assert.That(region![12].Code, Is.EqualTo(Code.Int3));
@@ -87,7 +87,7 @@ public class X86FloatArrayAccessFixtureTests
             overlap.IP = native[11].NextIP;
             overlap.Code = Code.Nopd;
             conflictingSuffix.Add(overlap);
-            Assert.That(X86ScalarArrayAccessProof.TryCompleteSingleRegion(app, method.UnderlyingPointer,
+            Assert.That(X86ScalarArrayAccessProof.TryCompleteTrapTerminatedRegion(app, method.UnderlyingPointer,
                 conflictingSuffix), Is.Null);
         }
         finally { Cpp2IlApi.ResetInternalState(); }

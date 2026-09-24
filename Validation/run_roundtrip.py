@@ -16,7 +16,7 @@ from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_proces
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
-    "catch-divide", "exception-regions", "array-access", "narrow-array", "float-array", "array-call",
+    "catch-divide", "exception-regions", "array-access", "narrow-array", "float-array", "word-array", "array-call",
     "enum-passthrough", "static-field-getter", "reference-field", "reference-null",
     "reference-store", "external-references", "byte-threshold", "field-guard",
     "zero-arg-field-call", "scalar-truncation", "loop-calls", "word-fields",
