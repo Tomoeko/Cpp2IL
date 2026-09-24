@@ -211,9 +211,9 @@ public static class MetadataResolver
     /// re-fires as receivers become typed - a resolved call types its return value, which can type
     /// the receiver of a further call. Returns whether any call was resolved this pass.
     ///
-    /// Conservative by design: it commits only when exactly one non-static candidate's declaring
-    /// type matches the receiver's type. Anything still untyped or ambiguous is left for a later
-    /// pass, or left unresolved - it never guesses.
+    /// Conservative by design: it commits only when a unique non-static candidate matches the
+    /// receiver or a proven base in its chain. Anything still untyped or ambiguous is left for
+    /// a later pass, or left unresolved.
     /// </summary>
     public static bool ResolveAmbiguousCalls(MethodAnalysisContext method)
     {
@@ -236,17 +236,39 @@ public static class MetadataResolver
             if (GetReceiver(instruction) is not { Type: { } receiverType } receiver)
                 continue;
 
-            // Prefer picking base ctor if we are a ctor
             var callerIsCtor = method.Name == ".ctor" && receiver.IsThis;
 
-            // A constructor's receiver has its derived type even while it calls a
-            // base constructor. If that base .ctor shares an address with a method
-            // on the derived type, receiver matching alone cannot choose either.
-            if (callerIsCtor && candidates.Any(c => !c.IsStatic && c.Name == ".ctor"
-                    && IsInReceiverChain(c.DeclaringType, receiverType))
-                && candidates.Any(c => !c.IsStatic && c.Name != ".ctor"
-                    && IsInReceiverChain(c.DeclaringType, receiverType)))
-                continue;
+            // A constructor's receiver has its owner type even while it calls a
+            // base constructor. If the shared body also binds an owner constructor,
+            // the receiver cannot distinguish a self call from a base call. When
+            // only base-chain constructors are bound, the sole immediate-base
+            // constructor is the only legal C# initializer target.
+            if (callerIsCtor)
+            {
+                var selfOwner = method.DeclaringType is { } declaringType
+                    && IsConstructorSelfType(receiverType, declaringType) ? declaringType : null;
+                var chainCandidates = candidates.Where(c => !c.IsStatic
+                    && (IsInReceiverChain(c.DeclaringType, receiverType)
+                        || selfOwner != null && IsSameType(c.DeclaringType, selfOwner))).ToList();
+                var constructors = chainCandidates.Where(c => c.Name == ".ctor").ToList();
+                if (constructors.Count > 0)
+                {
+                    if (constructors.Count != chainCandidates.Count ||
+                        method.DeclaringType is not { BaseType: { } immediateBase } owner ||
+                        !IsConstructorSelfType(receiverType, owner))
+                        continue;
+
+                    if (constructors.Count == 1)
+                    {
+                        var targetOwner = constructors[0].DeclaringType;
+                        if (!IsSameType(targetOwner, owner) && !IsSameType(targetOwner, immediateBase))
+                            continue;
+                    }
+                    else if (constructors.Any(c => IsSameType(c.DeclaringType, owner)) ||
+                             constructors.Count(c => IsSameType(c.DeclaringType, immediateBase)) != 1)
+                        continue;
+                }
+            }
 
             // Handle methods with shared bodies
             var match = default(MethodAnalysisContext);
@@ -315,6 +337,17 @@ public static class MetadataResolver
         return true;
     }
 
+    // A generic constructor's managed 'this' can be represented as its open
+    // instantiation even though the method context belongs to the definition.
+    // Do not treat an arbitrary closed instantiation as the definition's 'this'.
+    private static bool IsConstructorSelfType(TypeAnalysisContext receiver, TypeAnalysisContext owner) =>
+        IsSameType(receiver, owner) ||
+        receiver is GenericInstanceTypeAnalysisContext openSelf &&
+        ReferenceEquals(openSelf.GenericType, owner) &&
+        openSelf.GenericArguments.Count == owner.GenericParameters.Count &&
+        !openSelf.GenericArguments.Where((argument, index) =>
+            !IsSameType(argument, owner.GenericParameters[index])).Any();
+
     private static bool IsInReceiverChain(TypeAnalysisContext? candidate, TypeAnalysisContext receiver)
     {
         for (var type = receiver; type != null; type = type.BaseType)
@@ -347,46 +380,26 @@ public static class MetadataResolver
             if (GetReceiver(instruction) is not { } receiver || AllocatedType(receiver, definitions) is not { } allocatedType)
                 continue;
 
+            // Allocation proves the owner, but the target address must also bind
+            // exactly one constructor of that owner. Matching an unbound member by
+            // parameter count would invent a callsite identity.
+            var genericInstance = allocatedType as GenericInstanceTypeAnalysisContext;
             var ownerConstructors = candidates.Where(c => !c.IsStatic && c.Name == ".ctor"
-                && ReferenceEquals(c.DeclaringType, allocatedType)).ToList();
-            // A type can have several constructor overloads folded to one address.
-            // Allocation proves the owner, but does not identify the overload.
-            if (ownerConstructors.Count > 1)
+                && (IsSameType(c.DeclaringType, allocatedType)
+                    || genericInstance != null && ReferenceEquals(c.DeclaringType, genericInstance.GenericType))).ToList();
+            if (ownerConstructors is not [{ } boundConstructor])
                 continue;
 
-            var constructor = ownerConstructors.SingleOrDefault()
-                              ?? FindConstructorForSharedBody(allocatedType, candidates);
-            if (constructor == null)
-                continue;
-
+            var constructor = genericInstance != null
+                && ReferenceEquals(boundConstructor.DeclaringType, genericInstance.GenericType)
+                    ? new ConcreteGenericMethodAnalysisContext(boundConstructor, genericInstance.GenericArguments, [])
+                    : boundConstructor;
             instruction.SetOperand(0, constructor);
             constructor.AppContext.InstructionSet.CallingConventionResolver?.RemapRawArguments(instruction, constructor);
             changed = true;
         }
 
         return changed;
-    }
-
-    private static MethodAnalysisContext? FindConstructorForSharedBody(TypeAnalysisContext allocatedType, List<MethodAnalysisContext> candidates)
-    {
-        var candidateParamCounts = new HashSet<int>(candidates
-            .Where(c => c is { IsStatic: false, Name: ".ctor" })
-            .Select(c => c.Parameters.Count));
-
-        if (candidateParamCounts.Count == 0)
-            return null;
-
-        var definition = allocatedType is GenericInstanceTypeAnalysisContext genericInstance ? genericInstance.GenericType : allocatedType;
-        var matches = definition.Methods
-            .Where(m => m is { IsStatic: false, Name: ".ctor" } && candidateParamCounts.Contains(m.Parameters.Count))
-            .ToList();
-
-        if (matches is not [{ } match])
-            return null;
-
-        return allocatedType is GenericInstanceTypeAnalysisContext instance
-            ? new ConcreteGenericMethodAnalysisContext(match, instance.GenericArguments, [])
-            : match;
     }
 
     // Follow SSA copies from a local back to the Newobj that produced the value

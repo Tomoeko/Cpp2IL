@@ -141,6 +141,58 @@ public class MetadataCallProvenanceTests
         Assert.That(call.Operands[0], Is.SameAs(constructor));
     }
 
+    [Test]
+    public void AllocatedOwnerCannotSelectConstructorOutsideTargetBindings()
+    {
+        const ulong target = 0x7f00_1234_5678_9005;
+        var owner = new InjectedTypeAnalysisContext(_app.SystemTypes.SystemObjectType.DeclaringAssembly,
+            "Synthetic", "AllocatedOwner", _app.SystemTypes.SystemObjectType,
+            TypeAttributes.Public | TypeAttributes.Class);
+        var attributes = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
+        var unboundConstructor = owner.InjectMethodContext(".ctor", _app.SystemTypes.SystemVoidType,
+            attributes);
+        var boundConstructor = new InjectedMethodAnalysisContext(_app.SystemTypes.SystemObjectType,
+            ".ctor", _app.SystemTypes.SystemVoidType, attributes, []);
+        _app.MethodsByAddress[target] = [boundConstructor];
+
+        var context = CreateMethod();
+        var instance = new LocalVariable("instance", new Register(1, "instance"), owner);
+        var allocation = new Instruction(0, OpCode.Newobj, instance);
+        var call = new Instruction(1, OpCode.CallVoid, Imm(target), instance, Imm(0));
+        context.ControlFlowGraph = new ISILControlFlowGraph([allocation, call,
+            new(2, OpCode.Return, instance)]);
+
+        Assert.That(owner.Methods, Does.Contain(unboundConstructor));
+        Assert.That(MetadataResolver.ResolveConstructorCalls(context), Is.False);
+        Assert.That(call.Operands[0], Is.TypeOf<Immediate>());
+    }
+
+    [Test]
+    public void AllocatedGenericOwnerSpecializesAddressBoundConstructor()
+    {
+        const ulong target = 0x7f00_1234_5678_9007;
+        var genericType = _app.GetAssemblyByName("mscorlib")!
+            .GetTypeByFullName("System.Collections.Generic.List`1")!;
+        var owner = genericType.MakeGenericInstanceType([_app.SystemTypes.SystemInt32Type]);
+        var attributes = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
+        var boundConstructor = new InjectedMethodAnalysisContext(genericType, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        _app.MethodsByAddress[target] = [boundConstructor];
+
+        var context = CreateMethod();
+        var instance = new LocalVariable("instance", new Register(1, "instance"), owner);
+        var allocation = new Instruction(0, OpCode.Newobj, instance);
+        var call = new Instruction(1, OpCode.CallVoid, Imm(target), instance, Imm(0));
+        context.ControlFlowGraph = new ISILControlFlowGraph([allocation, call,
+            new(2, OpCode.Return, instance)]);
+
+        Assert.That(MetadataResolver.ResolveConstructorCalls(context), Is.True);
+        Assert.That(call.Operands[0], Is.TypeOf<ConcreteGenericMethodAnalysisContext>());
+        var resolved = (ConcreteGenericMethodAnalysisContext)call.Operands[0];
+        Assert.That(resolved.BaseMethodContext, Is.SameAs(boundConstructor));
+        Assert.That(resolved.TypeGenericParameters, Is.EquivalentTo(owner.GenericArguments));
+    }
+
     [TestCase(true)]
     [TestCase(false)]
     public void ConstructorReceiverCannotChooseDerivedAliasOfBaseConstructor(bool callerIsConstructor)
@@ -163,6 +215,131 @@ public class MetadataCallProvenanceTests
 
         Assert.That(MetadataResolver.ResolveAmbiguousCalls(caller), Is.EqualTo(!callerIsConstructor));
         Assert.That(call.Operands[0], callerIsConstructor ? Is.TypeOf<Immediate>() : Is.SameAs(derivedMethod));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ConstructorReceiverCannotChooseBetweenDerivedAndBaseConstructors(bool reverseAliases)
+    {
+        const ulong target = 0x7f00_1234_5678_9006;
+        var derived = _app.SystemTypes.SystemStringType;
+        var baseType = _app.SystemTypes.SystemObjectType;
+        var attributes = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
+        var derivedConstructor = new InjectedMethodAnalysisContext(derived, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        var baseConstructor = new InjectedMethodAnalysisContext(baseType, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        _app.MethodsByAddress[target] = reverseAliases
+            ? [baseConstructor, derivedConstructor]
+            : [derivedConstructor, baseConstructor];
+
+        var caller = new InjectedMethodAnalysisContext(derived, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        var receiver = new LocalVariable("this", new Register(1, "this"), derived) { IsThis = true };
+        var call = new Instruction(0, OpCode.CallVoid, Imm(target), receiver, Imm(0));
+        caller.ControlFlowGraph = new ISILControlFlowGraph([call, new(1, OpCode.Return)]);
+
+        Assert.That(MetadataResolver.ResolveAmbiguousCalls(caller), Is.False);
+        Assert.That(call.Operands[0], Is.TypeOf<Immediate>());
+    }
+
+    [Test]
+    public void ConstructorReceiverSelectsImmediateBaseAmongBaseChainAliases()
+    {
+        const ulong target = 0x7f00_1234_5678_9008;
+        var assembly = _app.SystemTypes.SystemObjectType.DeclaringAssembly;
+        var root = new InjectedTypeAnalysisContext(assembly, "Synthetic", "Root",
+            _app.SystemTypes.SystemObjectType, TypeAttributes.Public | TypeAttributes.Class);
+        var middle = new InjectedTypeAnalysisContext(assembly, "Synthetic", "Middle",
+            root, TypeAttributes.Public | TypeAttributes.Class);
+        var derived = new InjectedTypeAnalysisContext(assembly, "Synthetic", "Derived",
+            middle, TypeAttributes.Public | TypeAttributes.Class);
+        var attributes = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
+        var rootConstructor = new InjectedMethodAnalysisContext(root, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        var immediateBaseConstructor = new InjectedMethodAnalysisContext(middle, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        _app.MethodsByAddress[target] = [rootConstructor, immediateBaseConstructor];
+
+        var caller = new InjectedMethodAnalysisContext(derived, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        var receiver = new LocalVariable("this", new Register(1, "this"), derived) { IsThis = true };
+        var call = new Instruction(0, OpCode.CallVoid, Imm(target), receiver, Imm(0));
+        caller.ControlFlowGraph = new ISILControlFlowGraph([call, new(1, OpCode.Return)]);
+
+        Assert.That(MetadataResolver.ResolveAmbiguousCalls(caller), Is.True);
+        Assert.That(call.Operands[0], Is.SameAs(immediateBaseConstructor));
+    }
+
+    [Test]
+    public void ConstructorReceiverCannotSelectGrandparentWhenImmediateBaseIsUnbound()
+    {
+        const ulong target = 0x7f00_1234_5678_9010;
+        var assembly = _app.SystemTypes.SystemObjectType.DeclaringAssembly;
+        var root = new InjectedTypeAnalysisContext(assembly, "Synthetic", "Root",
+            _app.SystemTypes.SystemObjectType, TypeAttributes.Public | TypeAttributes.Class);
+        var middle = new InjectedTypeAnalysisContext(assembly, "Synthetic", "Middle",
+            root, TypeAttributes.Public | TypeAttributes.Class);
+        var derived = new InjectedTypeAnalysisContext(assembly, "Synthetic", "Derived",
+            middle, TypeAttributes.Public | TypeAttributes.Class);
+        var unrelated = new InjectedTypeAnalysisContext(assembly, "Synthetic", "Unrelated",
+            _app.SystemTypes.SystemObjectType, TypeAttributes.Public | TypeAttributes.Class);
+        var attributes = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
+        var rootConstructor = new InjectedMethodAnalysisContext(root, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        var unrelatedConstructor = new InjectedMethodAnalysisContext(unrelated, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        _app.MethodsByAddress[target] = [rootConstructor, unrelatedConstructor];
+
+        var caller = new InjectedMethodAnalysisContext(derived, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        var receiver = new LocalVariable("this", new Register(1, "this"), derived) { IsThis = true };
+        var call = new Instruction(0, OpCode.CallVoid, Imm(target), receiver, Imm(0));
+        caller.ControlFlowGraph = new ISILControlFlowGraph([call, new(1, OpCode.Return)]);
+
+        Assert.That(MetadataResolver.ResolveAmbiguousCalls(caller), Is.False);
+        Assert.That(call.Operands[0], Is.TypeOf<Immediate>());
+    }
+
+    [TestCase(true, false)]
+    [TestCase(false, false)]
+    [TestCase(true, true)]
+    public void GenericConstructorReceiverNeedsUnambiguousOpenSelfBaseCall(bool openSelf,
+        bool includeSelfAlias)
+    {
+        const ulong target = 0x7f00_1234_5678_9009;
+        var assembly = _app.SystemTypes.SystemObjectType.DeclaringAssembly;
+        var root = new InjectedTypeAnalysisContext(assembly, "Synthetic", "GenericRoot",
+            _app.SystemTypes.SystemObjectType, TypeAttributes.Public | TypeAttributes.Class);
+        var middle = new InjectedTypeAnalysisContext(assembly, "Synthetic", "GenericMiddle",
+            root, TypeAttributes.Public | TypeAttributes.Class);
+        var owner = new InjectedTypeAnalysisContext(assembly, "Synthetic", "GenericOwner`1",
+            middle, TypeAttributes.Public | TypeAttributes.Class);
+        var genericParameter = _app.GetAssemblyByName("mscorlib")!
+            .GetTypeByFullName("System.Collections.Generic.List`1")!.GenericParameters.Single();
+        owner.GenericParameters.Add(genericParameter);
+        var receiverType = owner.MakeGenericInstanceType([
+            openSelf ? genericParameter : _app.SystemTypes.SystemInt32Type]);
+        var attributes = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
+        var rootConstructor = new InjectedMethodAnalysisContext(root, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        var immediateBaseConstructor = new InjectedMethodAnalysisContext(middle, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        _app.MethodsByAddress[target] = [rootConstructor, immediateBaseConstructor];
+        if (includeSelfAlias)
+            _app.MethodsByAddress[target].Add(new InjectedMethodAnalysisContext(owner, ".ctor",
+                _app.SystemTypes.SystemVoidType, attributes, []));
+
+        var caller = new InjectedMethodAnalysisContext(owner, ".ctor",
+            _app.SystemTypes.SystemVoidType, attributes, []);
+        var receiver = new LocalVariable("this", new Register(1, "this"), receiverType) { IsThis = true };
+        var call = new Instruction(0, OpCode.CallVoid, Imm(target), receiver, Imm(0));
+        caller.ControlFlowGraph = new ISILControlFlowGraph([call, new(1, OpCode.Return)]);
+
+        var resolved = openSelf && !includeSelfAlias;
+        Assert.That(MetadataResolver.ResolveAmbiguousCalls(caller), Is.EqualTo(resolved));
+        Assert.That(call.Operands[0], resolved
+            ? Is.SameAs(immediateBaseConstructor) : Is.TypeOf<Immediate>());
     }
 
     private InjectedMethodAnalysisContext CreateMethod() => new(_app.SystemTypes.SystemObjectType,
