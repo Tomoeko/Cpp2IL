@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Cpp2IL.Core.Graphs;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
@@ -26,7 +28,23 @@ internal static class NarrowFieldEqualityProof
             context.AppContext.Binary.InstructionSetId != DefaultInstructionSets.X86_64 ||
             context.AppContext.UnityVersion.ToString() != "2021.3.35f1")
             throw new DecompilerException("Native narrow field equality requires the supported Windows x64 Unity profile");
-        Validate(context.ControlFlowGraph, HasUnchangedFieldLayout);
+        FieldAnalysisContext? provedDirectGetterField = null;
+        var checkedDirectGetter = false;
+        Validate(context.ControlFlowGraph, (field, width) =>
+        {
+            if (HasUnchangedFieldLayout(field, width))
+                return true;
+            if (width != 8 || !HasUnchangedByteFieldLayoutWithFieldlessConstructedBase(field))
+                return false;
+            if (!checkedDirectGetter)
+            {
+                context.EnsureRawBytes();
+                provedDirectGetterField = X86DirectBooleanFieldGetterProof.Find(
+                    context, X86Utils.Iterate(context).ToArray());
+                checkedDirectGetter = true;
+            }
+            return ReferenceEquals(provedDirectGetterField, field.Field);
+        });
     }
 
     internal static void Validate(ISILControlFlowGraph graph, Func<FieldReference, bool> isExactByteField)
@@ -68,6 +86,12 @@ internal static class NarrowFieldEqualityProof
     internal static bool HasUnchangedByteFieldLayout(FieldReference reference)
         => HasUnchangedFieldLayout(reference, 8);
 
+    // A constructed ancestor has no projected Fields or BaseType in the analysis model.
+    // Only this direct-getter proof may walk a fieldless generic definition's unchanged,
+    // non-generic base chain. Other narrow-field proofs retain their existing gate.
+    internal static bool HasUnchangedByteFieldLayoutWithFieldlessConstructedBase(FieldReference reference)
+        => HasUnchangedFieldLayout(reference, 8, false, true);
+
     internal static bool HasUnchangedReferenceFieldLayout(FieldReference reference)
     {
         var field = reference.Field;
@@ -79,7 +103,8 @@ internal static class NarrowFieldEqualityProof
     internal static bool HasUnchangedFieldLayout(FieldReference reference, int width)
         => HasUnchangedFieldLayout(reference, width, false);
 
-    private static bool HasUnchangedFieldLayout(FieldReference reference, int width, bool referenceField)
+    private static bool HasUnchangedFieldLayout(FieldReference reference, int width,
+        bool referenceField, bool allowFieldlessConstructedBase = false)
     {
         var field = reference.Field;
         var owner = field.DeclaringType;
@@ -99,10 +124,34 @@ internal static class NarrowFieldEqualityProof
 
         // A default layout is not permission to accept inconsistent or overlapping offsets.
         // Include base fields and reject unknown extents instead of guessing their storage size.
-        for (var type = owner; type != null; type = type.BaseType)
+        var visited = new HashSet<TypeAnalysisContext>();
+        var sawConstructedBase = false;
+        var reachedObject = false;
+        for (var type = owner; type != null;)
         {
-            if (type is GenericInstanceTypeAnalysisContext || type.GenericParameters.Count != 0 ||
+            if (!visited.Add(type))
+                return false;
+            if (type is GenericInstanceTypeAnalysisContext constructed)
+            {
+                sawConstructedBase = true;
+                if (!allowFieldlessConstructedBase ||
+                    !HasUnchangedFieldlessGenericBase(constructed))
+                    return false;
+                // GenericInstanceTypeAnalysisContext.BaseType and Fields are empty for
+                // metadata-backed instances. The generic definition has no instance
+                // fields, so its unchanged non-generic base can be checked directly.
+                type = constructed.GenericType.BaseType;
+                continue;
+            }
+            if (type.GenericParameters.Count != 0 ||
                 (type.Attributes & TypeAttributes.LayoutMask) == TypeAttributes.ExplicitLayout)
+                return false;
+            reachedObject |= ReferenceEquals(type, owner.AppContext.SystemTypes.SystemObjectType);
+            if (allowFieldlessConstructedBase && type != owner &&
+                (type.Attributes != type.DefaultAttributes ||
+                 !ReferenceEquals(type.BaseType, type.DefaultBaseType) ||
+                 (!ReferenceEquals(type, owner.AppContext.SystemTypes.SystemObjectType) &&
+                  type.Definition is not { PackingSizeIsDefault: true, ClassSizeIsDefault: true })))
                 return false;
             foreach (var other in type.Fields.Where(f => !f.IsStatic && (f.Attributes & FieldAttributes.Literal) == 0))
             {
@@ -114,8 +163,28 @@ internal static class NarrowFieldEqualityProof
                     StorageRangesOverlap(field.Offset, width / 8, other.Offset, size))
                     return false;
             }
+            type = type.BaseType;
         }
-        return true;
+        return !allowFieldlessConstructedBase || (sawConstructedBase && reachedObject);
+    }
+
+    private static bool HasUnchangedFieldlessGenericBase(GenericInstanceTypeAnalysisContext constructed)
+    {
+        var definition = constructed.GenericType;
+        return constructed.GenericArguments.Count != 0 &&
+               constructed.GenericArguments.Count == definition.GenericParameters.Count &&
+               constructed.GenericArguments.All(argument => argument.Type is not
+                   (Il2CppTypeEnum.IL2CPP_TYPE_VAR or Il2CppTypeEnum.IL2CPP_TYPE_MVAR)) &&
+               !definition.IsValueType && !definition.IsInterface &&
+               definition.Definition is { HasCctor: false, PackingSizeIsDefault: true,
+                   ClassSizeIsDefault: true, RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                       NumMods: 0, Byref: 0, Pinned: 0 } } &&
+               definition.Attributes == definition.DefaultAttributes &&
+               (definition.Attributes & TypeAttributes.LayoutMask) != TypeAttributes.ExplicitLayout &&
+               ReferenceEquals(definition.BaseType, definition.DefaultBaseType) &&
+               definition.BaseType != null &&
+               definition.Fields.All(field => field.IsStatic ||
+                   (field.Attributes & FieldAttributes.Literal) != 0);
     }
 
     internal static bool HasExactStorageWidth(TypeAnalysisContext type, int width) => width switch

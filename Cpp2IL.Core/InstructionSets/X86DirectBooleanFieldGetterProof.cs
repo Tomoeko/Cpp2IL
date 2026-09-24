@@ -5,7 +5,9 @@ using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
 using Iced.Intel;
+using LibCpp2IL;
 using LibCpp2IL.BinaryStructures;
+using LibCpp2IL.Metadata;
 using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core.InstructionSets;
@@ -39,6 +41,12 @@ internal static class X86DirectBooleanFieldGetterProof
         IReadOnlyList<Instruction> body)
     {
         var shape = TryProveShape(body);
+        var hasUnrelatedSuffix = false;
+        if (shape == null && method.IsVirtual && body.Count > 3)
+        {
+            shape = TryProveShape(body.Take(2).ToArray());
+            hasUnrelatedSuffix = shape != null;
+        }
         if (shape == null || !X86RuntimeNullThrowProof.IsSupportedProfile(method.AppContext) ||
             method.AppContext.Binary is not PE pe ||
             X64UnwindProof.ForApplication(method.AppContext) is not { } unwind ||
@@ -56,7 +64,7 @@ internal static class X86DirectBooleanFieldGetterProof
                     NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
-            method.IsStatic || method.IsVirtual || method.IsVoid ||
+            method.IsStatic || method.IsVoid ||
             method.Name is ".ctor" or ".cctor" || method.Name != method.DefaultName ||
             method.Parameters.Count != 0 || method.GenericParameters.Count != 0 ||
             method.OverrideReturnType != null ||
@@ -67,6 +75,7 @@ internal static class X86DirectBooleanFieldGetterProof
             (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                                       MethodImplAttributes.ManagedMask |
                                       MethodImplAttributes.InternalCall)) != 0 ||
+            !HasUnchangedVirtualDispatch(method, owner, definition) ||
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,
                 requireUniqueBinding: false) ||
@@ -75,14 +84,18 @@ internal static class X86DirectBooleanFieldGetterProof
 
         method.EnsureRawBytes();
         var start = method.UnderlyingPointer;
-        if (shape.End < start || shape.End - start != (ulong)method.RawBytes.Length ||
+        if (shape.End < start ||
+            (hasUnrelatedSuffix
+                ? !HasProvedUnrelatedSuffix(pe, method, body, shape.End, unwind)
+                : shape.End - start != (ulong)method.RawBytes.Length ||
+                  !HasFileBackedBody(pe, method, shape.End)) ||
             Enumerable.Range(1, checked((int)(shape.End - start) - 1)).Any(offset =>
                 method.AppContext.MethodsByAddress.ContainsKey(start + (ulong)offset)) ||
-            !HasFileBackedBody(pe, method, shape.End) ||
             unwind.ClassifySpan(start, shape.End) is not
                 { Kind: X64UnwindProof.SpanKind.NoEntry, Start: var regionStart, End: var regionEnd } ||
             regionStart != start || regionEnd != shape.End ||
-            X86CallerExceptionRegionProof.Check(method, body, new HashSet<ulong>()) != null)
+            X86CallerExceptionRegionProof.Check(method,
+                hasUnrelatedSuffix ? body.Take(2).ToArray() : body, new HashSet<ulong>()) != null)
             return null;
 
         // The metadata resolver uses one field at a native offset. Require the
@@ -97,9 +110,69 @@ internal static class X86DirectBooleanFieldGetterProof
             return null;
         var receiver = new ISIL.LocalVariable("proved-boolean-owner",
             new ISIL.Register(null, "rcx"), owner);
-        return NarrowFieldEqualityProof.HasUnchangedByteFieldLayout(
-            new ISIL.FieldReference(matched, receiver, shape.FieldOffset))
+        var access = new ISIL.FieldReference(matched, receiver, shape.FieldOffset);
+        return (NarrowFieldEqualityProof.HasUnchangedByteFieldLayout(access) ||
+                NarrowFieldEqualityProof.HasUnchangedByteFieldLayoutWithFieldlessConstructedBase(access))
             ? matched : null;
+    }
+
+    private static bool HasUnchangedVirtualDispatch(MethodAnalysisContext method,
+        TypeAnalysisContext owner, Il2CppMethodDefinition definition)
+    {
+        if (!method.IsVirtual)
+            return true;
+        var slot = definition.slot;
+        var vtable = owner.Definition?.VTable;
+        if (method.IsFinal || slot == ushort.MaxValue || vtable == null ||
+            slot >= vtable.Length ||
+            vtable[slot] is not { Type: MetadataUsageType.MethodDef } entry ||
+            entry.AsMethod() != definition ||
+            owner.Definition!.InterfaceOffsets.Length != 0)
+            return false;
+        var baseMethod = method.BaseMethod;
+        return method.IsNewSlot
+            ? baseMethod == null
+            : baseMethod is { IsVirtual: true, IsFinal: false, Definition: { } baseDefinition } &&
+              baseDefinition.slot == slot;
+    }
+
+    private static bool HasProvedUnrelatedSuffix(PE pe, MethodAnalysisContext method,
+        IReadOnlyList<Instruction> body, ulong entryEnd, X64UnwindProof.Index unwind)
+    {
+        var start = method.UnderlyingPointer;
+        var fullEnd = body[^1].NextIP;
+        if (body[0].IP != start || body[1].NextIP != entryEnd ||
+            fullEnd <= entryEnd || fullEnd - start != (ulong)method.RawBytes.Length ||
+            !HasFileBackedBody(pe, method, fullEnd))
+            return false;
+
+        // A RET closes the reachable entry. Admit only alignment INT3 bytes before
+        // a distinct, fully registered handler-free native function. The model's
+        // raw span can run through this adjacent unmanaged body without another
+        // managed entry inside the span; its instructions do not belong to the getter.
+        var nextIndex = 2;
+        while (nextIndex < body.Count && body[nextIndex].Code == Code.Int3)
+        {
+            if (body[nextIndex].IP != entryEnd + (ulong)(nextIndex - 2) ||
+                body[nextIndex].Length != 1)
+                return false;
+            nextIndex++;
+        }
+        var padding = nextIndex - 2;
+        if (padding is < 1 or > 15 || nextIndex >= body.Count ||
+            body[nextIndex].IP != entryEnd + (ulong)padding ||
+            body[nextIndex].IP % 16 != 0 ||
+            unwind.ClassifySpan(entryEnd, body[nextIndex].IP) is not
+                { Kind: X64UnwindProof.SpanKind.NoEntry, Start: var gapStart, End: var gapEnd } ||
+            gapStart != entryEnd || gapEnd != body[nextIndex].IP ||
+            unwind.ClassifySpan(body[nextIndex].IP, fullEnd) is not
+                { Kind: X64UnwindProof.SpanKind.HandlerFree, Start: var suffixStart,
+                  End: var suffixEnd, RootStart: var rootStart } ||
+            suffixStart != body[nextIndex].IP || suffixEnd < fullEnd ||
+            rootStart != suffixStart)
+            return false;
+        return !Enumerable.Range(1, checked((int)(fullEnd - start) - 1)).Any(offset =>
+            method.AppContext.MethodsByAddress.ContainsKey(start + (ulong)offset));
     }
 
     internal static Shape? TryProveShape(IReadOnlyList<Instruction> body)

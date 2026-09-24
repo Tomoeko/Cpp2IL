@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using AssetRipper.Primitives;
+using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.InstructionSets;
+using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 using Iced.Intel;
 
@@ -90,6 +92,101 @@ public class X86DirectBooleanFieldGetterProofTests
                 }
                 finally { field.OverrideOffset = null; }
             }
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void ExactMetadataControlProvesConstructedBaseAndVirtualGetterEntries()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_BOOLEAN_GETTER_METADATA_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_BOOLEAN_GETTER_METADATA_FIXTURE_INPUT to the synthetic player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata",
+            "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var assembly = app.GetAssemblyByName("BooleanGetterMetadataFixture")!;
+            var genericOwner = assembly.Types.Single(type => type.Name == "GenericFieldOwner");
+            var constructedBase = (GenericInstanceTypeAnalysisContext)genericOwner.BaseType!;
+            var inherited = assembly.Types.Single(type => type.Name == "ReferenceRoot")
+                .Fields.Single(field => field.Name == "InheritedWord");
+            var genericField = genericOwner.Fields.Single(field => field.Name == "Value");
+            var genericReceiver = new ISIL.LocalVariable("receiver",
+                new Cpp2IL.Core.ISIL.Register(null, "rcx"), genericOwner);
+            var genericAccess = new ISIL.FieldReference(genericField, genericReceiver,
+                checked((int)genericField.Offset));
+            Assert.Multiple(() =>
+            {
+                Assert.That(constructedBase.Fields, Is.Empty);
+                Assert.That(constructedBase.BaseType, Is.Null);
+                Assert.That(inherited.FieldType.Type, Is.EqualTo(LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_I));
+                Assert.That(NarrowFieldEqualityProof.HasUnchangedByteFieldLayout(genericAccess), Is.False);
+                Assert.That(NarrowFieldEqualityProof.HasUnchangedByteFieldLayoutWithFieldlessConstructedBase(genericAccess), Is.True);
+            });
+
+            foreach (var (ownerName, fieldName) in new[]
+            {
+                ("GenericFieldOwner", "Value"),
+                ("VirtualBooleanBase", "BaseValue"),
+                ("VirtualBooleanOverride", "OverrideValue")
+            })
+            {
+                var owner = assembly.Types.Single(type => type.Name == ownerName);
+                var method = owner.Methods.Single(candidate => candidate.Name == "get_ReadValue");
+                var field = owner.Fields.Single(candidate => candidate.Name == fieldName);
+                method.EnsureRawBytes();
+                var native = X86Utils.Iterate(method).ToArray();
+                if (ownerName == "VirtualBooleanBase")
+                {
+                    Assert.That(method.RawBytes.Length, Is.GreaterThan(5));
+                    Assert.That(X86DirectBooleanFieldGetterProof.TryProveShape(native), Is.Null);
+                    Assert.That(X86DirectBooleanFieldGetterProof.TryProveShape(native.Take(2).ToArray()),
+                        Is.Not.Null);
+                    Assert.That(native[2].Code, Is.EqualTo(Code.Int3));
+                }
+                else
+                    Assert.That(X86DirectBooleanFieldGetterProof.TryProveShape(native), Is.Not.Null);
+                Assert.That(X86DirectBooleanFieldGetterProof.Find(method, native), Is.SameAs(field),
+                    $"{ownerName} must bind only its closed native entry to its own Boolean field");
+                var lifted = app.InstructionSet.GetIsilFromMethod(method);
+                Assert.That(lifted.Select(instruction => instruction.OpCode),
+                    Is.EqualTo(new[] { ISIL.OpCode.Move, ISIL.OpCode.Return }));
+                Assert.That(lifted[0].IntegerBitWidth, Is.EqualTo(8));
+                method.Analyze();
+                Assert.That(method.AnalysisWarnings, Is.Empty);
+                Assert.That(method.ControlFlowGraph!.Instructions.Any(instruction => instruction is
+                    { OpCode: ISIL.OpCode.Move, Operands: [_, ISIL.FieldReference resolved] } &&
+                    ReferenceEquals(resolved.Field, field)), Is.True);
+            }
+
+            var genericMethod = genericOwner.Methods.Single(candidate => candidate.Name == "get_ReadValue");
+            var genericNative = X86Utils.Iterate(genericMethod).ToArray();
+            try
+            {
+                inherited.OverrideOffset = inherited.DefaultOffset + 8;
+                Assert.That(X86DirectBooleanFieldGetterProof.Find(genericMethod, genericNative), Is.Null);
+            }
+            finally { inherited.OverrideOffset = null; }
+
+            var overrideOwner = assembly.Types.Single(type => type.Name == "VirtualBooleanOverride");
+            var overrideGetter = overrideOwner.Methods.Single(candidate => candidate.Name == "get_ReadValue");
+            var overrideNative = X86Utils.Iterate(overrideGetter).ToArray();
+            var originalSlot = overrideGetter.Definition!.slot;
+            try
+            {
+                overrideGetter.Definition.slot = ushort.MaxValue;
+                Assert.That(X86DirectBooleanFieldGetterProof.Find(overrideGetter, overrideNative), Is.Null,
+                    "A virtual getter needs its unchanged vtable slot");
+            }
+            finally { overrideGetter.Definition.slot = originalSlot; }
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }
