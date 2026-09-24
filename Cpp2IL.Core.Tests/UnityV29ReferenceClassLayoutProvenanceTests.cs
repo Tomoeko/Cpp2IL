@@ -156,11 +156,19 @@ public class UnityV29ReferenceClassLayoutProvenanceTests
     public void ProvenPackOnlyClassAppearsInGeneratedCSharp()
     {
         const string assemblyName = "Synthetic.Application";
-        var coreName = typeof(object).Assembly.GetName();
+        var referenceDirectory = Environment.GetEnvironmentVariable(
+            "CPP2IL_UNITY_2021_REFERENCE_DIR");
+        if (string.IsNullOrEmpty(referenceDirectory))
+            Assert.Ignore("Set CPP2IL_UNITY_2021_REFERENCE_DIR to the exact Unity 2021.3.35f1 NET_Unity_4_8 reference directory.");
+        var corePath = Path.Combine(referenceDirectory!, "mscorlib.dll");
+        Assert.That(File.Exists(corePath), Is.True);
+        var coreName = AssemblyName.GetAssemblyName(corePath);
         var coreReference = new AssemblyReference(coreName.Name, coreName.Version!)
         {
             PublicKeyOrToken = coreName.GetPublicKeyToken(),
         };
+        Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(coreReference),
+            Is.True, "The core reference must have the exact Unity target identity.");
         var module = new ModuleDefinition(assemblyName + ".dll", coreReference);
         var assembly = new AssemblyDefinition(assemblyName, new Version(1, 0, 0, 0));
         assembly.Modules.Add(module);
@@ -179,7 +187,7 @@ public class UnityV29ReferenceClassLayoutProvenanceTests
         try
         {
             var report = UnitySourceProjectEmitter.Emit([assembly], [assemblyName],
-                [Path.GetDirectoryName(typeof(object).Assembly.Location)!], output, playerMetadataVersion: 29f);
+                [referenceDirectory!], output, playerMetadataVersion: 29f);
             var source = File.ReadAllText(Path.Combine(output, report.Assemblies.Single().SourceFile));
             Assert.Multiple(() =>
             {
