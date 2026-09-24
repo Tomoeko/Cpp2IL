@@ -12,4 +12,9 @@ content and reference identity, and the neighboring field remaining unchanged.
 The fixture isolates the guarded StringLiteral initializer and
 `String.Concat(string, string)` tail from the separate class-cast and inherited
 field controls. Exact player-only recovery and Unity round-trip acceptance are
-pending.
+now established for this bounded method: strict recovery emits 1/1 selected
+methods, pinned ILVerify and both declaration comparisons pass, and generated
+source compiles and rebuilds under the supplied Windows Unity 2021.3.35f1
+Release IL2CPP target. Original and recovered editor/player runs each pass all
+six observations. The local accepted receipt is under
+`Files/validation/static-literal-concat-roundtrip-01/roundtrip.json`.
