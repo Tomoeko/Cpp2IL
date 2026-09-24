@@ -296,7 +296,7 @@ internal static class X64IteratorFactoryProof
         return true;
     }
 
-    private static bool ProveInertObjectConstructor(ApplicationAnalysisContext app, ulong target,
+    internal static bool ProveInertObjectConstructor(ApplicationAnalysisContext app, ulong target,
         PE pe, X64UnwindProof.Index unwind)
     {
         var candidates = app.SystemTypes.SystemObjectType.Methods.Where(candidate =>

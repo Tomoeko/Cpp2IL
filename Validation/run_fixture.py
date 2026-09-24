@@ -2,6 +2,7 @@
 """Compile/build a synthetic or recovered fixture in an isolated exact-version project."""
 
 import argparse
+import alias_ambiguity
 import array_access
 import array_call
 import enum_passthrough
@@ -71,6 +72,7 @@ PROFILES = {
     "iterator-factory": {"assembly": "IteratorFactoryFixture", "source": VALIDATION / "IteratorFactoryFixture", "methods": 8},
     "iterator-factory-manual": {"assembly": "IteratorFactoryManualFixture", "source": VALIDATION / "IteratorFactoryManualFixture", "methods": 7},
     "literal-concat": {"assembly": "LiteralConcatFixture", "source": VALIDATION / "LiteralConcatFixture", "methods": 7},
+    "alias-ambiguity": {"assembly": "AliasAmbiguityFixture", "source": VALIDATION / "AliasAmbiguityFixture", "methods": 3},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
@@ -101,6 +103,8 @@ def int32(value):
 
 
 def verify_behavior(path, stage, profile="arithmetic"):
+    if profile == "alias-ambiguity":
+        return alias_ambiguity.verify(path, stage, VERSION)
     if profile == "catch-divide":
         return catch_divide.verify(path, stage, VERSION)
     if profile == "exception-regions":

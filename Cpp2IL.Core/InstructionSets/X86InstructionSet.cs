@@ -61,8 +61,14 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
         var nativeInstructions = X86Utils.Iterate(context).ToArray();
         var noReturnCalls = new HashSet<ulong>();
+        if (X64ObjectConstructorThunkProof.TryLift(context, nativeInstructions) is { } objectConstructorThunk)
+            return objectConstructorThunk; // The complete tail thunk binds the shared Object constructor target.
+        if (X64IteratorConstructorProof.TryLift(context, nativeInstructions) is { } iteratorConstructor)
+            return iteratorConstructor; // The factory proof authenticates the Object constructor and state field.
         if (X64IteratorFactoryProof.TryLift(context, nativeInstructions) is { } iteratorFactory)
             return iteratorFactory; // Allocation, constructor, captures, and helper exits are independently bound.
+        if (X64IteratorMoveNextProof.TryLift(context, nativeInstructions) is { } iteratorMoveNext)
+            return iteratorMoveNext; // The complete generated state machine includes the pre-null state write.
         if (X64LiteralConcatProof.TryLift(context, nativeInstructions) is { } literalConcat)
             return literalConcat; // The inherited field, literal, null arm, and tail call are bound together.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)

@@ -231,22 +231,22 @@ public static class MetadataResolver
             if (!method.AppContext.MethodsByAddress.TryGetValue(target.UnsignedValue, out var candidates) || candidates.Count < 2)
                 continue;
 
-            // e.g. string.Equals and string.op_Equality, identical params, instance type, and bodies are shared
-            // we can't differentiate which is being called but it doesn't matter
-            if (AreInterchangeable(candidates))
-            {
-                var preferred = PreferredOf(candidates);
-                instruction.SetOperand(0, preferred);
-                preferred.AppContext.InstructionSet.CallingConventionResolver?.RemapRawArguments(instruction, preferred);
-                changed = true;
-                continue;
-            }
-
+            // A shared native body and matching signatures still do not identify the
+            // source member. MethodInfo evidence is handled before this receiver pass.
             if (GetReceiver(instruction) is not { Type: { } receiverType } receiver)
                 continue;
 
             // Prefer picking base ctor if we are a ctor
             var callerIsCtor = method.Name == ".ctor" && receiver.IsThis;
+
+            // A constructor's receiver has its derived type even while it calls a
+            // base constructor. If that base .ctor shares an address with a method
+            // on the derived type, receiver matching alone cannot choose either.
+            if (callerIsCtor && candidates.Any(c => !c.IsStatic && c.Name == ".ctor"
+                    && IsInReceiverChain(c.DeclaringType, receiverType))
+                && candidates.Any(c => !c.IsStatic && c.Name != ".ctor"
+                    && IsInReceiverChain(c.DeclaringType, receiverType)))
+                continue;
 
             // Handle methods with shared bodies
             var match = default(MethodAnalysisContext);
@@ -274,32 +274,6 @@ public static class MetadataResolver
 
         return changed;
     }
-
-    private static bool AreInterchangeable(List<MethodAnalysisContext> candidates)
-    {
-        var first = candidates[0];
-
-        return candidates.All(c => c.IsStatic == first.IsStatic
-            && ReferenceEquals(c.DeclaringType, first.DeclaringType)
-            && ReferenceEquals(c.ReturnType, first.ReturnType)
-            && c.Parameters.Count == first.Parameters.Count
-            && SameParameterTypes(c, first));
-    }
-
-    private static bool SameParameterTypes(MethodAnalysisContext a, MethodAnalysisContext b)
-    {
-        for (var i = 0; i < a.Parameters.Count; i++)
-        {
-            if (!ReferenceEquals(a.Parameters[i].ParameterType, b.Parameters[i].ParameterType))
-                return false;
-        }
-
-        return true;
-    }
-
-    // Prefer operators if possible
-    private static MethodAnalysisContext PreferredOf(List<MethodAnalysisContext> candidates) =>
-        candidates.FirstOrDefault(c => c.Name.StartsWith("op_")) ?? candidates[0];
 
     // The receiver ('this') of a call is the first integer-slot argument: operand 1 for CallVoid
     // (after the target), operand 2 for Call (after the target and the return value).
@@ -341,6 +315,15 @@ public static class MetadataResolver
         return true;
     }
 
+    private static bool IsInReceiverChain(TypeAnalysisContext? candidate, TypeAnalysisContext receiver)
+    {
+        for (var type = receiver; type != null; type = type.BaseType)
+            if (IsSameType(candidate, type))
+                return true;
+
+        return false;
+    }
+
     /// <summary>
     /// Resolves any Call (theoretically should always be a CallVoid) target directly after a Newobj to a constructor call.
     /// </summary>
@@ -364,7 +347,14 @@ public static class MetadataResolver
             if (GetReceiver(instruction) is not { } receiver || AllocatedType(receiver, definitions) is not { } allocatedType)
                 continue;
 
-            var constructor = candidates.FirstOrDefault(c => !c.IsStatic && c.Name == ".ctor" && ReferenceEquals(c.DeclaringType, allocatedType))
+            var ownerConstructors = candidates.Where(c => !c.IsStatic && c.Name == ".ctor"
+                && ReferenceEquals(c.DeclaringType, allocatedType)).ToList();
+            // A type can have several constructor overloads folded to one address.
+            // Allocation proves the owner, but does not identify the overload.
+            if (ownerConstructors.Count > 1)
+                continue;
+
+            var constructor = ownerConstructors.SingleOrDefault()
                               ?? FindConstructorForSharedBody(allocatedType, candidates);
             if (constructor == null)
                 continue;
