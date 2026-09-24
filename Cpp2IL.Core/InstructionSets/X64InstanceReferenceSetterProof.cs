@@ -202,7 +202,9 @@ internal static class X64InstanceReferenceSetterProof
 
         var properties = owner.Properties.Where(property =>
             ReferenceEquals(property.Setter, method)).ToArray();
-        if (properties is not [{ } property] || property.Getter != null ||
+        // A matching getter is recovered separately; its presence does not
+        // change this setter's native store or field binding.
+        if (properties is not [{ } property] ||
             property.Definition is not { } rawProperty ||
             !ReferenceEquals(rawProperty.Setter, definition) ||
             property.Name != property.DefaultName ||
