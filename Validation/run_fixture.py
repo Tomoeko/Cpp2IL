@@ -4,6 +4,7 @@
 import argparse
 import alias_ambiguity
 import array_access
+import array_sequence
 import array_call
 import boolean_parameter_branch
 import enum_passthrough
@@ -31,6 +32,7 @@ import byte_fields
 import boolean_getter
 import boolean_getter_metadata
 import byte_threshold
+import dense_switch
 import float_array
 import float_comparison
 import forwarded_argument
@@ -46,6 +48,8 @@ import iterator_factory_direct_ctor
 import literal_concat
 import metadata_guard_move
 import metadata_guard_parameter
+import metadata_forwarding
+import metadata_accessor
 import loop_calls
 import narrow_array
 import nested_boolean_store
@@ -81,6 +85,7 @@ PROFILES = {
     "catch-divide": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "CatchDivideFixture", "methods": 1},
     "exception-regions": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "ExceptionRegionFixture", "methods": 2},
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
+    "array-sequence": {"assembly": "ArraySequenceFixture", "source": VALIDATION / "ArraySequenceFixture", "methods": 2},
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 3},
@@ -122,9 +127,12 @@ PROFILES = {
     "throw-only": {"assembly": "ThrowOnlyFixture", "source": VALIDATION / "ThrowOnlyFixture", "methods": 5},
     "metadata-guard-move": {"assembly": "MetadataGuardMoveFixture", "source": VALIDATION / "MetadataGuardMoveFixture", "methods": 3},
     "metadata-guard-parameter": {"assembly": "MetadataGuardParameterFixture", "source": VALIDATION / "MetadataGuardParameterFixture", "methods": 1},
+    "metadata-forwarding": {"assembly": "MetadataForwardingFixture", "source": VALIDATION / "MetadataForwardingFixture", "methods": 5},
+    "metadata-accessor": {"assembly": "MetadataAccessorFixture", "source": VALIDATION / "MetadataAccessorFixture", "methods": 6},
     "alias-ambiguity": {"assembly": "AliasAmbiguityFixture", "source": VALIDATION / "AliasAmbiguityFixture", "methods": 3},
     "boolean-parameter-branch": {"assembly": "BooleanParameterBranchFixture", "source": VALIDATION / "BooleanParameterBranchFixture", "methods": 3},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
+    "dense-switch": {"assembly": "DenseSwitchFixture", "source": VALIDATION / "DenseSwitchFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
@@ -189,6 +197,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return exception_regions.verify(path, stage, VERSION)
     if profile == "array-access":
         return array_access.verify(path, stage, VERSION)
+    if profile == "array-sequence":
+        return array_sequence.verify(path, stage, VERSION)
     if profile == "field-array":
         return field_array.verify(path, stage, VERSION)
     if profile == "narrow-array":
@@ -269,8 +279,14 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return metadata_guard_move.verify(path, stage, VERSION)
     if profile == "metadata-guard-parameter":
         return metadata_guard_parameter.verify(path, stage, VERSION)
+    if profile == "metadata-forwarding":
+        return metadata_forwarding.verify(path, stage, VERSION)
+    if profile == "metadata-accessor":
+        return metadata_accessor.verify(path, stage, VERSION)
     if profile == "byte-threshold":
         return byte_threshold.verify(path, stage, VERSION)
+    if profile == "dense-switch":
+        return dense_switch.verify(path, stage, VERSION)
     if profile == "field-guard":
         return field_guard.verify(path, stage, VERSION)
     if profile == "zero-arg-field-call":
