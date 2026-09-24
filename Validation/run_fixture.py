@@ -32,6 +32,7 @@ import reference_store
 import scalar_truncation
 import xmm_spill
 import word_fields
+import zero_arg_field_call
 
 
 VERSION = "2021.3.35f1"
@@ -52,6 +53,7 @@ PROFILES = {
     "external-references": {"assembly": "ExternalReferenceFixture", "source": VALIDATION / "ExternalReferenceFixture", "methods": 1},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
+    "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
     "scalar-truncation": {"assembly": "ScalarTruncationFixture", "source": VALIDATION / "ScalarTruncationFixture", "methods": 2},
     "loop-calls": {"assembly": "LoopCallFixture", "source": VALIDATION / "LoopCallFixture", "methods": 4},
     "word-fields": {"assembly": "WordFieldFixture", "source": VALIDATION / "WordFieldFixture", "methods": 4},
@@ -105,6 +107,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return byte_threshold.verify(path, stage, VERSION)
     if profile == "field-guard":
         return field_guard.verify(path, stage, VERSION)
+    if profile == "zero-arg-field-call":
+        return zero_arg_field_call.verify(path, stage, VERSION)
     if profile == "scalar-truncation":
         return scalar_truncation.verify(path, stage, VERSION)
     if profile == "loop-calls":
