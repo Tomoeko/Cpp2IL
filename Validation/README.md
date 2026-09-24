@@ -113,13 +113,18 @@ python3 Validation/prune_generated_artifacts.py
 python3 Validation/prune_generated_artifacts.py --apply
 python3 Validation/prune_generated_artifacts.py --retain-player-input
 python3 Validation/prune_generated_artifacts.py --retain-player-input --apply
+python3 Validation/prune_generated_artifacts.py --runs --only RUN_NAME --retain-player-input --show-paths
+python3 Validation/prune_generated_artifacts.py --runs --only RUN_NAME --retain-player-input --apply
 ```
 
 The default dry run waits 24 hours after a terminal receipt. The script removes
 only `project/`, `player/` and `player-input/` trees under completed ignored
-`Files/validation/` runs; it retains receipts, logs, recovered source and
-recovery reports, copies small `project/Reports/` witnesses beside each run,
-and writes a private cleanup manifest. Use `--retain-player-input` to keep
+`Files/validation/` runs. `--runs` selects ignored `Files/runs/` baseline runs
+and requires at least one `--only RUN_NAME` so it cannot plan that entire tree.
+The same receipt, age, symlink and ignored-path checks apply to both roots.
+The script retains receipts, logs, recovered source and recovery reports,
+copies small `project/Reports/` witnesses beside each run, and writes a private
+cleanup manifest. Use `--retain-player-input` to keep
 exact native fixture inputs while pruning their original project/player trees,
 or `--exclude RUN_NAME` to keep an entire run under investigation. A run whose
 player input was removed cannot be passed to `--baseline-run`; rebuild that

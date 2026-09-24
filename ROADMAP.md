@@ -57,6 +57,8 @@ Completed local Unity runs had accumulated about 84.5 GiB under ignored `Files/`
 
 Cleanup can now be scoped to named validation runs while retaining player inputs. A Boolean control exposed a lifecycle error when an original managed declaration oracle was pruned during an otherwise successful recovered build; that first run is a failed validation receipt. The round-trip runner now snapshots and hashes both original managed oracles after player-only recovery and typed IL checks, verifies them at both declaration comparisons, and keeps them outside recovery inputs and reference directories. A fresh repeat passes both comparisons. The completed runs' generated project/player trees were then pruned with a scoped dry run and private manifest; receipts, logs, recovered source, oracle snapshots and fixture player input remain.
 
+The cleanup command now also accepts an explicit `--runs --only RUN_NAME` scope for completed generated project/player trees under ignored `Files/runs`. It keeps the dry-run default, receipt-age and ignored-path gates, report witnesses, manifests and optional player inputs. Synthetic CLI regressions cover the required selection, retained artifacts and refusal when the ignored-path check fails; no broad `Files/runs` prune was performed.
+
 Implemented evidence:
 
 - Recovery reports retain every input method, distinguish exclusions and failures, and reject detected incomplete recovery in strict mode. Labels and stack depth are checked separately from typed IL verification and behavior. Regression cases reject missing values and unsupported operations rather than inventing defaults.

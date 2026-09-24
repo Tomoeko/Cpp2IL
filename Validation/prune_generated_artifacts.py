@@ -20,6 +20,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 VALIDATION = ROOT / "Files" / "validation"
+RUNS = ROOT / "Files" / "runs"
 HEAVY_TREES = ("project", "player", "player-input")
 FINAL_STATUSES = frozenset(("passed", "failed", "observed"))
 MAX_REPORT_BYTES = 16 * 1024 * 1024
@@ -60,7 +61,7 @@ def plan(validation_root, minimum_age_seconds=24 * 3600, now=None, excluded=(),
     excluded = set(excluded)
     only = set(only)
     if any(not name or name in (".", "..") or Path(name).name != name for name in only):
-        raise ValueError("run names must identify immediate validation directories")
+        raise ValueError("run names must identify immediate run directories")
     candidates = []
     runs = (validation_root / name for name in sorted(only)) if only else sorted(validation_root.iterdir())
     for run in runs:
@@ -153,23 +154,28 @@ def prune(candidates, validation_root, manifest_root):
     return manifest
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Remove planned generated trees")
+    parser.add_argument("--runs", action="store_true",
+                        help="Target ignored Files/runs instead of Files/validation (requires --only)")
     parser.add_argument("--min-age-hours", type=float, default=24,
                         help="Require a terminal receipt at least this old (default: 24)")
     parser.add_argument("--exclude", action="append", default=[], metavar="RUN_NAME",
-                        help="Keep one immediate Files/validation run directory")
+                        help="Keep one immediate run directory")
     parser.add_argument("--only", action="append", default=[], metavar="RUN_NAME",
-                        help="Plan only this immediate Files/validation run directory; repeatable")
+                        help="Plan only this immediate run directory; repeatable")
     parser.add_argument("--retain-player-input", action="store_true",
                         help="Prune completed project/player trees while keeping player inputs for local tests")
     parser.add_argument("--show-paths", action="store_true", help="List each planned tree")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not math.isfinite(args.min_age_hours) or args.min_age_hours < 0:
         parser.error("--min-age-hours must be finite and nonnegative")
+    if args.runs and not args.only:
+        parser.error("--runs requires at least one --only RUN_NAME")
+    run_root = RUNS if args.runs else VALIDATION
     try:
-        candidates = plan(VALIDATION, args.min_age_hours * 3600, excluded=args.exclude,
+        candidates = plan(run_root, args.min_age_hours * 3600, excluded=args.exclude,
                           retain_player_input=args.retain_player_input, only=args.only)
     except ValueError as error:
         parser.error(str(error))
@@ -177,13 +183,13 @@ def main():
     print(f"{len(candidates)} generated trees; about {gib:.2f} GiB allocated")
     if args.show_paths:
         for candidate in candidates:
-            print(candidate.path.relative_to(VALIDATION))
+            print(candidate.path.relative_to(run_root))
     if not args.apply or not candidates:
         return
-    for path in (VALIDATION, ROOT / "Files" / "cleanup"):
+    for path in (run_root, ROOT / "Files" / "cleanup"):
         if subprocess.run(["git", "check-ignore", "--quiet", str(path)], cwd=ROOT).returncode:
             parser.error("cleanup paths must remain gitignored")
-    manifest = prune(candidates, VALIDATION, ROOT / "Files" / "cleanup")
+    manifest = prune(candidates, run_root, ROOT / "Files" / "cleanup")
     print("Removed generated trees; private cleanup manifest:", manifest)
 
 
