@@ -41,6 +41,7 @@ import loop_calls
 import narrow_array
 import reference_null
 import reference_store
+import runtime_cast_concat
 import scalar_truncation
 import sequential_null_guards
 import static_word_getter
@@ -77,6 +78,7 @@ PROFILES = {
     "iterator-factory": {"assembly": "IteratorFactoryFixture", "source": VALIDATION / "IteratorFactoryFixture", "methods": 8},
     "iterator-factory-manual": {"assembly": "IteratorFactoryManualFixture", "source": VALIDATION / "IteratorFactoryManualFixture", "methods": 7},
     "literal-concat": {"assembly": "LiteralConcatFixture", "source": VALIDATION / "LiteralConcatFixture", "methods": 7},
+    "runtime-cast-concat": {"assembly": "RuntimeCastConcatFixture", "source": VALIDATION / "RuntimeCastConcatFixture", "methods": 10},
     "metadata-guard-move": {"assembly": "MetadataGuardMoveFixture", "source": VALIDATION / "MetadataGuardMoveFixture", "methods": 3},
     "metadata-guard-parameter": {"assembly": "MetadataGuardParameterFixture", "source": VALIDATION / "MetadataGuardParameterFixture", "methods": 1},
     "alias-ambiguity": {"assembly": "AliasAmbiguityFixture", "source": VALIDATION / "AliasAmbiguityFixture", "methods": 3},
@@ -159,6 +161,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return iterator_factory_manual.verify(path, stage, VERSION)
     if profile == "literal-concat":
         return literal_concat.verify(path, stage, VERSION)
+    if profile == "runtime-cast-concat":
+        return runtime_cast_concat.verify(path, stage, VERSION)
     if profile == "metadata-guard-move":
         return metadata_guard_move.verify(path, stage, VERSION)
     if profile == "metadata-guard-parameter":
