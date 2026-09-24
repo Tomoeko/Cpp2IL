@@ -92,7 +92,7 @@ internal static class X64GuardedStructParameterCallProof
             parameter.OverrideAttributes != null || parameter.UseOverrideDefaultValue ||
             definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
-            valueType.Definition is not { GenericContainer: null, HasCctor: false,
+            valueType.Definition is not { GenericContainer: null,
                 PackingSizeIsDefault: true, ClassSizeIsDefault: true } ||
             !valueType.IsValueType || valueType.IsEnumType || valueType.IsGenericInstance ||
             valueType.GenericParameters.Count != 0 ||
@@ -100,14 +100,20 @@ internal static class X64GuardedStructParameterCallProof
             valueType.Attributes != valueType.DefaultAttributes ||
             (valueType.Attributes & TypeAttributes.LayoutMask) != TypeAttributes.SequentialLayout ||
             !ReferenceEquals(valueType.BaseType, valueType.DefaultBaseType) ||
-            TypeSizes.UnboxedSize(valueType, 8) != 8 || valueType.Fields.Count != 2)
+            TypeSizes.UnboxedSize(valueType, 8) != 8)
             return false;
 
-        var fields = valueType.Fields.OrderBy(field => field.Offset).ToArray();
+        // Static storage and its initializer do not change this by-value ABI or
+        // the complete caller body. A struct's static constructor is not run by
+        // passing an instance or calling an instance method.
+        var fields = valueType.Fields.Where(field => !field.IsStatic)
+            .OrderBy(field => field.Offset).ToArray();
+        if (fields.Length != 2)
+            return false;
         for (var index = 0; index < fields.Length; index++)
         {
             var field = fields[index];
-            if (field.IsStatic || field.Offset != index * 4 || field.Offset != field.DefaultOffset ||
+            if (field.Offset != index * 4 || field.Offset != field.DefaultOffset ||
                 field.Name != field.DefaultName || field.Attributes != field.DefaultAttributes ||
                 field.OverrideFieldType != null || field.UseOverrideConstantValue ||
                 !ReferenceEquals(field.FieldType, method.AppContext.SystemTypes.SystemSingleType) ||

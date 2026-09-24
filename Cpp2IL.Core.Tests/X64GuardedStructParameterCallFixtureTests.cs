@@ -13,6 +13,50 @@ namespace Cpp2IL.Core.Tests;
 public class X64GuardedStructParameterCallFixtureTests
 {
     [Test]
+    public void StaticStorageAndConstructorDoNotChangeTheProvedForwardingBody()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_STRUCT_STATIC_FORWARD_CALL_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_STRUCT_STATIC_FORWARD_CALL_FIXTURE_INPUT to the synthetic player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata",
+            "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var assembly = app.GetAssemblyByName("StructStaticForwardCallFixture")!;
+            var owner = assembly.Types.Single(type => type.FullName ==
+                "StructStaticForwardCallFixture.ForwardOwner");
+            var method = owner.Methods.Single(candidate => candidate.Name == "Forward");
+            var valueType = method.Parameters[0].ParameterType;
+            Assert.Multiple(() =>
+            {
+                Assert.That(valueType.Definition?.HasCctor, Is.True);
+                Assert.That(valueType.Fields.Count(field => field.IsStatic), Is.EqualTo(2));
+                Assert.That(valueType.Fields.Count(field => !field.IsStatic), Is.EqualTo(2));
+                Assert.That(X64GuardedParameterTailCallBodyProof.Find(method), Is.Not.Null);
+            });
+            var proof = X64GuardedStructParameterCallProof.Find(method);
+            Assert.That(proof, Is.Not.Null);
+            Assert.That(proof!.Target.Name, Is.EqualTo("StorePair"));
+
+            var second = valueType.Fields.Single(field => field.Name == "Second");
+            try
+            {
+                second.OverrideOffset = 8;
+                Assert.That(X64GuardedStructParameterCallProof.Find(method), Is.Null);
+            }
+            finally { second.OverrideOffset = null; }
+            Assert.That(X64GuardedStructParameterCallProof.Find(method), Is.Not.Null);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
     public void GuardedTailCallRequiresItsValueAbiLayoutAndUniqueTarget()
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_STRUCT_FORWARD_CALL_FIXTURE_INPUT");
