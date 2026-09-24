@@ -65,7 +65,7 @@ PROFILES = {
     "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 4},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 8},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
-    "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 3},
+    "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 4},
     "static-word-getter": {"assembly": "StaticWordGetterFixture", "source": VALIDATION / "StaticWordGetterFixture", "methods": 2},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},

@@ -11,21 +11,27 @@ namespace RecoveryValidation
         public static void Write(string path, string stage)
         {
             var observations = new List<object>();
-            Record(observations, "initial", null, 0);
+            Record(observations, "initial", null, 0, false, false);
 
             var first = new ReferenceHolder();
             StaticState.Pointer = new IntPtr(17);
             StaticState.Reference = first;
-            Record(observations, "first", first, 17);
+            StaticState.Flag = true;
+            StaticState.NeighborFlag = false;
+            Record(observations, "first", first, 17, true, false);
 
             var second = new ReferenceHolder();
             StaticState.Pointer = new IntPtr(-17);
             StaticState.Reference = second;
-            Record(observations, "second", second, -17);
+            StaticState.Flag = false;
+            StaticState.NeighborFlag = true;
+            Record(observations, "second", second, -17, false, true);
 
             StaticState.Pointer = new IntPtr(long.MinValue);
             StaticState.Reference = null;
-            Record(observations, "minimum", null, long.MinValue);
+            StaticState.Flag = true;
+            StaticState.NeighborFlag = false;
+            Record(observations, "minimum", null, long.MinValue, true, false);
 
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
@@ -35,7 +41,8 @@ namespace RecoveryValidation
             }));
         }
 
-        private static void Record(List<object> observations, string kind, ReferenceHolder expected, long pointer)
+        private static void Record(List<object> observations, string kind, ReferenceHolder expected,
+            long pointer, bool expectedFlag, bool expectedNeighborFlag)
         {
             var returned = StaticState.ReadReference();
             observations.Add(new Dictionary<string, object>
@@ -44,7 +51,12 @@ namespace RecoveryValidation
                 { "referenceMatches", ReferenceEquals(returned, expected) },
                 { "storedPointer", StaticState.Pointer.ToInt64() },
                 { "storedReferenceMatches", ReferenceEquals(StaticState.Reference, expected) },
-                { "expectedPointer", pointer }
+                { "expectedPointer", pointer },
+                { "flag", StaticState.ReadFlag() },
+                { "storedFlag", StaticState.Flag },
+                { "neighborFlag", StaticState.NeighborFlag },
+                { "expectedFlag", expectedFlag },
+                { "expectedNeighborFlag", expectedNeighborFlag }
             });
         }
 

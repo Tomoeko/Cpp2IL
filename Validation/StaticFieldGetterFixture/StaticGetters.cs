@@ -11,6 +11,8 @@ namespace StaticFieldGetterFixture
     {
         public static IntPtr Pointer;
         public static ReferenceHolder Reference;
+        public static bool Flag;
+        public static bool NeighborFlag;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static IntPtr ReadPointer()
@@ -22,6 +24,12 @@ namespace StaticFieldGetterFixture
         public static ReferenceHolder ReadReference()
         {
             return Reference;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static bool ReadFlag()
+        {
+            return Flag;
         }
     }
 }

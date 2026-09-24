@@ -37,6 +37,7 @@ internal static class X64MetadataStaticGetterProof
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
+            RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
             app.Binary is not PE pe || X64UnwindProof.ForApplication(app) is not { } unwind ||
             method.UnderlyingPointer is 0 or ulong.MaxValue ||
             !app.MethodsByAddress.TryGetValue(method.UnderlyingPointer, out var bindings) ||
@@ -82,7 +83,11 @@ internal static class X64MetadataStaticGetterProof
         var flag = native[1].IPRelativeMemoryAddress;
         if (slot <= flag && flag - slot < 8 ||
             !FileBackedWritableData(pe, unwind, slot, 8) ||
-            !ZeroInitializedWritableData(unwind, flag, 1))
+            !ZeroInitializedWritableData(unwind, flag, 1) ||
+            native[4].NearBranchTarget != app.GetOrCreateKeyFunctionAddresses()
+                .il2cpp_codegen_initialize_runtime_metadata ||
+            !X64MetadataInitializationHelperProof.TryIdentify(app, pe, unwind,
+                native[4].NearBranchTarget))
             return null;
 
         var usage = app.LibCpp2IlContext.GetRawTypeGlobalByAddress(slot);
@@ -141,6 +146,8 @@ internal static class X64MetadataStaticGetterProof
             Il2CppTypeEnum.IL2CPP_TYPE_U4 => ReferenceEquals(type, app.SystemTypes.SystemUInt32Type),
             _ => false,
         };
+        var boolean = raw?.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN &&
+            ReferenceEquals(type, app.SystemTypes.SystemBooleanType);
         return field.Name == field.DefaultName && field.Attributes == field.DefaultAttributes &&
                field.OverrideFieldType == null && field.Offset == field.DefaultOffset &&
                field.Offset >= 0 && field.IsStatic &&
@@ -150,10 +157,11 @@ internal static class X64MetadataStaticGetterProof
                raw is { NumMods: 0, Byref: 0, Pinned: 0 } &&
                returnRawType.Type == raw.Type &&
                ReferenceEquals(type, returnType) &&
-               ((loadSize == 8 && (nativeInteger || reference)) || (loadSize == 4 && int32));
+               ((loadSize == 8 && (nativeInteger || reference)) ||
+                (loadSize == 4 && int32) || (loadSize == 1 && boolean));
     }
 
-    private static bool FieldLoadPair(NativeInstruction staticFieldsLoad, NativeInstruction fieldLoad,
+    internal static bool FieldLoadPair(NativeInstruction staticFieldsLoad, NativeInstruction fieldLoad,
         out ulong fieldOffset, out uint loadSize)
     {
         if (FieldLoad(staticFieldsLoad, NativeRegister.RAX,
@@ -167,6 +175,12 @@ internal static class X64MetadataStaticGetterProof
         if (StaticFieldsPointerToRcx(staticFieldsLoad) && DwordFieldLoadToEax(fieldLoad, out fieldOffset))
         {
             loadSize = 4;
+            return true;
+        }
+
+        if (StaticFieldsPointerToRcx(staticFieldsLoad) && ByteFieldZeroExtendToEax(fieldLoad, out fieldOffset))
+        {
+            loadSize = 1;
             return true;
         }
 
@@ -189,6 +203,15 @@ internal static class X64MetadataStaticGetterProof
                instruction.Op0Register == NativeRegister.EAX && instruction.Op1Kind == OpKind.Memory &&
                instruction.MemoryBase == NativeRegister.RCX && instruction.MemoryIndex == NativeRegister.None &&
                instruction.MemorySize.GetSize() == 4;
+    }
+
+    private static bool ByteFieldZeroExtendToEax(NativeInstruction instruction, out ulong fieldOffset)
+    {
+        fieldOffset = instruction.MemoryDisplacement64;
+        return instruction.Code == Code.Movzx_r32_rm8 && instruction.Op0Kind == OpKind.Register &&
+               instruction.Op0Register == NativeRegister.EAX && instruction.Op1Kind == OpKind.Memory &&
+               instruction.MemoryBase == NativeRegister.RCX && instruction.MemoryIndex == NativeRegister.None &&
+               instruction.MemorySize.GetSize() == 1;
     }
 
     internal static bool FileBackedWritableData(PE pe, X64UnwindProof.Index unwind,

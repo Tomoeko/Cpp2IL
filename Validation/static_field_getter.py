@@ -7,9 +7,13 @@ def observations():
     return [
         {"kind": kind, "pointer": value, "referenceMatches": True,
          "storedPointer": value, "storedReferenceMatches": True,
-         "expectedPointer": value}
-        for kind, value in (("initial", 0), ("first", 17), ("second", -17),
-                            ("minimum", -(1 << 63)))
+         "expectedPointer": value, "flag": flag, "storedFlag": flag,
+         "neighborFlag": neighbor, "expectedFlag": flag,
+         "expectedNeighborFlag": neighbor}
+        for kind, value, flag, neighbor in (("initial", 0, False, False),
+                                            ("first", 17, True, False),
+                                            ("second", -17, False, True),
+                                            ("minimum", -(1 << 63), True, False))
     ]
 
 
@@ -23,6 +27,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Static getter behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 3,
+    return {"status": "passed", "observations": len(expected), "methods": 4,
             "platform": report["platform"], "profile": "static-field-getter",
-            "scope": "native pointer values, object identity, static state and repeated reads"}
+            "scope": "native pointer values, object identity, Boolean values, neighboring static field and repeated reads"}
