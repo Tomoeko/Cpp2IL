@@ -16,6 +16,13 @@ public class CustomAttributeTypeParameter : BaseCustomAttributeTypeParameter
     private Il2CppType? _type;
     private TypeAnalysisContext? _typeContext;
 
+    /// <summary>
+    /// A nonnull System.Type value decoded from a v29 player blob. IL2CPP preserves the
+    /// type identity as an index, but not the original serialized type-name qualification.
+    /// Authored and injected attribute values do not have this provenance.
+    /// </summary>
+    public bool HasNonNullV29TypeIndex { get; private set; }
+
     public override TypeAnalysisContext? TypeContext
     {
         get
@@ -41,6 +48,7 @@ public class CustomAttributeTypeParameter : BaseCustomAttributeTypeParameter
     public override void ReadFromV29Blob(BinaryReader reader, ApplicationAnalysisContext context)
     {
         var typeIndex = reader.BaseStream.ReadUnityCompressedInt();
+        HasNonNullV29TypeIndex = typeIndex >= 0;
         if (typeIndex == -1)
             _type = null;
         else

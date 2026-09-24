@@ -62,6 +62,11 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
         var sourceReport = UnitySourceProjectEmitter.Emit(assemblies, selected, references, projectDirectory, packageManifest,
             externalReferenceMap, context.MetadataVersion);
         sourceReport.RecoveryReportFile = "../source-recovery-report.json";
+        foreach (var name in UnityV29AttributeTypeProvenance.GetAffectedAssemblyNames(context, selected))
+        {
+            sourceReport.SourceGeneration = "partial";
+            sourceReport.Diagnostics.Add($"SOURCE010: {name}: V29 player metadata preserves custom-attribute System.Type identity as an index, but not the original serialized type-name qualification; exact attribute declaration fidelity is unresolved.");
+        }
         if (report.Methods.Any(m => selected.Contains(m.AssemblyName, StringComparer.Ordinal) && m.IsUnresolved))
         {
             sourceReport.SourceGeneration = "partial";
