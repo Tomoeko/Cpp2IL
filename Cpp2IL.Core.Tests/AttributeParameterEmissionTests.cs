@@ -38,6 +38,17 @@ public class AttributeParameterEmissionTests
             Assert.That(app.MetadataVersion, Is.EqualTo(29));
             var playerAssembly = app.GetAssemblyByName("AttributeParameterFixture")!;
 
+            var casesContext = playerAssembly.GetTypeByFullName("AttributeParameterFixture.ParameterCases")!;
+            var mutableReturn = casesContext.Methods.Single(method => method.Name == "RefReturn").Definition!;
+            var readonlyReturn = casesContext.Methods.Single(method => method.Name == "ReadOnlyReturn").Definition!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(mutableReturn.returnTypeIdx.Value, Is.EqualTo(readonlyReturn.returnTypeIdx.Value),
+                    "The player gives the two differently authored return signatures the same type record.");
+                Assert.That(mutableReturn.RawReturnType!.Attrs, Is.Zero);
+                Assert.That(readonlyReturn.RawReturnType!.Attrs, Is.Zero);
+            });
+
             var provenance = UnityV29ReturnMetadataProvenance.Analyze(app, ["AttributeParameterFixture"]);
             Assert.That(provenance, Has.Count.EqualTo(1));
             Assert.Multiple(() =>
