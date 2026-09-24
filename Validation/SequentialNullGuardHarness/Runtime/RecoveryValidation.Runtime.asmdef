@@ -1,0 +1,5 @@
+{
+  "name": "RecoveryValidation.Runtime",
+  "references": ["SequentialNullGuardFixture"],
+  "autoReferenced": true
+}

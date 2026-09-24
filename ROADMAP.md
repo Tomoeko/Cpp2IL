@@ -305,6 +305,8 @@ A separate frame-free x64 proof now accepts a complete branch on the low byte of
 
 A post-commit strict player-only recheck of the Boolean branch fixture again emits all three selected methods; all five generated source/configuration files are byte-identical to the accepted exact Unity round trip. It did not repeat Unity compilation or behavior.
 
+A new neutral three-method control isolates two sequential reference null guards and a separate one-guard integer-addition path. Its original source compiles in the supplied Windows Unity 2021.3.35f1 editor and builds a Windows x64 Release IL2CPP player; original editor and player each pass 19 observations for both null positions, both null, signed limits, aliasing, overflow and unchanged neighboring fields. The native comparison checks the two receivers in order, sends both null edges to one terminal helper, and then reads their `Int32` fields. Initial strict player-only recovery emits the implicit constructor, rejects the comparison at an uncoalesced runtime null guard and rejects the arithmetic control because an intermediate integer local is untyped. This baseline has no recovered-source Unity compilation, native rebuild or behavioral acceptance.
+
 Prioritize measured failure categories rather than adding broad pattern collections without evidence.
 
 | Feature group | Required focus |

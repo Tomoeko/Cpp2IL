@@ -42,6 +42,7 @@ import narrow_array
 import reference_null
 import reference_store
 import scalar_truncation
+import sequential_null_guards
 import static_word_getter
 import xmm_spill
 import word_array
@@ -69,6 +70,7 @@ PROFILES = {
     "static-word-getter": {"assembly": "StaticWordGetterFixture", "source": VALIDATION / "StaticWordGetterFixture", "methods": 2},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
+    "sequential-null-guards": {"assembly": "SequentialNullGuardFixture", "source": VALIDATION / "SequentialNullGuardFixture", "methods": 3},
     "reference-store": {"assembly": "ReferenceStoreFixture", "source": VALIDATION / "ReferenceStoreFixture", "methods": 2},
     "external-references": {"assembly": "ExternalReferenceFixture", "source": VALIDATION / "ExternalReferenceFixture", "methods": 1},
     "numerics-reference": {"assembly": "NumericsReferenceFixture", "source": VALIDATION / "NumericsReferenceFixture", "methods": 1},
@@ -143,6 +145,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return reference_field.verify(path, stage, VERSION)
     if profile == "reference-null":
         return reference_null.verify(path, stage, VERSION)
+    if profile == "sequential-null-guards":
+        return sequential_null_guards.verify(path, stage, VERSION)
     if profile == "reference-store":
         return reference_store.verify(path, stage, VERSION)
     if profile == "external-references":
