@@ -137,16 +137,25 @@ public static partial class IlGenerator
     {
         var result = new List<Instruction>();
         var seen = new HashSet<Block>();
+        var emissionOrder = new List<Block>();
         var current = graph.EntryBlock;
         while (seen.Add(current))
         {
             if (ReferenceEquals(current, graph.ExitBlock))
-                return result;
+            {
+                var emitted = graph.Blocks.Where(block =>
+                    !ReferenceEquals(block, graph.EntryBlock) &&
+                    !ReferenceEquals(block, graph.ExitBlock) &&
+                    block.Instructions.Count != 0);
+                return emitted.SequenceEqual(emissionOrder) ? result : null;
+            }
             if (!ReferenceEquals(current, graph.EntryBlock))
             {
                 if (current.Instructions.Any(instruction => instruction.OpCode is
                     OpCode.ConditionalJump or OpCode.IndirectJump or OpCode.Throw or OpCode.RuntimeNullThrow))
                     return null;
+                if (current.Instructions.Count != 0)
+                    emissionOrder.Add(current);
                 result.AddRange(current.Instructions);
             }
             if (current.Successors is not [var next] ||
@@ -194,9 +203,15 @@ public static partial class IlGenerator
 
     private static bool IndexComesFromParameter(MethodAnalysisContext method,
         List<Instruction> instructions, X64ArrayGuardSiteProof.Site site,
-        LocalVariable index, int before)
+        LocalVariable index, int before) =>
+        IndexComesFromParameter(method, instructions, site.IndexArgument,
+            site.IndexExtensionIp, index, before);
+
+    private static bool IndexComesFromParameter(MethodAnalysisContext method,
+        List<Instruction> instructions, Iced.Intel.Register indexArgument,
+        ulong indexExtensionIp, LocalVariable index, int before)
     {
-        var nativeName = X86Utils.GetRegisterName(site.IndexArgument);
+        var nativeName = X86Utils.GetRegisterName(indexArgument);
         var operands = method.ParameterOperands
             .Select((operand, position) => (operand, position))
             .Where(pair => pair.operand is Register register && register.Name == nativeName)
@@ -224,7 +239,7 @@ public static partial class IlGenerator
                     IntegerBitWidth: 0,
                     CallSemantics: CallSemantics.Direct,
                     Operands: [LocalVariable, LocalVariable source]
-                } || definition.NativeAddress is { } ip && ip != site.IndexExtensionIp)
+                } || definition.NativeAddress is { } ip && ip != indexExtensionIp)
                 return false;
             before = instructions.IndexOf(definition);
             index = source;
@@ -392,20 +407,30 @@ public static partial class IlGenerator
 
     private static void ValidateReferenceComparison(MethodAnalysisContext method,
         X64ArrayGuardSiteProof.Evidence evidence, List<Instruction> instructions,
-        IReadOnlyList<Instruction> elementReads)
+        IReadOnlyList<Instruction> elementReads) =>
+        ValidateReferenceComparison(method, evidence.Comparison,
+            evidence.Sites.Select(site => site.Kind).ToArray(),
+            evidence.Sites.Select(site => site.ElementReadIp).ToArray(),
+            instructions, elementReads);
+
+    private static void ValidateReferenceComparison(MethodAnalysisContext method,
+        X64ArrayGuardSiteProof.ReferenceComparison? comparison,
+        IReadOnlyList<X64ArrayGuardSiteProof.ReadKind> readKinds,
+        IReadOnlyList<ulong> elementReadIps,
+        List<Instruction> instructions, IReadOnlyList<Instruction> elementReads)
     {
-        if (evidence.Comparison is not { } comparison)
+        if (comparison == null)
         {
-            if (evidence.Sites.Any(site => site.Kind == X64ArrayGuardSiteProof.ReadKind.Compare))
+            if (readKinds.Any(kind => kind == X64ArrayGuardSiteProof.ReadKind.Compare))
                 throw Failure("a reference comparison has no proved native equality result");
             return;
         }
-        if (evidence.Sites.Count != 2 || elementReads.Count != 2 ||
-            evidence.Sites[0].Kind != X64ArrayGuardSiteProof.ReadKind.Move ||
-            evidence.Sites[1].Kind != X64ArrayGuardSiteProof.ReadKind.Compare ||
-            comparison.LeftElementReadIp != evidence.Sites[0].ElementReadIp ||
-            comparison.RightElementReadIp != evidence.Sites[1].ElementReadIp ||
-            comparison.CompareIp != evidence.Sites[1].ElementReadIp ||
+        if (readKinds.Count != 2 || elementReadIps.Count != 2 || elementReads.Count != 2 ||
+            readKinds[0] != X64ArrayGuardSiteProof.ReadKind.Move ||
+            readKinds[1] != X64ArrayGuardSiteProof.ReadKind.Compare ||
+            comparison.LeftElementReadIp != elementReadIps[0] ||
+            comparison.RightElementReadIp != elementReadIps[1] ||
+            comparison.CompareIp != elementReadIps[1] ||
             !ReferenceEquals(method.ReturnType, method.AppContext.SystemTypes.SystemBooleanType))
             throw Failure("the final reference comparison has no matching native reads");
 

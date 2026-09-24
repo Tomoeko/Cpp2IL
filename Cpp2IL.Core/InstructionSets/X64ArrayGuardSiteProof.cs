@@ -58,6 +58,157 @@ internal static class X64ArrayGuardSiteProof
         int NullHelperCall, int BoundsHelperCall,
         NativeComparison? Comparison);
 
+    // A separate bounded path for two object-array parameters. The existing
+    // field-origin evidence and matcher remain independent of this ABI shape.
+    internal sealed record ParameterSite(ParameterAnalysisContext ArrayParameter,
+        Register ArrayEntryRegister, Register ArrayUseRegister,
+        IReadOnlyList<ulong> ArrayCaptureIps,
+        ulong ArrayNullTestIp, ulong ArrayNullBranchIp,
+        ulong BoundsCompareIp, ulong BoundsBranchIp, ulong ElementReadIp,
+        ReadKind Kind, IReadOnlyList<Effect> EffectsSincePreviousAccess);
+
+    internal sealed record ParameterEvidence(IReadOnlyList<ParameterSite> Sites,
+        ParameterAnalysisContext IndexParameter, Register IndexEntryRegister,
+        ulong IndexExtensionIp, Register IndexUseRegister,
+        ulong OffsetLeaIp, Register OffsetRegister,
+        ulong NullHelperCallIp, ulong NullTrapIp,
+        ulong BoundsHelperCallIp, ulong BoundsTrapIp,
+        ulong NativeEndExclusiveIp, ReferenceComparison Comparison);
+
+    internal sealed record NativeParameterEvidence(int FirstElementRead,
+        int SecondElementRead, int IndexExtension, int OffsetLea,
+        int ArrayCapture, int MarkCall, int NullHelperCall,
+        int BoundsHelperCall, int SetEqual);
+
+    internal static ParameterEvidence? FindParameter(MethodAnalysisContext method,
+        IReadOnlyList<Instruction> decoded)
+    {
+        try
+        {
+            var app = method.AppContext;
+            if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
+                app.Binary is not PE pe ||
+                X64UnwindProof.ForApplication(app) is not { } unwind ||
+                RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
+                !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
+                method.IsStatic || method.IsVirtual ||
+                method.Name != method.DefaultName ||
+                method.Attributes != method.DefaultAttributes ||
+                method.ImplAttributes != method.DefaultImplAttributes ||
+                method.DeclaringType is not
+                    { IsValueType: false,
+                        Definition:
+                        { RawType:
+                            { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                                NumMods: 0, Byref: 0, Pinned: 0 } } } owner ||
+                owner.Name != owner.DefaultName ||
+                owner.Namespace != owner.DefaultNamespace ||
+                owner.Attributes != owner.DefaultAttributes ||
+                !ReferenceEquals(owner.BaseType, owner.DefaultBaseType) ||
+                method.Parameters is not [{ } left, { } right, { } index] ||
+                method.OverrideReturnType != null ||
+                method.Definition is not
+                    { RawReturnType:
+                        { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
+                            NumMods: 0, Byref: 0, Pinned: 0 } } ||
+                !ReferenceEquals(method.ReturnType,
+                    app.SystemTypes.SystemBooleanType) ||
+                !TryBindObjectArrayParameter(method, left, 0) ||
+                !TryBindObjectArrayParameter(method, right, 1) ||
+                !TryBindInt32Parameter(method, index, 2) ||
+                decoded.Count is < 30 or > 512 ||
+                !TryCompleteFileBackedRegion(method, decoded, pe, unwind,
+                    out var complete) ||
+                TryProveParameterNative(complete, method.UnderlyingPointer,
+                    unwind.ClassifySpan,
+                    target => X86RuntimeNullThrowProof.TryIdentify(app, target) != null,
+                    target => X86RuntimeBoundsThrowProof.TryIdentify(app, target)) is not
+                    { } native)
+                return null;
+
+            var targetAddress = complete[native.MarkCall].NearBranchTarget;
+            if (!app.MethodsByAddress.TryGetValue(targetAddress, out var bindings) ||
+                bindings is not [{ } target] ||
+                !ReferenceEquals(target.DeclaringType, method.DeclaringType) ||
+                target.IsStatic || target.IsVirtual || !target.IsVoid ||
+                target.Parameters.Count != 0 ||
+                target.OverrideReturnType != null ||
+                target.Definition is not
+                    { RawReturnType:
+                        { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
+                            NumMods: 0, Byref: 0, Pinned: 0 } } ||
+                target.Name != target.DefaultName ||
+                target.Attributes != target.DefaultAttributes ||
+                target.ImplAttributes != target.DefaultImplAttributes ||
+                !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(target))
+                return null;
+
+            var mark = complete[native.MarkCall];
+            var effect = new Effect(mark.IP, EffectKind.DirectCall,
+                mark.Code, targetAddress, Register.None, Register.None, 0, 0, 0);
+            var sites = new ParameterSite[]
+            {
+                new(left, Register.RDX, Register.RDX, Array.Empty<ulong>(),
+                    complete[7].IP, complete[8].IP, complete[9].IP,
+                    complete[10].IP, complete[native.FirstElementRead].IP,
+                    ReadKind.Move, Array.Empty<Effect>()),
+                new(right, Register.R8, Register.RDI,
+                    [complete[native.ArrayCapture].IP],
+                    complete[15].IP, complete[16].IP, complete[17].IP,
+                    complete[18].IP, complete[native.SecondElementRead].IP,
+                    ReadKind.Compare, [effect]),
+            };
+            var comparison = new ReferenceComparison(
+                complete[native.FirstElementRead].IP,
+                complete[native.SecondElementRead].IP,
+                complete[native.SecondElementRead].IP,
+                complete[native.SetEqual].IP, Register.RBP);
+            return new ParameterEvidence(sites, index, Register.R9,
+                complete[native.IndexExtension].IP, Register.RBX,
+                complete[native.OffsetLea].IP, Register.RSI,
+                complete[native.NullHelperCall].IP,
+                complete[native.NullHelperCall + 1].IP,
+                complete[native.BoundsHelperCall].IP,
+                complete[native.BoundsHelperCall + 1].IP,
+                complete[^1].NextIP, comparison);
+        }
+        catch (Exception exception) when (exception is ArgumentException or
+                                          InvalidOperationException or
+                                          IndexOutOfRangeException or OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private static bool TryBindObjectArrayParameter(MethodAnalysisContext method,
+        ParameterAnalysisContext parameter, int position) =>
+        parameter.Definition != null &&
+        parameter.ParameterIndex == position &&
+        ReferenceEquals(parameter.DeclaringMethod, method) &&
+        !parameter.IsRef && parameter.OverrideParameterType == null &&
+        parameter.Name == parameter.DefaultName &&
+        parameter.Attributes == parameter.DefaultAttributes &&
+        parameter.ParameterType is SzArrayTypeAnalysisContext array &&
+        ReferenceEquals(array.ElementType,
+            method.AppContext.SystemTypes.SystemObjectType) &&
+        parameter.Definition.RawType is
+            { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
+                NumMods: 0, Byref: 0, Pinned: 0 };
+
+    private static bool TryBindInt32Parameter(MethodAnalysisContext method,
+        ParameterAnalysisContext parameter, int position) =>
+        parameter.Definition != null &&
+        parameter.ParameterIndex == position &&
+        ReferenceEquals(parameter.DeclaringMethod, method) &&
+        !parameter.IsRef && parameter.OverrideParameterType == null &&
+        parameter.Name == parameter.DefaultName &&
+        parameter.Attributes == parameter.DefaultAttributes &&
+        ReferenceEquals(parameter.ParameterType,
+            method.AppContext.SystemTypes.SystemInt32Type) &&
+        parameter.Definition.RawType is
+            { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4,
+                NumMods: 0, Byref: 0, Pinned: 0 };
+
     internal static Evidence? Find(MethodAnalysisContext method,
         IReadOnlyList<Instruction> decoded)
     {
@@ -301,6 +452,175 @@ internal static class X64ArrayGuardSiteProof
             previousElement = site.ElementRead;
         }
         return new NativeEvidence(ordered, nullCall, boundsCall, comparison);
+    }
+
+    // The first parameter-origin case is an exact two-site x64 shape. The shared
+    // LEA computes only the element offset; the two source arrays remain distinct
+    // and the direct managed call stays between their reads. This matcher makes
+    // no claim about stack-spilled arguments or arbitrary address arithmetic.
+    internal static NativeParameterEvidence? TryProveParameterNative(
+        IReadOnlyList<Instruction> body, ulong entry,
+        Func<ulong, ulong, X64UnwindProof.SpanClassification> classify,
+        Func<ulong, bool> provesNull, Func<ulong, bool> provesBounds)
+    {
+        if (body.Count != 31 || body[0].IP != entry ||
+            !DirectCall(body[14]) || !DirectCall(body[27]) ||
+            !DirectCall(body[29]) ||
+            body[14].NearBranchTarget == body[27].NearBranchTarget ||
+            body[14].NearBranchTarget == body[29].NearBranchTarget ||
+            body[27].NearBranchTarget == body[29].NearBranchTarget ||
+            !provesNull(body[27].NearBranchTarget) ||
+            !provesBounds(body[29].NearBranchTarget))
+            return null;
+
+        var next = entry;
+        foreach (var instruction in body)
+        {
+            if (instruction.IP != next || instruction.Length == 0 ||
+                instruction.IsInvalid || instruction.CodeSize != CodeSize.Code64 ||
+                instruction.HasLockPrefix || instruction.HasRepPrefix ||
+                instruction.HasRepnePrefix ||
+                instruction.SegmentPrefix != Register.None)
+                return null;
+            next = instruction.NextIP;
+        }
+        var region = classify(entry, next);
+        if (region.Kind != X64UnwindProof.SpanKind.HandlerFree ||
+            region.Start != entry || region.RootStart != entry ||
+            region.End != next ||
+            X86CallerExceptionRegionProof.Check(body, entry,
+                new HashSet<ulong> { body[27].IP, body[29].IP },
+                classify) != null)
+            return null;
+
+        static bool Reg(Instruction instruction, Code code,
+            Register destination, Register source) =>
+            instruction.Code == code && instruction.OpCount == 2 &&
+            instruction.Op0Kind == OpKind.Register &&
+            instruction.Op1Kind == OpKind.Register &&
+            instruction.Op0Register == destination &&
+            instruction.Op1Register == source;
+
+        static bool StackSlot(Instruction instruction, Code code,
+            Register register, ulong offset, bool save) =>
+            instruction.Code == code && instruction.OpCount == 2 &&
+            instruction.GetOpKind(save ? 0 : 1) == OpKind.Memory &&
+            instruction.GetOpKind(save ? 1 : 0) == OpKind.Register &&
+            instruction.GetOpRegister(save ? 1 : 0) == register &&
+            Memory(instruction, save ? 0 : 1,
+                Register.RSP, Register.None, 1, offset, 8);
+
+        static bool StackAdjust(Instruction instruction, Code code) =>
+            instruction.Code == code && instruction.OpCount == 2 &&
+            instruction.Op0Kind == OpKind.Register &&
+            instruction.Op0Register == Register.RSP &&
+            instruction.Op1Kind == OpKind.Immediate8to64 &&
+            instruction.Immediate8 == 0x20;
+
+        static bool ArrayLengthCompare(Instruction instruction,
+            Register array) =>
+            instruction.Code == Code.Cmp_r32_rm32 &&
+            instruction.Op0Kind == OpKind.Register &&
+            instruction.Op0Register == Register.EBX &&
+            Memory(instruction, 1, array, Register.None, 1, 0x18, 4);
+
+        static bool SplitElement(Instruction instruction,
+            Code code, Register destination, Register array) =>
+            instruction.Code == code && instruction.OpCount == 2 &&
+            instruction.Op0Kind == OpKind.Register &&
+            instruction.Op0Register == destination &&
+            Memory(instruction, 1, Register.RSI, array, 1, 0, 8);
+
+        if (!StackSlot(body[0], Code.Mov_rm64_r64, Register.RBX, 8, true) ||
+            !StackSlot(body[1], Code.Mov_rm64_r64, Register.RBP, 0x10, true) ||
+            !StackSlot(body[2], Code.Mov_rm64_r64, Register.RSI, 0x18, true) ||
+            body[3].Code != Code.Push_r64 ||
+            body[3].Op0Kind != OpKind.Register ||
+            body[3].Op0Register != Register.RDI ||
+            !StackAdjust(body[4], Code.Sub_rm64_imm8) ||
+            !Reg(body[5], Code.Movsxd_r64_rm32,
+                Register.RBX, Register.R9D) ||
+            !(Reg(body[6], Code.Mov_r64_rm64,
+                  Register.RDI, Register.R8) ||
+              Reg(body[6], Code.Mov_rm64_r64,
+                  Register.RDI, Register.R8)) ||
+            !Reg(body[7], Code.Test_rm64_r64,
+                Register.RDX, Register.RDX) ||
+            !Branch(body[8], Mnemonic.Je, body[27].IP) ||
+            !ArrayLengthCompare(body[9], Register.RDX) ||
+            !Branch(body[10], Mnemonic.Jae, body[29].IP) ||
+            body[11].Code != Code.Lea_r64_m ||
+            body[11].Op0Kind != OpKind.Register ||
+            body[11].Op0Register != Register.RSI ||
+            body[11].Op1Kind != OpKind.Memory ||
+            body[11].MemoryBase != Register.None ||
+            body[11].MemoryIndex != Register.RBX ||
+            body[11].MemoryIndexScale != 8 ||
+            body[11].MemoryDisplacement64 != 0x20 ||
+            !SplitElement(body[12], Code.Mov_r64_rm64,
+                Register.RBP, Register.RDX) ||
+            !(Reg(body[13], Code.Xor_r32_rm32,
+                  Register.EDX, Register.EDX) ||
+              Reg(body[13], Code.Xor_rm32_r32,
+                  Register.EDX, Register.EDX)) ||
+            !Reg(body[15], Code.Test_rm64_r64,
+                Register.RDI, Register.RDI) ||
+            !Branch(body[16], Mnemonic.Je, body[27].IP) ||
+            !ArrayLengthCompare(body[17], Register.RDI) ||
+            !Branch(body[18], Mnemonic.Jae, body[29].IP) ||
+            !SplitElement(body[19], Code.Cmp_r64_rm64,
+                Register.RBP, Register.RDI) ||
+            !StackSlot(body[20], Code.Mov_r64_rm64,
+                Register.RBX, 0x30, false) ||
+            !StackSlot(body[21], Code.Mov_r64_rm64,
+                Register.RBP, 0x38, false) ||
+            body[22].Code != Code.Sete_rm8 ||
+            body[22].Op0Kind != OpKind.Register ||
+            body[22].Op0Register != Register.AL ||
+            !StackSlot(body[23], Code.Mov_r64_rm64,
+                Register.RSI, 0x40, false) ||
+            !StackAdjust(body[24], Code.Add_rm64_imm8) ||
+            body[25].Code != Code.Pop_r64 ||
+            body[25].Op0Kind != OpKind.Register ||
+            body[25].Op0Register != Register.RDI ||
+            body[26].Code != Code.Retnq || body[26].OpCount != 0 ||
+            body[28].Code != Code.Int3 ||
+            body[30].Code != Code.Int3)
+            return null;
+
+        var facts = new NativeFacts(body);
+        if (facts.LastWriter(5, Register.R9) >= 0 ||
+            facts.LastWriter(6, Register.R8) >= 0 ||
+            facts.LastWriter(7, Register.RDX) >= 0 ||
+            facts.LastWriter(14, Register.RCX) >= 0 ||
+            facts.LastWriter(19, Register.RBX) != 5 ||
+            facts.LastWriter(19, Register.RDI) != 6 ||
+            facts.LastWriter(19, Register.RSI) != 11 ||
+            facts.LastWriter(19, Register.RBP) != 12 ||
+            NativeGraph.Create(body, 27, 29) is not { } graph ||
+            !graph.HasExactlyThesePredecessors(27, [8, 16]) ||
+            !graph.HasExactlyThesePredecessors(29, [10, 18]) ||
+            !graph.HasExactlyThesePredecessors(28, []) ||
+            !graph.HasExactlyThesePredecessors(30, []) ||
+            !graph.HasOnlyLinearPredecessors(8, 12) ||
+            !graph.HasOnlyLinearPredecessors(16, 19) ||
+            !graph.HasSingleGuardFlagConsumer(body, 7, 8) ||
+            !graph.HasSingleGuardFlagConsumer(body, 9, 10) ||
+            !graph.HasSingleGuardFlagConsumer(body, 15, 16) ||
+            !graph.HasSingleGuardFlagConsumer(body, 17, 18) ||
+            !graph.HasOnlyApprovedIndexUses(facts, 5, Register.RBX,
+                [9, 11, 17]) ||
+            !graph.HasOnlyApprovedIndexUses(facts, 11, Register.RSI,
+                [12, 19]) ||
+            !graph.HasUnchangedRegisterTo(facts, 6, 19,
+                Register.RDI) ||
+            !graph.HasUnchangedRegisterTo(facts, 12, 19,
+                Register.RBP) ||
+            !graph.HasSingleEqualityFlagConsumer(body, 19, 22))
+            return null;
+
+        return new NativeParameterEvidence(12, 19, 5, 11,
+            6, 14, 27, 29, 22);
     }
 
     private static NativeSite? TrySite(NativeFacts facts, NativeGraph graph,

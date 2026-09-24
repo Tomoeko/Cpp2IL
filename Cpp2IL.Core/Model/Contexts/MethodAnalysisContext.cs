@@ -77,6 +77,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
     internal List<RuntimeNullGuardCoalescer.NullArmFieldProbeEvidence> NullArmFieldProbes = [];
     internal List<X64InlinedBooleanSetterProof.Evidence> InlinedBooleanSetters = [];
     internal X64ArrayGuardSiteProof.Evidence? GuardedArrayAccessEvidence;
+    internal X64ArrayGuardSiteProof.ParameterEvidence? ParameterGuardedArrayAccessEvidence;
     internal X64ComposedReferenceFieldStoreProof.Evidence? ComposedReferenceFieldStoreEvidence;
 
     public static int MaxMethodSizeBytes = 30000; // 30KB
@@ -472,6 +473,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         ControlFlowGraph = null;
         DominatorInfo = null;
         GuardedArrayAccessEvidence = null;
+        ParameterGuardedArrayAccessEvidence = null;
         ComposedReferenceFieldStoreEvidence = null;
     }
 

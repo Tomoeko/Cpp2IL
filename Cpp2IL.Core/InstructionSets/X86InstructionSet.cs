@@ -58,6 +58,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
     public override List<ISIL.Instruction> GetIsilFromMethod(MethodAnalysisContext context)
     {
         context.GuardedArrayAccessEvidence = null;
+        context.ParameterGuardedArrayAccessEvidence = null;
         context.ComposedReferenceFieldStoreEvidence = null;
         if (X64ClosedSwitchDispatchRecovery.Find(context) is { } closedSwitch)
             return GetIsilFromClosedSwitch(context, closedSwitch);
@@ -106,11 +107,15 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         // A proved array site replaces only its own explicit native checks. The
         // ordinary lifter still owns every field load, element read, call and
         // store, and IL emission revalidates the resulting typed accesses.
-        var guardedArray = nativeInstructions.Length is >= 16 and <= 512 &&
-                           nativeInstructions.Any(instruction => instruction.Code == Code.Call_rel32_64) &&
-                           nativeInstructions.Any(instruction => instruction.Mnemonic == Mnemonic.Jae) &&
-                           nativeInstructions.Any(instruction => instruction.Code == Code.Movsxd_r64_rm32)
+        var possibleGuardedArray = nativeInstructions.Length is >= 16 and <= 512 &&
+                                   nativeInstructions.Any(instruction => instruction.Code == Code.Call_rel32_64) &&
+                                   nativeInstructions.Any(instruction => instruction.Mnemonic == Mnemonic.Jae) &&
+                                   nativeInstructions.Any(instruction => instruction.Code == Code.Movsxd_r64_rm32);
+        var guardedArray = possibleGuardedArray
             ? X64ArrayGuardSiteProof.Find(context, nativeInstructions)
+            : null;
+        var parameterGuardedArray = guardedArray == null && possibleGuardedArray
+            ? X64ArrayGuardSiteProof.FindParameter(context, nativeInstructions)
             : null;
         HashSet<ulong>? suppressedArrayGuards = null;
         HashSet<ulong>? arrayIndexExtensions = null;
@@ -144,6 +149,30 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 arrayIndexExtensions.Add(site.IndexExtensionIp);
             }
         }
+        if (parameterGuardedArray != null)
+        {
+            nativeInstructions = nativeInstructions
+                .TakeWhile(instruction => instruction.IP < parameterGuardedArray.NativeEndExclusiveIp)
+                .ToArray();
+            context.ParameterGuardedArrayAccessEvidence = parameterGuardedArray;
+            suppressedArrayGuards =
+            [
+                parameterGuardedArray.NullHelperCallIp,
+                parameterGuardedArray.NullTrapIp,
+                parameterGuardedArray.BoundsHelperCallIp,
+                parameterGuardedArray.BoundsTrapIp,
+            ];
+            arrayIndexExtensions = [parameterGuardedArray.IndexExtensionIp];
+            noReturnCalls.Add(parameterGuardedArray.NullHelperCallIp);
+            noReturnCalls.Add(parameterGuardedArray.BoundsHelperCallIp);
+            foreach (var site in parameterGuardedArray.Sites)
+            {
+                suppressedArrayGuards.Add(site.ArrayNullTestIp);
+                suppressedArrayGuards.Add(site.ArrayNullBranchIp);
+                suppressedArrayGuards.Add(site.BoundsCompareIp);
+                suppressedArrayGuards.Add(site.BoundsBranchIp);
+            }
+        }
         var referenceNullReturn = X86ReferenceNullReturnProof.IsApplicable(context, nativeInstructions);
         var booleanReturnSelfTests = X86BooleanReturnSelfTestProof.Find(context, nativeInstructions);
         var nonvolatileXmmTraffic = X86NonvolatileXmmStackProof.Find(context, nativeInstructions);
@@ -163,6 +192,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 continue;
             if (suppressedArrayGuards?.Contains(instruction.IP) == true)
                 continue;
+            if (parameterGuardedArray?.OffsetLeaIp == instruction.IP)
+                continue; // The proof binds every native use of this shared array-element offset.
             if (arrayIndexExtensions?.Contains(instruction.IP) == true)
             {
                 // Its only proved consumers are managed Int32 indexing. Capture
@@ -175,15 +206,34 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     { NativeAddress = instruction.IP });
                 continue;
             }
-            if (guardedArray?.Comparison?.CompareIp == instruction.IP)
+            if (parameterGuardedArray?.Sites.FirstOrDefault(site =>
+                    site.ElementReadIp == instruction.IP &&
+                    site.Kind == X64ArrayGuardSiteProof.ReadKind.Move) is { } parameterRead)
+            {
+                addresses.Add(instruction.IP);
+                instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.Move,
+                    ConvertOperand(instruction, 0),
+                    ParameterArrayElementMemory(parameterRead.ArrayUseRegister,
+                        parameterGuardedArray.IndexUseRegister))
+                    { NativeAddress = instruction.IP });
+                continue;
+            }
+            if (guardedArray?.Comparison?.CompareIp == instruction.IP ||
+                parameterGuardedArray?.Comparison.CompareIp == instruction.IP)
             {
                 // The native proof binds both object references, the single
                 // indexed memory read, and SETE as the sole live flag user.
                 // Integer subtraction on reference values would be invalid IL.
                 var comparedElement = new ISIL.Register(null, "COMPARE_RIGHT");
+                var comparedOperand = parameterGuardedArray is { } parameterEvidence
+                    ? ParameterArrayElementMemory(parameterEvidence.Sites.Single(site =>
+                        site.ElementReadIp == instruction.IP &&
+                        site.Kind == X64ArrayGuardSiteProof.ReadKind.Compare).ArrayUseRegister,
+                        parameterEvidence.IndexUseRegister)
+                    : ConvertOperand(instruction, 1);
                 addresses.Add(instruction.IP);
                 instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.Move,
-                    comparedElement, ConvertOperand(instruction, 1))
+                    comparedElement, comparedOperand)
                     { NativeAddress = instruction.IP });
                 addresses.Add(instruction.IP);
                 instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.CheckEqual,
@@ -244,6 +294,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 ? [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(failure))]
                 : lifted;
     }
+
+    private static ISIL.MemoryOperand ParameterArrayElementMemory(Register array, Register index) =>
+        new(new ISIL.Register(null, X86Utils.GetRegisterName(array)),
+            new ISIL.Register(null, X86Utils.GetRegisterName(index)), 0x20, 8);
 
     private List<ISIL.Instruction> GetIsilFromClosedSwitch(MethodAnalysisContext context,
         X64ClosedSwitchTableProof.Evidence evidence)
