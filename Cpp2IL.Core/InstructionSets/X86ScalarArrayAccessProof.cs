@@ -14,9 +14,10 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Closed exact-profile scalar array access: prove both runtime exception exits and the only
+/// Closed exact-profile array access: prove both runtime exception exits and the only
 /// successful memory access before replacing the diamond with managed ldelem or stelem.
-/// This does not generalize to unchecked native array access or other element types.
+/// Reference elements are read only; a reference store needs a separate covariance and
+/// write-barrier proof. This does not generalize to unchecked native array access.
 /// </summary>
 internal static class X86ScalarArrayAccessProof
 {
@@ -64,7 +65,8 @@ internal static class X86ScalarArrayAccessProof
              !ReferenceEquals(element, app.SystemTypes.SystemUInt16Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemInt64Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemUInt64Type) &&
-             !ReferenceEquals(element, app.SystemTypes.SystemSingleType)) ||
+             !ReferenceEquals(element, app.SystemTypes.SystemSingleType) &&
+             !ISIL.NullCheckedCall.IsReferenceClass(element)) ||
             !ReferenceEquals(index.ParameterType, app.SystemTypes.SystemInt32Type) ||
             array.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
@@ -73,7 +75,7 @@ internal static class X86ScalarArrayAccessProof
             context.OverrideReturnType != null ||
             definition.RawReturnType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawReturn ||
             (isWrite
-                ? IsWordElement(app, element) ||
+                ? ISIL.NullCheckedCall.IsReferenceClass(element) || IsWordElement(app, element) ||
                   !ReferenceEquals(context.ReturnType, app.SystemTypes.SystemVoidType) ||
                   rawReturn.Type != Il2CppTypeEnum.IL2CPP_TYPE_VOID ||
                   !ValidStoredParameter(context, definition, element)
@@ -87,15 +89,19 @@ internal static class X86ScalarArrayAccessProof
                             ReferenceEquals(element, app.SystemTypes.SystemUInt64Type);
         var isWordElement = IsWordElement(app, element);
         var isSingleElement = ReferenceEquals(element, app.SystemTypes.SystemSingleType);
-        var elementSize = isByteElement ? 1 : isWordElement ? 2 : isWideElement ? 8 : 4;
+        var isReferenceElement = ISIL.NullCheckedCall.IsReferenceClass(element);
+        var elementSize = isByteElement ? 1 : isWordElement ? 2 :
+            isWideElement || isReferenceElement ? 8 : 4;
         bool? signedWordRead = isWordElement
             ? ReferenceEquals(element, app.SystemTypes.SystemInt16Type) : null;
         var nullCall = body[9];
         var boundsCall = body[11];
         if (!TryProveShape(body, isWrite, elementSize, isSingleElement, signedWordRead) ||
+            isReferenceElement && !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context,
+                requireUniqueBinding: false) ||
             RuntimeNullGuardCoalescer.HasOutputOptions(context))
             return null;
-        var provedRegion = isSingleElement || isWordElement
+        var provedRegion = isSingleElement || isWordElement || isReferenceElement
             ? TryCompleteTrapTerminatedRegion(app, context.UnderlyingPointer, body)
             : body;
         if (provedRegion == null ||
@@ -164,6 +170,8 @@ internal static class X86ScalarArrayAccessProof
         Il2CppTypeEnum rawReturn)
     {
         var app = context.AppContext;
+        if (ISIL.NullCheckedCall.IsReferenceClass(element))
+            return ReferenceEquals(context.ReturnType, element) && rawReturn == element.Type;
         return IsWordElement(app, element)
             ? ReferenceEquals(context.ReturnType, app.SystemTypes.SystemInt32Type) &&
               rawReturn == Il2CppTypeEnum.IL2CPP_TYPE_I4
