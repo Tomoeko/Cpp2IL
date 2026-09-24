@@ -21,6 +21,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "reference-store", "external-references", "numerics-reference", "byte-threshold", "field-guard",
     "zero-arg-field-call", "scalar-truncation", "loop-calls", "word-fields",
     "iterator-factory-manual",
+    "iterator-factory-variant",
     "literal-concat",
     "class-cast-lookup",
     "runtime-cast-concat",

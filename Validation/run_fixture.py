@@ -35,6 +35,7 @@ import float_comparison
 import integer_extensions
 import iterator_factory
 import iterator_factory_manual
+import iterator_factory_variant
 import literal_concat
 import metadata_guard_move
 import metadata_guard_parameter
@@ -80,6 +81,7 @@ PROFILES = {
     "numerics-reference": {"assembly": "NumericsReferenceFixture", "source": VALIDATION / "NumericsReferenceFixture", "methods": 1},
     "iterator-factory": {"assembly": "IteratorFactoryFixture", "source": VALIDATION / "IteratorFactoryFixture", "methods": 8},
     "iterator-factory-manual": {"assembly": "IteratorFactoryManualFixture", "source": VALIDATION / "IteratorFactoryManualFixture", "methods": 7},
+    "iterator-factory-variant": {"assembly": "IteratorFactoryVariantFixture", "source": VALIDATION / "IteratorFactoryVariantFixture", "methods": 8},
     "literal-concat": {"assembly": "LiteralConcatFixture", "source": VALIDATION / "LiteralConcatFixture", "methods": 7},
     "class-cast-lookup": {"assembly": "ClassCastLookupFixture", "source": VALIDATION / "ClassCastLookupFixture", "methods": 5},
     "runtime-cast-concat": {"assembly": "RuntimeCastConcatFixture", "source": VALIDATION / "RuntimeCastConcatFixture", "methods": 10},
@@ -165,6 +167,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return iterator_factory.verify(path, stage, VERSION)
     if profile == "iterator-factory-manual":
         return iterator_factory_manual.verify(path, stage, VERSION)
+    if profile == "iterator-factory-variant":
+        return iterator_factory_variant.verify(path, stage, VERSION)
     if profile == "literal-concat":
         return literal_concat.verify(path, stage, VERSION)
     if profile == "class-cast-lookup":
