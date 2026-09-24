@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Graphs;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Logging;
 using Cpp2IL.Core.Utils;
@@ -74,6 +75,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
     // an emitted instance-field access after later graph transformations.
     internal List<RuntimeNullGuardCoalescer.FieldAccessEvidence> NullCheckedFieldAccesses = [];
     internal List<RuntimeNullGuardCoalescer.NullArmFieldProbeEvidence> NullArmFieldProbes = [];
+    internal List<X64InlinedBooleanSetterProof.Evidence> InlinedBooleanSetters = [];
 
     public static int MaxMethodSizeBytes = 30000; // 30KB
 

@@ -23,6 +23,9 @@ public static partial class IlGenerator
         foreach (var fieldAccess in context.NullCheckedFieldAccesses)
             if (!fieldAccess.IsValidFor(context))
                 throw new DecompilerException("Null-checked field access marker requires its unchanged instance field, receiver and stored value");
+        foreach (var setter in context.InlinedBooleanSetters)
+            if (!setter.IsValidFor(context))
+                throw new DecompilerException("Inlined Boolean setter rewrite requires its unchanged public setter, backing field and native byte store");
         foreach (var probe in context.NullArmFieldProbes)
             if (!probe.IsValidFor(context))
                 throw new DecompilerException("Null-arm field probe requires its unchanged guard, native field read and target runtime null helper");

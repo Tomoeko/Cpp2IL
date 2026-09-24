@@ -11,6 +11,9 @@ public class Instruction : IOperand
 {
     public int Index;
 
+    /// <summary>Native instruction address that produced this lifted operation, when available.</summary>
+    public ulong? NativeAddress { get; internal set; }
+
     /// <summary>Native integer operand width in bits; zero means unspecified. This is not the width of a Boolean result.</summary>
     public int IntegerBitWidth { get; set; }
 

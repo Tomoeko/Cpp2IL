@@ -361,7 +361,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         ISIL.Instruction Add(ulong address, ISIL.OpCode opCode, params List<ISIL.IOperand> operands)
         {
             addresses.Add(address);
-            var newInstruction = new ISIL.Instruction(instructions.Count, opCode, operands);
+            var newInstruction = new ISIL.Instruction(instructions.Count, opCode, operands)
+            {
+                NativeAddress = address,
+            };
             instructions.Add(newInstruction);
             return newInstruction;
         }

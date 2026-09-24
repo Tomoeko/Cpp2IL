@@ -21,6 +21,14 @@ internal static class RuntimeNullGuardCoalescer
 {
     private const string SetOptionAttribute = "Unity.IL2CPP.CompilerServices.Il2CppSetOptionAttribute";
 
+    internal enum ReceiverOrigin
+    {
+        Other,
+        DirectCallResult,
+        CopiedCallResult,
+        InvalidCopyChain,
+    }
+
     internal sealed record FieldAccessEvidence(Instruction Operation, FieldReference Access, LocalVariable Receiver,
         FieldAnalysisContext Field, TypeAnalysisContext Owner, TypeAnalysisContext ValueType, int Offset,
         FieldAttributes Attributes, bool RequireNativeBinding, IOperand? StoredValue)
@@ -200,7 +208,8 @@ internal static class RuntimeNullGuardCoalescer
         while (TryRewriteOne(method, graph, provesRuntimeNullThrow, provesNativeTarget,
                    provesNativeField, requireNativeFieldBinding) ||
                TryRewriteDelayedFieldGuard(method, graph, provesRuntimeNullThrow,
-                   provesNativeField, requireNativeFieldBinding))
+                   provesNativeField, requireNativeFieldBinding) ||
+               requireNativeFieldBinding && TryRewriteInlinedBooleanSetter(method, graph))
         {
             changed++;
             graph.RemoveUnreachableBlocks();
@@ -208,6 +217,27 @@ internal static class RuntimeNullGuardCoalescer
             method.DominatorInfo = new DominatorInfo(graph);
         }
         return changed;
+    }
+
+    private static bool TryRewriteInlinedBooleanSetter(MethodAnalysisContext method,
+        ISILControlFlowGraph graph)
+    {
+        foreach (var instruction in graph.Instructions)
+        {
+            if (instruction is not { OpCode: OpCode.Move,
+                    Operands: [FieldReference access, Immediate] } ||
+                method.NullCheckedFieldAccesses.FirstOrDefault(read =>
+                    ReferenceEquals(read.Receiver, access.Local) &&
+                    read.StoredValue == null && read.IsValidFor(method) &&
+                    X64InlinedBooleanSetterProof.HasEarlierImplicitCheck(
+                        method, read, instruction)) is not { } earlierRead ||
+                X64InlinedBooleanSetterProof.TryRewrite(method, instruction,
+                    earlierRead) is not { } evidence)
+                continue;
+            method.InlinedBooleanSetters.Add(evidence);
+            return true;
+        }
+        return false;
     }
 
     private static bool TryRewriteOne(MethodAnalysisContext method, ISILControlFlowGraph graph,
@@ -330,8 +360,22 @@ internal static class RuntimeNullGuardCoalescer
                         return false;
                     if (instruction.IsCall)
                     {
-                        if (!NullCheckedCall.TryGet(instruction, out var target, out var calledReceiver) ||
-                            !provesNativeTarget(target) ||
+                        if (!NullCheckedCall.TryGet(instruction, out var target, out var calledReceiver))
+                            return false;
+                        var originKind = TraceReceiverOrigin(receiver,
+                            local => definitions.TryGetValue(local,
+                                out var definition) ? definition.Instruction : null,
+                            local => method.ParameterLocals.Contains(local),
+                            out var origin);
+                        if (requireNativeFieldBinding && originKind is
+                            ReceiverOrigin.CopiedCallResult or ReceiverOrigin.InvalidCopyChain)
+                            return false;
+                        var targetBound = requireNativeFieldBinding &&
+                            originKind == ReceiverOrigin.DirectCallResult
+                                ? CallResultNullGuardProof.HasBoundTarget(method,
+                                    receiver, origin!, instruction, target)
+                                : provesNativeTarget(target);
+                        if (!targetBound ||
                             !ReferenceEquals(target.AppContext, method.AppContext) ||
                             !ReferenceEquals(calledReceiver, receiver) ||
                             OperandEffects.ReadLocals(instruction).Any(local => !Available(local, entry, instruction)))
@@ -393,6 +437,45 @@ internal static class RuntimeNullGuardCoalescer
                 entry = entry.Successors[0];
             }
         }
+
+    }
+
+    internal static ReceiverOrigin TraceReceiverOrigin(LocalVariable value,
+        Func<LocalVariable, Instruction?> definitionOf,
+        Func<LocalVariable, bool> isParameter, out Instruction? origin)
+    {
+        origin = null;
+        var visited = new HashSet<LocalVariable>();
+        var copied = false;
+        while (visited.Add(value))
+        {
+            var definition = definitionOf(value);
+            if (definition == null)
+                return isParameter(value) ? ReceiverOrigin.Other :
+                    ReceiverOrigin.InvalidCopyChain;
+            if (definition.OpCode == OpCode.Call)
+            {
+                origin = definition;
+                return copied ? ReceiverOrigin.CopiedCallResult :
+                    ReceiverOrigin.DirectCallResult;
+            }
+            if (definition.OpCode == OpCode.Phi)
+                return ReceiverOrigin.InvalidCopyChain;
+            if (definition.OpCode != OpCode.Move)
+                return ReceiverOrigin.Other;
+            if (definition.Operands is not [LocalVariable destination,
+                    var source] ||
+                !ReferenceEquals(destination, value))
+                return ReceiverOrigin.InvalidCopyChain;
+            if (source is not LocalVariable sourceLocal)
+                return ReceiverOrigin.Other;
+            if (definition.IntegerBitWidth != 0 ||
+                definition.CallSemantics != CallSemantics.Direct)
+                return ReceiverOrigin.InvalidCopyChain;
+            value = sourceLocal;
+            copied = true;
+        }
+        return ReceiverOrigin.InvalidCopyChain;
     }
 
     private static bool TryReceiver(Instruction comparison, out LocalVariable receiver)
