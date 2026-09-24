@@ -58,6 +58,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
     public override List<ISIL.Instruction> GetIsilFromMethod(MethodAnalysisContext context)
     {
         context.GuardedArrayAccessEvidence = null;
+        context.ComposedReferenceFieldStoreEvidence = null;
         if (X64ClosedSwitchDispatchRecovery.Find(context) is { } closedSwitch)
             return GetIsilFromClosedSwitch(context, closedSwitch);
 
@@ -86,6 +87,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return booleanTailBranch; // Complete frame-free Boolean branch with two uniquely bound tail targets.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
+        if (X64ComposedReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } composedReferenceStore)
+            return composedReferenceStore; // Preserve the increment, source read, and null-guarded field write in native order.
         if (X86ByteThresholdReturnProof.TryLift(context, nativeInstructions) is { } byteThreshold)
             return byteThreshold; // The complete leaf proves one unsigned byte-field predicate.
         if (X86DirectBooleanFieldGetterProof.TryLift(context, nativeInstructions) is { } booleanGetter)
