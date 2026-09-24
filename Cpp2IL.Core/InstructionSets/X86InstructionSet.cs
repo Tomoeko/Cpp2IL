@@ -65,6 +65,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return objectConstructorThunk; // The complete tail thunk binds the shared Object constructor target.
         if (X64IteratorConstructorProof.TryLift(context, nativeInstructions) is { } iteratorConstructor)
             return iteratorConstructor; // The factory proof authenticates the Object constructor and state field.
+        if (X64FoldedInt32ConstructorProof.TryLift(context, nativeInstructions) is { } foldedInt32Constructor)
+            return foldedInt32Constructor; // The unwind-bounded body independently binds its Object base and Int32 field.
         if (X64IteratorFactoryProof.TryLift(context, nativeInstructions) is { } iteratorFactory)
             return iteratorFactory; // Allocation, constructor, captures, and helper exits are independently bound.
         if (X64TerminalManagedThrowProof.TryLift(context, nativeInstructions) is { } terminalThrow)

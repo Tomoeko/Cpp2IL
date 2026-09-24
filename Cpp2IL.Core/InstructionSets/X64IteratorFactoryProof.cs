@@ -237,7 +237,7 @@ internal static class X64IteratorFactoryProof
         if (body.Length != 12 || region.Kind != X64UnwindProof.SpanKind.HandlerFree ||
             region.Start != constructor.UnderlyingPointer || region.RootStart != region.Start ||
             region.End != body[^1].NextIP || body[0].IP != region.Start ||
-            !unwind.MatchesUnwind(region.Start, region.End, 10, 0, SavedRbxRdiFrame) ||
+            !MatchesConstructorUnwind(unwind, region.Start, region.End) ||
             !FileBacked(pe, region.Start, region.End) ||
             !TryProveConstructorShape(body, state.Offset, objectCall) ||
             X86CallerExceptionRegionProof.Check(constructor, body, new HashSet<ulong>()) != null)
@@ -245,7 +245,11 @@ internal static class X64IteratorFactoryProof
         return true;
     }
 
-    private static bool HasConstructorSignature(MethodAnalysisContext constructor,
+    internal static bool MatchesConstructorUnwind(X64UnwindProof.Index unwind,
+        ulong start, ulong end) =>
+        unwind.MatchesUnwind(start, end, 10, 0, SavedRbxRdiFrame);
+
+    internal static bool HasConstructorSignature(MethodAnalysisContext constructor,
         TypeAnalysisContext iterator, ApplicationAnalysisContext app)
     {
         if (constructor.IsStatic || constructor.IsVirtual || constructor.Name != ".ctor" ||

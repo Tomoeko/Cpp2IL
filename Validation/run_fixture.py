@@ -62,6 +62,7 @@ import zero_arg_field_call
 import virtual_string_call
 import generic_dispatch
 import guarded_sink
+import folded_state_constructor
 
 
 VERSION = "2021.3.35f1"
@@ -84,6 +85,7 @@ PROFILES = {
     "generic-dispatch": {"assembly": "GenericDispatchFixture", "source": VALIDATION / "GenericDispatchFixture", "methods": 4,
                          "noManagedBody": (("GenericDispatchFixture.IRead`1", "Read"),)},
     "guarded-sink": {"assembly": "GuardedSinkFixture", "source": VALIDATION / "GuardedSinkFixture", "methods": 3},
+    "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 8},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 4},
@@ -193,6 +195,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return generic_dispatch.verify(path, stage, VERSION)
     if profile == "guarded-sink":
         return guarded_sink.verify(path, stage, VERSION)
+    if profile == "folded-state-constructor":
+        return folded_state_constructor.verify(path, stage, VERSION)
     if profile == "array-call":
         return array_call.verify(path, stage, VERSION)
     if profile == "enum-passthrough":
