@@ -34,6 +34,7 @@ import float_array
 import float_comparison
 import forwarded_argument
 import struct_forward_call
+import struct_static_forward_call
 import integer_extensions
 import iterator_factory
 import iterator_factory_manual
@@ -101,6 +102,7 @@ PROFILES = {
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
     "struct-forward-call": {"assembly": "StructForwardCallFixture", "source": VALIDATION / "StructForwardCallFixture", "methods": 5},
+    "struct-static-forward-call": {"assembly": "StructStaticForwardCallFixture", "source": VALIDATION / "StructStaticForwardCallFixture", "methods": 6},
     "scalar-truncation": {"assembly": "ScalarTruncationFixture", "source": VALIDATION / "ScalarTruncationFixture", "methods": 2},
     "loop-calls": {"assembly": "LoopCallFixture", "source": VALIDATION / "LoopCallFixture", "methods": 4},
     "word-fields": {"assembly": "WordFieldFixture", "source": VALIDATION / "WordFieldFixture", "methods": 4},
@@ -203,6 +205,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return forwarded_argument.verify(path, stage, VERSION)
     if profile == "struct-forward-call":
         return struct_forward_call.verify(path, stage, VERSION)
+    if profile == "struct-static-forward-call":
+        return struct_static_forward_call.verify(path, stage, VERSION)
     if profile == "scalar-truncation":
         return scalar_truncation.verify(path, stage, VERSION)
     if profile == "loop-calls":
