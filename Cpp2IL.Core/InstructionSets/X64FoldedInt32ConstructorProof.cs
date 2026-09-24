@@ -110,6 +110,10 @@ internal static class X64FoldedInt32ConstructorProof
                         state.Offset), 32))
                 return null;
 
+            // The target may have other managed aliases, but its complete native
+            // body is proved inert below. A direct Object child still requires
+            // a base constructor call; the original callsite MethodDef identity
+            // cannot be recovered from this folded address alone.
             var objectConstructors = app.SystemTypes.SystemObjectType.Methods
                 .Where(candidate => candidate.Name == ".ctor" &&
                     !candidate.IsStatic && candidate.Parameters.Count == 0 &&

@@ -58,6 +58,8 @@ public class X64FoldedInt32ConstructorProofTests
                 Assert.That(proof.State.Offset, Is.EqualTo(16));
                 Assert.That(proof.BaseConstructor.DeclaringType,
                     Is.SameAs(app.SystemTypes.SystemObjectType));
+                Assert.That(app.MethodsByAddress[proof.BaseConstructor.UnderlyingPointer].Count,
+                    Is.GreaterThan(1));
                 Assert.That(X64FoldedInt32ConstructorProof.TryLift(constructor, native)!
                     .Select(instruction => instruction.OpCode),
                     Is.EqualTo(new[] { ISIL.OpCode.CallVoid, ISIL.OpCode.Move,
