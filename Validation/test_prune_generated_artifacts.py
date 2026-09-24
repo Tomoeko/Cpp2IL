@@ -84,6 +84,28 @@ class PruneGeneratedArtifactsTests(unittest.TestCase):
                 prune(candidates, root, Path(directory) / "manifests")
             self.assertTrue((run / "project").is_dir())
 
+    def test_retains_player_input_while_pruning_completed_build_trees(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "validation"
+            run = root / "completed"
+            run.mkdir(parents=True)
+            receipt = run / "receipt.json"
+            receipt.write_text('{"status":"passed"}')
+            old = time.time() - 48 * 3600
+            os.utime(receipt, (old, old))
+            for name in ("project", "player", "player-input"):
+                tree = run / name
+                tree.mkdir()
+                (tree / "fixture.bin").write_bytes(b"synthetic")
+
+            candidates = plan(root, now=time.time(), retain_player_input=True)
+            self.assertEqual({candidate.path.name for candidate in candidates},
+                             {"project", "player"})
+            prune(candidates, root, Path(directory) / "manifests")
+            self.assertTrue((run / "player-input" / "fixture.bin").is_file())
+            self.assertFalse((run / "project").exists())
+            self.assertFalse((run / "player").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

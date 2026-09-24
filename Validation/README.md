@@ -111,17 +111,21 @@ next validation step, preview and prune old generated trees:
 ```sh
 python3 Validation/prune_generated_artifacts.py
 python3 Validation/prune_generated_artifacts.py --apply
+python3 Validation/prune_generated_artifacts.py --retain-player-input
+python3 Validation/prune_generated_artifacts.py --retain-player-input --apply
 ```
 
 The default dry run waits 24 hours after a terminal receipt. The script removes
 only `project/`, `player/` and `player-input/` trees under completed ignored
 `Files/validation/` runs; it retains receipts, logs, recovered source and
 recovery reports, copies small `project/Reports/` witnesses beside each run,
-and writes a private cleanup manifest. Use `--exclude RUN_NAME`
-to keep a run under investigation. A pruned run can no longer be passed to
-`--baseline-run`; rebuild that original fixture when a new player input is
-needed. Never use the cleanup script on the supplied editor, license prefix,
-original game/project inputs, or active runs.
+and writes a private cleanup manifest. Use `--retain-player-input` to keep
+exact native fixture inputs while pruning their original project/player trees,
+or `--exclude RUN_NAME` to keep an entire run under investigation. A run whose
+player input was removed cannot be passed to `--baseline-run`; rebuild that
+original fixture when a new player input is needed. Never use the cleanup
+script on the supplied editor, license prefix, original game/project inputs,
+or active runs.
 
 Run the bounded harness checks without Unity or Wine:
 

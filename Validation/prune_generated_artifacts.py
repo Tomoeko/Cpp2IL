@@ -48,7 +48,8 @@ def allocated_bytes(path):
     return total
 
 
-def plan(validation_root, minimum_age_seconds=24 * 3600, now=None, excluded=()):
+def plan(validation_root, minimum_age_seconds=24 * 3600, now=None, excluded=(),
+         retain_player_input=False):
     if not math.isfinite(minimum_age_seconds) or minimum_age_seconds < 0:
         raise ValueError("minimum age must be finite and nonnegative")
     validation_root = Path(validation_root)
@@ -75,6 +76,8 @@ def plan(validation_root, minimum_age_seconds=24 * 3600, now=None, excluded=()):
                            if child.is_dir() and not child.is_symlink() and child.name not in HEAVY_TREES]
         for parent in parents:
             for name in HEAVY_TREES:
+                if retain_player_input and name == "player-input":
+                    continue
                 path = parent / name
                 if (path.is_dir() and not path.is_symlink() and
                         path.resolve().is_relative_to(root)):
@@ -153,11 +156,14 @@ def main():
                         help="Require a terminal receipt at least this old (default: 24)")
     parser.add_argument("--exclude", action="append", default=[], metavar="RUN_NAME",
                         help="Keep one immediate Files/validation run directory")
+    parser.add_argument("--retain-player-input", action="store_true",
+                        help="Prune completed project/player trees while keeping player inputs for local tests")
     parser.add_argument("--show-paths", action="store_true", help="List each planned tree")
     args = parser.parse_args()
     if not math.isfinite(args.min_age_hours) or args.min_age_hours < 0:
         parser.error("--min-age-hours must be finite and nonnegative")
-    candidates = plan(VALIDATION, args.min_age_hours * 3600, excluded=args.exclude)
+    candidates = plan(VALIDATION, args.min_age_hours * 3600, excluded=args.exclude,
+                      retain_player_input=args.retain_player_input)
     gib = sum(candidate.allocated_bytes for candidate in candidates) / 1024**3
     print(f"{len(candidates)} generated trees; about {gib:.2f} GiB allocated")
     if args.show_paths:
