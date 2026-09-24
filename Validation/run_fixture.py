@@ -30,6 +30,9 @@ import byte_threshold
 import float_array
 import float_comparison
 import integer_extensions
+import iterator_factory
+import iterator_factory_manual
+import literal_concat
 import loop_calls
 import narrow_array
 import reference_null
@@ -65,6 +68,9 @@ PROFILES = {
     "reference-store": {"assembly": "ReferenceStoreFixture", "source": VALIDATION / "ReferenceStoreFixture", "methods": 2},
     "external-references": {"assembly": "ExternalReferenceFixture", "source": VALIDATION / "ExternalReferenceFixture", "methods": 1},
     "numerics-reference": {"assembly": "NumericsReferenceFixture", "source": VALIDATION / "NumericsReferenceFixture", "methods": 1},
+    "iterator-factory": {"assembly": "IteratorFactoryFixture", "source": VALIDATION / "IteratorFactoryFixture", "methods": 8},
+    "iterator-factory-manual": {"assembly": "IteratorFactoryManualFixture", "source": VALIDATION / "IteratorFactoryManualFixture", "methods": 7},
+    "literal-concat": {"assembly": "LiteralConcatFixture", "source": VALIDATION / "LiteralConcatFixture", "methods": 7},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
@@ -131,6 +137,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return external_references.verify(path, stage, VERSION)
     if profile == "numerics-reference":
         return numerics_reference.verify(path, stage, VERSION)
+    if profile == "iterator-factory":
+        return iterator_factory.verify(path, stage, VERSION)
+    if profile == "iterator-factory-manual":
+        return iterator_factory_manual.verify(path, stage, VERSION)
+    if profile == "literal-concat":
+        return literal_concat.verify(path, stage, VERSION)
     if profile == "byte-threshold":
         return byte_threshold.verify(path, stage, VERSION)
     if profile == "field-guard":

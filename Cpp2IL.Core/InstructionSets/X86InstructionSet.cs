@@ -61,6 +61,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
         var nativeInstructions = X86Utils.Iterate(context).ToArray();
         var noReturnCalls = new HashSet<ulong>();
+        if (X64IteratorFactoryProof.TryLift(context, nativeInstructions) is { } iteratorFactory)
+            return iteratorFactory; // Allocation, constructor, captures, and helper exits are independently bound.
+        if (X64LiteralConcatProof.TryLift(context, nativeInstructions) is { } literalConcat)
+            return literalConcat; // The inherited field, literal, null arm, and tail call are bound together.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
         if (X86ByteThresholdReturnProof.TryLift(context, nativeInstructions) is { } byteThreshold)
