@@ -60,6 +60,9 @@ public class CommandLineArgs
     [Option("unity-package-manifest", HelpText = "Explicit Unity Packages/manifest.json input for cs_unity output. Package versions are never inferred from the player.")]
     public string? UnityPackageManifestPath { get; set; }
 
+    [Option("unity-external-reference-map", HelpText = "Explicit JSON classification of external Unity asmdef, precompiled plugin and target-provided references for cs_unity output.")]
+    public string? UnityExternalReferenceMapPath { get; set; }
+
     //Flags
 
     [Option("verbose", HelpText = "Enable Verbose Logging.")]

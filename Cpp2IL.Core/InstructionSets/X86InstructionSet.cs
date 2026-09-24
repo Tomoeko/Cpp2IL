@@ -61,6 +61,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
         var nativeInstructions = X86Utils.Iterate(context).ToArray();
         var noReturnCalls = new HashSet<ulong>();
+        if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
+            return referenceStore; // The closed proof includes the null and GC helper paths.
+        if (X86ByteThresholdReturnProof.TryLift(context, nativeInstructions) is { } byteThreshold)
+            return byteThreshold; // The complete leaf proves one unsigned byte-field predicate.
         if (X86IntegerArrayAccessProof.TryLift(context, nativeInstructions) is { } arrayAccess)
             return arrayAccess; // The closed proof includes both helper exits and the caller unwind region.
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)

@@ -95,6 +95,20 @@ internal static class X64UnwindProof
             return false;
         }
 
+        // A PE section's virtual tail after its file-backed bytes is zero-initialized.
+        // Checking two writable endpoints alone misses gaps and intervening sections.
+        // Require the whole range in one readable, writable, non-executable section.
+        internal bool IsWritableVirtualRangeInOneSection(uint rva, uint length)
+        {
+            if (length == 0 || rva >= _imageSize || (ulong)rva + length > _imageSize)
+                return false;
+            foreach (var section in _sections)
+                if (rva >= section.Rva &&
+                    (ulong)rva + length <= (ulong)section.Rva + section.VirtualSize)
+                    return (section.Characteristics & 0xE0000000) == 0xC0000000;
+            return false;
+        }
+
         internal SpanClassification ClassifySpan(ulong start, ulong end)
         {
             if (!TryRange(start, end, out var rva, out var endRva))

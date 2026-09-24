@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import run_fixture
 import run_roundtrip
@@ -18,6 +19,19 @@ class HarnessBoundaries(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.fixture = self.root / "Fixture"
+        self.fixture.mkdir()
+        (self.fixture / "Fixture.cs").write_text("public class Fixture {}\n", encoding="utf-8")
+        (self.fixture / "RecoveryFixture.asmdef").write_text("{}\n", encoding="utf-8")
+        self.harness = self.root / "Harness"
+        (self.harness / "Editor").mkdir(parents=True)
+        (self.harness / "Runtime").mkdir()
+        (self.harness / "Editor" / "ValidationEntry.cs").write_text("public class ValidationEntry {}\n", encoding="utf-8")
+        (self.harness / "Runtime" / "ReportJson.cs").write_text("public class ReportJson {}\n", encoding="utf-8")
+        fixture_profile = {**run_roundtrip.FIXTURE_PROFILES["arithmetic"], "source": self.fixture}
+        profile_patch = mock.patch.dict(run_roundtrip.FIXTURE_PROFILES, {"arithmetic": fixture_profile})
+        profile_patch.start()
+        self.addCleanup(profile_patch.stop)
 
     def baseline_receipt(self):
         player_inputs = []
@@ -34,7 +48,14 @@ class HarnessBoundaries(unittest.TestCase):
                                        "errors": 0, "result": "Succeeded"},
                        "playerBehavior": {"status": "passed"}},
             "playerInputs": player_inputs,
+            "sourceFiles": [{"path": relative, "sha256": run_roundtrip.digest(self.fixture / relative)}
+                            for relative in ("Fixture.cs", "RecoveryFixture.asmdef")],
+            "harnessFiles": [{"path": relative, "sha256": run_roundtrip.digest(self.harness / relative)}
+                             for relative in ("Editor/ValidationEntry.cs", "Runtime/ReportJson.cs")],
         }
+
+    def write_baseline_receipt(self, receipt):
+        (self.root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
 
     def test_source_copy_excludes_managed_oracles(self):
         source = self.root / "source"
@@ -78,7 +99,7 @@ class HarnessBoundaries(unittest.TestCase):
         receipt = self.baseline_receipt()
         receipt["packageManifest"] = {"provenance": "explicit-auxiliary", "sha256": manifest_hash,
                                       "resolvedLockSha256": lock_hash}
-        (self.root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+        self.write_baseline_receipt(receipt)
         self.assertEqual(run_roundtrip.checked_baseline(self.root, "arithmetic", manifest_hash), receipt)
 
         lock.write_text('{"dependencies":{"com.example.fixture":{"version":"1.0.1"}}}', encoding="utf-8")
@@ -91,8 +112,63 @@ class HarnessBoundaries(unittest.TestCase):
 
     def test_default_baseline_does_not_require_package_lock(self):
         receipt = self.baseline_receipt()
-        (self.root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+        self.write_baseline_receipt(receipt)
         self.assertEqual(run_roundtrip.checked_baseline(self.root, "arithmetic"), receipt)
+
+    def test_baseline_rejects_changed_or_added_fixture_source(self):
+        receipt = self.baseline_receipt()
+        self.write_baseline_receipt(receipt)
+        (self.fixture / "Fixture.cs").write_text("public class ChangedFixture {}\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "fixture source hashes differ"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic")
+        (self.fixture / "Fixture.cs").write_text("public class Fixture {}\n", encoding="utf-8")
+        (self.fixture / "New.cs").write_text("public class NewFixture {}\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "fixture source path set differs"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic")
+
+    def test_baseline_rejects_changed_or_missing_harness_source(self):
+        receipt = self.baseline_receipt()
+        self.write_baseline_receipt(receipt)
+        shared = self.harness / "Runtime" / "ReportJson.cs"
+        shared.write_text("public class ChangedReportJson {}\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "harness source hashes differ"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic")
+        shared.unlink()
+        with self.assertRaisesRegex(ValueError, "harness source path set differs"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic")
+
+    def test_baseline_rejects_missing_source_manifest(self):
+        receipt = self.baseline_receipt()
+        del receipt["sourceFiles"]
+        self.write_baseline_receipt(receipt)
+        with self.assertRaisesRegex(ValueError, "fixture source receipt is missing"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic")
+
+    def test_profile_harness_includes_shared_editor_and_serializer(self):
+        fixture = self.root / "ReferenceStoreFixture"
+        fixture.mkdir()
+        (fixture / "Store.cs").write_text("public class Store {}\n", encoding="utf-8")
+        harness = self.root / "ReferenceStoreHarness" / "Runtime"
+        harness.mkdir(parents=True)
+        (harness / "BehaviorProbe.cs").write_text("public class BehaviorProbe {}\n", encoding="utf-8")
+        profile = {**run_roundtrip.FIXTURE_PROFILES["reference-store"], "source": fixture}
+        with mock.patch.dict(run_roundtrip.FIXTURE_PROFILES, {"reference-store": profile}):
+            receipt = self.baseline_receipt()
+            receipt["profile"] = "reference-store"
+            receipt["sourceFiles"] = [{"path": "Store.cs", "sha256": run_roundtrip.digest(fixture / "Store.cs")}]
+            receipt["harnessFiles"] = [
+                {"path": "Runtime/BehaviorProbe.cs", "sha256": run_roundtrip.digest(harness / "BehaviorProbe.cs")},
+                {"path": "Editor/ValidationEntry.cs",
+                 "sha256": run_roundtrip.digest(self.harness / "Editor" / "ValidationEntry.cs")},
+                {"path": "Runtime/ReportJson.cs",
+                 "sha256": run_roundtrip.digest(self.harness / "Runtime" / "ReportJson.cs")},
+            ]
+            self.write_baseline_receipt(receipt)
+            self.assertEqual(run_roundtrip.checked_baseline(self.root, "reference-store"), receipt)
+            (self.harness / "Editor" / "ValidationEntry.cs").write_text(
+                "public class ChangedValidationEntry {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "harness source hashes differ"):
+                run_roundtrip.checked_baseline(self.root, "reference-store")
 
     @unittest.skipIf(os.name == "nt", "POSIX signal-exit regression")
     def test_deadline_is_not_success_when_child_handles_termination(self):

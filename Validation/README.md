@@ -126,7 +126,7 @@ original game/project inputs, or active runs.
 Run the bounded harness checks without Unity or Wine:
 
 ```sh
-python3 -m unittest discover -s Validation -p 'test_*fixture*.py'
+python3 -m unittest discover -s Validation -p 'test_*.py' -q
 python3 Validation/test_declaration_comparer.py
 ```
 

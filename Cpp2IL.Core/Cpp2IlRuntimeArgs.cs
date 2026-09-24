@@ -28,4 +28,5 @@ public class Cpp2IlRuntimeArgs
     public List<string> UnitySourceAssemblies = [];
     public List<string> UnityReferenceDirectories = [];
     public string? UnityPackageManifestPath;
+    public string? UnityExternalReferenceMapPath;
 }

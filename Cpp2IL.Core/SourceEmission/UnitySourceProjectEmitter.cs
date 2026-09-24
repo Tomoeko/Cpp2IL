@@ -40,9 +40,11 @@ public static class UnitySourceProjectEmitter
     };
 
     public static UnitySourceEmissionReport Emit(IEnumerable<AssemblyDefinition> assemblies, IEnumerable<string> selectedAssemblyNames,
-        IEnumerable<string> referenceDirectories, string outputDirectory, string? packageManifestPath = null)
+        IEnumerable<string> referenceDirectories, string outputDirectory, string? packageManifestPath = null,
+        string? externalReferenceMapPath = null)
     {
         var packageManifest = UnityPackageManifest.Load(packageManifestPath);
+        var externalReferenceMap = UnityExternalReferenceMap.Load(externalReferenceMapPath);
         var selected = selectedAssemblyNames.Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray();
         if (selected.Length == 0)
             throw new ArgumentException("Unity source output requires an explicit, nonempty application assembly selection.");
@@ -52,7 +54,7 @@ public static class UnitySourceProjectEmitter
         foreach (var name in selected)
         {
             ExplicitAssemblyResolver.ValidateSimpleName(name);
-            if (IsTargetProvidedAssembly(name))
+            if (IsReservedSourceAssembly(name))
                 throw new ArgumentException($"{name} must be a target reference, not regenerated application source.");
             if (!byName.ContainsKey(name))
                 throw new ArgumentException($"Selected application assembly {name} was not found in the recovered metadata.");
@@ -69,6 +71,9 @@ public static class UnitySourceProjectEmitter
         var report = new UnitySourceEmissionReport();
         report.PackageManifestProvenance = packageManifest.Provenance;
         report.PackageDependencyCount = packageManifest.DependencyCount;
+        report.ExternalReferenceMapProvenance = externalReferenceMap.Provenance;
+        var externalIdentityByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var conflictingExternalNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             var managedDirectory = Path.Combine(outputDirectory, "RecoveredManaged");
@@ -100,6 +105,50 @@ public static class UnitySourceProjectEmitter
                 var references = module.AssemblyReferences.Select(r => r.Name!.ToString()).Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray();
                 var sourceReferences = references.Where(r => selected.Contains(r, StringComparer.Ordinal)).ToList();
                 var externalReferences = references.Except(sourceReferences, StringComparer.Ordinal).ToList();
+                foreach (var reference in module.AssemblyReferences)
+                {
+                    var referenceName = reference.Name!.ToString();
+                    if (selected.Contains(referenceName, StringComparer.Ordinal) || IsTargetProvidedAssembly(referenceName))
+                        continue;
+                    var identity = reference.FullName;
+                    if (externalIdentityByName.TryGetValue(referenceName, out var previousIdentity))
+                    {
+                        if (previousIdentity != identity)
+                            conflictingExternalNames.Add(referenceName);
+                    }
+                    else
+                        externalIdentityByName.Add(referenceName, identity);
+                }
+                var assemblyDefinitionReferences = new List<string>();
+                var precompiledReferences = new List<string>();
+                var referenceKinds = new List<UnityExternalReferenceReport>();
+                foreach (var reference in externalReferences)
+                {
+                    var configured = externalReferenceMap.TryGet(reference, out var entry);
+                    if (IsTargetProvidedAssembly(reference))
+                    {
+                        if (configured && entry.Kind != "target-provided")
+                            report.Diagnostics.Add($"SOURCE007: {name}: {reference}: A known target-provided assembly cannot be classified as an asmdef or plug-in.");
+                        referenceKinds.Add(new UnityExternalReferenceReport { Name = reference, Kind = "target-provided", Provenance = "known-target-name" });
+                        continue;
+                    }
+
+                    if (!configured)
+                    {
+                        report.Diagnostics.Add($"SOURCE007: {name}: {reference}: External reference kind is unresolved; supply an explicit Unity reference map.");
+                        referenceKinds.Add(new UnityExternalReferenceReport { Name = reference, Kind = "unclassified", Provenance = "none" });
+                        continue;
+                    }
+
+                    referenceKinds.Add(new UnityExternalReferenceReport { Name = reference, Kind = entry.Kind, Provenance = "explicit-auxiliary" });
+                    if (entry.Kind == "asmdef")
+                        assemblyDefinitionReferences.Add(reference);
+                    else if (entry.Kind == "precompiled-plugin")
+                        precompiledReferences.Add(reference + ".dll");
+
+                    if (IsPredefinedAssembly(name) && entry.Kind != "target-provided" && entry.AutoReferenced != true)
+                        report.Diagnostics.Add($"SOURCE007: {name}: {reference}: Predefined assemblies require autoReferenced=true for this external dependency in the explicit reference map.");
+                }
                 if (!IsPredefinedAssembly(name) && sourceReferences.Any(IsPredefinedAssembly))
                     throw new NotSupportedException("Unity assembly definitions cannot reference predefined assemblies. The original assembly boundary requires explicit project configuration.");
 
@@ -125,9 +174,10 @@ public static class UnitySourceProjectEmitter
 
                 if (!IsPredefinedAssembly(name))
                 {
-                    var json = "{\n  \"name\":" + JsonText.Quote(name) + ",\n  \"references\":" + JsonText.Array(sourceReferences) +
+                    var json = "{\n  \"name\":" + JsonText.Quote(name) + ",\n  \"references\":" +
+                        JsonText.Array(sourceReferences.Concat(assemblyDefinitionReferences).OrderBy(r => r, StringComparer.Ordinal)) +
                         ",\n  \"allowUnsafeCode\":true,\n  \"overrideReferences\":true,\n  \"precompiledReferences\":" +
-                        JsonText.Array(externalReferences.Where(r => !IsTargetProvidedAssembly(r)).Select(r => r + ".dll")) +
+                        JsonText.Array(precompiledReferences) +
                         ",\n  \"autoReferenced\":true\n}\n";
                     var definitionFile = name.StartsWith(".", StringComparison.Ordinal) ? "AssemblyDefinition.asmdef" : name + ".asmdef";
                     File.WriteAllText(Path.Combine(sourceDirectory, definitionFile), json, new UTF8Encoding(false));
@@ -144,8 +194,12 @@ public static class UnitySourceProjectEmitter
                     }).ToList(),
                     SourceReferences = sourceReferences,
                     ExternalReferences = externalReferences,
+                    ExternalReferenceKinds = referenceKinds,
                 });
             }
+
+            foreach (var referenceName in conflictingExternalNames.OrderBy(value => value, StringComparer.Ordinal))
+                report.Diagnostics.Add($"SOURCE007: {referenceName}: Distinct managed identities share one Unity assembly name across selected assemblies.");
 
             // Framework and Unity assemblies stay external. Other explicit references must be
             // configured as plugins/packages by the validation harness; do not copy oracle DLLs.
@@ -169,7 +223,13 @@ public static class UnitySourceProjectEmitter
         return report;
     }
 
-    public static bool IsTargetProvidedAssembly(string name) => name is "mscorlib" or "netstandard" or "System" or "UnityEngine" or "UnityEditor" or "Microsoft.CSharp" ||
+    public static bool IsTargetProvidedAssembly(string name) =>
+        name is "mscorlib" or "netstandard" or "System" or "System.Core" or "System.Runtime" or "System.Private.CoreLib" or
+            "System.Collections" or "System.Xml" or "System.Xml.Linq" or "Microsoft.CSharp" or "UnityEngine" or "UnityEditor" ||
+        name.StartsWith("UnityEngine.", StringComparison.Ordinal) && name.EndsWith("Module", StringComparison.Ordinal) ||
+        name.StartsWith("UnityEditor.", StringComparison.Ordinal) && name.EndsWith("Module", StringComparison.Ordinal);
+
+    private static bool IsReservedSourceAssembly(string name) => IsTargetProvidedAssembly(name) ||
         name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
         name.StartsWith("UnityEditor.", StringComparison.Ordinal) || name.StartsWith("Unity.", StringComparison.Ordinal);
 

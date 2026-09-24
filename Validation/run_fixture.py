@@ -5,6 +5,7 @@ import argparse
 import array_access
 import array_call
 import enum_passthrough
+import external_references
 import static_field_getter
 import catch_divide
 import reference_field
@@ -21,10 +22,12 @@ import sys
 import time
 
 import byte_fields
+import byte_threshold
 import float_comparison
 import integer_extensions
 import loop_calls
 import reference_null
+import reference_store
 import scalar_truncation
 import xmm_spill
 import word_fields
@@ -43,6 +46,9 @@ PROFILES = {
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 3},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
+    "reference-store": {"assembly": "ReferenceStoreFixture", "source": VALIDATION / "ReferenceStoreFixture", "methods": 2},
+    "external-references": {"assembly": "ExternalReferenceFixture", "source": VALIDATION / "ExternalReferenceFixture", "methods": 1},
+    "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "scalar-truncation": {"assembly": "ScalarTruncationFixture", "source": VALIDATION / "ScalarTruncationFixture", "methods": 2},
     "loop-calls": {"assembly": "LoopCallFixture", "source": VALIDATION / "LoopCallFixture", "methods": 4},
@@ -88,6 +94,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return reference_field.verify(path, stage, VERSION)
     if profile == "reference-null":
         return reference_null.verify(path, stage, VERSION)
+    if profile == "reference-store":
+        return reference_store.verify(path, stage, VERSION)
+    if profile == "external-references":
+        return external_references.verify(path, stage, VERSION)
+    if profile == "byte-threshold":
+        return byte_threshold.verify(path, stage, VERSION)
     if profile == "field-guard":
         return field_guard.verify(path, stage, VERSION)
     if profile == "scalar-truncation":
@@ -383,7 +395,7 @@ def copy_sources(source, destination):
 def copy_harness(profile, destination):
     if profile == "arithmetic":
         return copy_sources(VALIDATION / "Harness", destination)
-    harness = {"catch-divide": "CatchDivideHarness", "exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "enum-passthrough": "EnumPassthroughHarness", "static-field-getter": "StaticFieldGetterHarness", "reference-field": "ReferenceFieldHarness", "reference-null": "ReferenceNullHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "xmm-spill": "XmmSpillHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
+    harness = {"catch-divide": "CatchDivideHarness", "exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "enum-passthrough": "EnumPassthroughHarness", "static-field-getter": "StaticFieldGetterHarness", "reference-field": "ReferenceFieldHarness", "reference-null": "ReferenceNullHarness", "reference-store": "ReferenceStoreHarness", "external-references": "ExternalReferenceHarness", "byte-threshold": "ByteThresholdHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "xmm-spill": "XmmSpillHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
                "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
     copied = copy_sources(VALIDATION / harness, destination)
     for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):
@@ -453,6 +465,126 @@ def resolved_package_lock_sha256(project):
     if not isinstance(contents, dict) or not isinstance(contents.get("dependencies"), dict):
         raise ValueError("Unity package lock file has no resolved dependency graph")
     return hashlib.sha256(data).hexdigest()
+
+
+def embedded_reference_lock_sha256(project):
+    """Require the fixture package to resolve as an embedded dependency."""
+    lock = project / "Packages" / "packages-lock.json"
+    if not lock.is_file():
+        raise ValueError("Embedded fixture package did not produce a Unity package lock")
+    try:
+        dependencies = json.loads(lock.read_text(encoding="utf-8"))["dependencies"]
+        entry = dependencies["com.example.recovery-reference"]
+    except (UnicodeError, ValueError, KeyError, TypeError) as error:
+        raise ValueError("Embedded fixture package is missing from Unity's resolved lock") from error
+    if not isinstance(entry, dict) or entry.get("source") != "embedded" or \
+            entry.get("version") != "file:com.example.recovery-reference":
+        raise ValueError("Unity did not resolve the fixture package as an embedded dependency")
+    return resolved_package_lock_sha256(project)
+
+
+def install_external_reference_fixture(project, run_dir, receipt, timeout):
+    """Install the fixture's synthetic embedded package and managed plug-in."""
+    source = VALIDATION / "ExternalReferenceDependencies"
+    package_name = "com.example.recovery-reference"
+    package_files = ["package.json", "Runtime/Neutral.Package.asmdef", "Runtime/PackageNode.cs"]
+    package = project / "Packages" / package_name
+    package.mkdir()
+    copied = []
+    for relative in package_files:
+        original = source / package_name / relative
+        target = package / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(original, target)
+        copied.append({"path": relative, "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+
+    plugin_source = run_dir / "dependency-plugin-source"
+    plugin_source.mkdir()
+    plugin_files = []
+    for relative in ("Neutral.Plugin.csproj", "PluginNode.cs"):
+        original = source / "Plugin" / relative
+        target = plugin_source / relative
+        shutil.copyfile(original, target)
+        plugin_files.append({"path": relative, "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+    sdk_version = subprocess.check_output(["dotnet", "--version"], cwd=ROOT, text=True, timeout=30).strip()
+    if not sdk_version:
+        raise ValueError("Synthetic managed plug-in SDK version is unavailable")
+
+    plugin_output = run_dir / "dependency-plugin"
+    plugin_intermediate = run_dir / "dependency-plugin-obj"
+    command = ["dotnet", "build", str(plugin_source / "Neutral.Plugin.csproj"),
+               "-c", "Release", "--nologo", "-v", "quiet", "-o", str(plugin_output),
+               "-p:BaseIntermediateOutputPath=" + str(plugin_intermediate) + os.sep,
+               "-p:MSBuildProjectExtensionsPath=" + str(plugin_intermediate) + os.sep]
+    result = run_process(command, os.environ.copy(), run_dir / "dependency-plugin.log", timeout, cwd=ROOT)
+    receipt["commands"].append(result)
+    binary = plugin_output / "Neutral.Plugin.dll"
+    if result["timedOut"] or result["exitCode"] != 0 or not binary.is_file():
+        raise ValueError("Synthetic managed plug-in build did not complete")
+    destination = project / "Assets" / "Plugins"
+    destination.mkdir(parents=True)
+    shutil.copyfile(binary, destination / "Neutral.Plugin.dll")
+    receipt["externalDependencies"] = {
+        "provenance": "synthetic-explicit-fixture",
+        "embeddedPackageFiles": copied,
+        "pluginSourceFiles": plugin_files,
+        "pluginSdkVersion": sdk_version,
+        "precompiledPluginSha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+    }
+
+
+def verify_external_reference_fixture(project, run_dir, dependency):
+    """Verify one run's source inputs, SDK, lock and compiled dependency binaries."""
+    source = VALIDATION / "ExternalReferenceDependencies"
+    if not isinstance(dependency, dict) or dependency.get("provenance") != "synthetic-explicit-fixture":
+        raise ValueError("Synthetic external dependency provenance is missing")
+
+    def checked_sources(key, expected, copied_root, source_root):
+        items = dependency.get(key)
+        if not isinstance(items, list) or len(items) != len(expected):
+            raise ValueError("Synthetic external dependency source inventory differs")
+        hashes = {}
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("Synthetic external dependency source inventory differs")
+            relative, expected_hash = item.get("path"), item.get("sha256")
+            if not isinstance(relative, str) or relative not in expected or relative in hashes or \
+                    not isinstance(expected_hash, str):
+                raise ValueError("Synthetic external dependency source inventory differs")
+            for root in (copied_root, source_root):
+                path = root / relative
+                if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+                    raise ValueError("Synthetic external dependency source changed since its receipt")
+            hashes[relative] = expected_hash
+        if set(hashes) != set(expected):
+            raise ValueError("Synthetic external dependency source inventory differs")
+        return hashes
+
+    package_hashes = checked_sources(
+        "embeddedPackageFiles", {"package.json", "Runtime/Neutral.Package.asmdef", "Runtime/PackageNode.cs"},
+        project / "Packages/com.example.recovery-reference", source / "com.example.recovery-reference")
+    plugin_hashes = checked_sources(
+        "pluginSourceFiles", {"Neutral.Plugin.csproj", "PluginNode.cs"},
+        run_dir / "dependency-plugin-source", source / "Plugin")
+    sdk_version = subprocess.check_output(["dotnet", "--version"], cwd=ROOT, text=True, timeout=30).strip()
+    if not sdk_version or sdk_version != dependency.get("pluginSdkVersion"):
+        raise ValueError("Synthetic managed plug-in SDK differs from its build receipt")
+
+    binaries = (
+        (run_dir / "dependency-plugin/Neutral.Plugin.dll", "precompiledPluginSha256"),
+        (project / "Assets/Plugins/Neutral.Plugin.dll", "compiledPluginSha256"),
+        (project / "Library/ScriptAssemblies/Neutral.Package.dll", "compiledPackageSha256"),
+    )
+    for path, key in binaries:
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != dependency.get(key):
+            raise ValueError("Synthetic external dependency binary changed since its build receipt")
+    if dependency["precompiledPluginSha256"] != dependency["compiledPluginSha256"]:
+        raise ValueError("Unity plug-in differs from the compiled synthetic dependency")
+    lock_hash = embedded_reference_lock_sha256(project)
+    if lock_hash != dependency.get("embeddedPackageLockSha256"):
+        raise ValueError("Embedded package resolution changed since its build receipt")
+    return {"embeddedPackageFiles": package_hashes, "pluginSourceFiles": plugin_hashes,
+            "pluginSdkVersion": sdk_version, "embeddedPackageLockSha256": lock_hash}
 
 
 def main():
@@ -565,6 +697,8 @@ def main():
                 "provenance": "explicit-auxiliary",
                 "sha256": hashlib.sha256(project_manifest.read_bytes()).hexdigest(),
             }
+        if args.profile == "external-references":
+            install_external_reference_fixture(project, run_dir, receipt, args.timeout)
         receipt["sourceFiles"] = copy_sources(args.source_dir.resolve(), project / "Assets" / profile["assembly"])
         receipt["harnessFiles"] = copy_harness(args.profile, project / "Assets" / "Validation")
         prefix_command = [args.wine, str(editor)] if args.wine else [str(editor)]
@@ -617,6 +751,14 @@ def main():
                 behavior_stage(report_path, "playerBehavior", "player")
         if package_manifest is not None:
             receipt["packageManifest"]["resolvedLockSha256"] = resolved_package_lock_sha256(project)
+        if args.profile == "external-references":
+            dependencies = receipt["externalDependencies"]
+            dependencies["compiledPackageSha256"] = hashlib.sha256((
+                project / "Library/ScriptAssemblies/Neutral.Package.dll").read_bytes()).hexdigest()
+            dependencies["compiledPluginSha256"] = hashlib.sha256((
+                project / "Assets/Plugins/Neutral.Plugin.dll").read_bytes()).hexdigest()
+            dependencies["embeddedPackageLockSha256"] = embedded_reference_lock_sha256(project)
+            verify_external_reference_fixture(project, run_dir, dependencies)
         receipt["status"] = "passed"
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyError) as error:
         receipt["status"] = "failed"

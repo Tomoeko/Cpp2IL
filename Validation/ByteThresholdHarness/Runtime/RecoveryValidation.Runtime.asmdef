@@ -1,0 +1,6 @@
+{
+  "name": "RecoveryValidation.Runtime",
+  "references": [
+    "ByteThresholdFixture"
+  ]
+}

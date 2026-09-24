@@ -1,0 +1,6 @@
+{
+  "references": [
+    { "assembly": "Neutral.Package", "kind": "asmdef" },
+    { "assembly": "Neutral.Plugin", "kind": "precompiled-plugin" }
+  ]
+}

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using AsmResolver.DotNet;
 using AsmResolver.DotNet.Code.Cil;
 using AsmResolver.DotNet.Signatures;
@@ -68,6 +69,115 @@ public class UnitySourceEmitterTests
         var sourceReport = File.ReadAllText(Path.Combine(output, "source-emission-report.json"));
         Assert.That(sourceReport, Does.Contain("\"PackageManifestProvenance\":\"explicit-auxiliary\""));
         Assert.That(sourceReport, Does.Not.Contain(input).And.Not.Contain("com.example.feature").And.Not.Contain("Sha256"));
+    }
+
+    [Test]
+    public void ExplicitExternalKindsUseDistinctUnityAssemblyDefinitionFields()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("Unity.Example.Package", new Version(1, 0, 0, 0)));
+        assembly.ManifestModule.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("Synthetic.Plugin", new Version(1, 0, 0, 0)));
+        var referenceDirectory = WriteReference("Unity.Example.Package", new Version(1, 0, 0, 0), "references");
+        WriteReference("Synthetic.Plugin", new Version(1, 0, 0, 0), "references");
+        var map = WriteExternalReferenceMap("""
+            {"references":[
+              {"assembly":"Unity.Example.Package","kind":"asmdef"},
+              {"assembly":"Synthetic.Plugin","kind":"precompiled-plugin"}
+            ]}
+            """);
+        var output = Path.Combine(_directory, "project");
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [referenceDirectory, Path.GetDirectoryName(typeof(object).Assembly.Location)!], output,
+            externalReferenceMapPath: map);
+
+        using var definition = JsonDocument.Parse(File.ReadAllText(Path.Combine(output,
+            "Assets/Recovered/Synthetic.Application/Synthetic.Application.asmdef")));
+        Assert.That(definition.RootElement.GetProperty("references").EnumerateArray().Select(item => item.GetString()),
+            Is.EqualTo(new[] { "Unity.Example.Package" }));
+        Assert.That(definition.RootElement.GetProperty("precompiledReferences").EnumerateArray().Select(item => item.GetString()),
+            Is.EqualTo(new[] { "Synthetic.Plugin.dll" }));
+        Assert.That(report.SourceGeneration, Is.EqualTo("generated"));
+        Assert.That(report.ExternalReferenceMapProvenance, Is.EqualTo("explicit-auxiliary"));
+        Assert.That(report.Assemblies.Single().ExternalReferenceKinds.Select(item => (item.Name, item.Kind)),
+            Is.EquivalentTo(new[] { ("Unity.Example.Package", "asmdef"), ("Synthetic.Plugin", "precompiled-plugin"),
+                (typeof(object).Assembly.GetName().Name!, "target-provided") }));
+        Assert.That(File.ReadAllText(Path.Combine(output, "source-emission-report.json")), Does.Not.Contain(map));
+    }
+
+    [Test]
+    public void UnclassifiedUnityPrefixedReferenceCannotClaimCompleteSource()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("Unity.Example.Package", new Version(1, 0, 0, 0)));
+        var referenceDirectory = WriteReference("Unity.Example.Package", new Version(1, 0, 0, 0), "references");
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [referenceDirectory, Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "project"));
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.Contains("SOURCE007").And.Contains("Unity.Example.Package"));
+        Assert.That(report.Assemblies.Single().ExternalReferenceKinds.Single(item => item.Name == "Unity.Example.Package").Kind,
+            Is.EqualTo("unclassified"));
+        using var definition = JsonDocument.Parse(File.ReadAllText(Path.Combine(_directory,
+            "project/Assets/Recovered/Synthetic.Application/Synthetic.Application.asmdef")));
+        Assert.That(definition.RootElement.GetProperty("references").GetArrayLength(), Is.Zero);
+        Assert.That(definition.RootElement.GetProperty("precompiledReferences").GetArrayLength(), Is.Zero);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void PredefinedAssemblyNeedsExplicitAutoReferenceEvidenceForExternalDependency(bool autoReferenced)
+    {
+        var assembly = CreateAssembly("Assembly-CSharp");
+        assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("Synthetic.Package", new Version(1, 0, 0, 0)));
+        var referenceDirectory = WriteReference("Synthetic.Package", new Version(1, 0, 0, 0), "references");
+        var map = WriteExternalReferenceMap("{\"references\":[{\"assembly\":\"Synthetic.Package\",\"kind\":\"asmdef\",\"autoReferenced\":" +
+                                            (autoReferenced ? "true" : "false") + "}]}");
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Assembly-CSharp"],
+            [referenceDirectory, Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "project"),
+            externalReferenceMapPath: map);
+
+        Assert.That(report.SourceGeneration, Is.EqualTo(autoReferenced ? "generated" : "partial"));
+        Assert.That(report.Diagnostics.Any(diagnostic => diagnostic.Contains("SOURCE007")), Is.EqualTo(!autoReferenced));
+        Assert.That(Directory.GetFiles(Path.Combine(_directory, "project/Assets"), "*.asmdef", SearchOption.AllDirectories), Is.Empty);
+    }
+
+    [TestCase("{\"references\":[{\"assembly\":\"Synthetic.Plugin\",\"kind\":\"plugin\"}]}")]
+    [TestCase("{\"references\":[{\"assembly\":\"../Outside\",\"kind\":\"asmdef\"}]}")]
+    [TestCase("{\"references\":[{\"assembly\":\"Synthetic.Plugin\",\"kind\":\"asmdef\"},{\"assembly\":\"Synthetic.Plugin\",\"kind\":\"precompiled-plugin\"}]}")]
+    [TestCase("{\"references\":[{\"assembly\":\"Synthetic.Plugin\",\"kind\":\"precompiled-plugin\",\"fileName\":\"Synthetic.Binary.dll\"}]}")]
+    public void InvalidExternalReferenceMapIsRejectedBeforeProjectCreation(string content)
+    {
+        var map = WriteExternalReferenceMap(content);
+        var output = Path.Combine(_directory, "project");
+
+        var error = Assert.Throws<ArgumentException>(() => UnitySourceProjectEmitter.Emit(
+            [CreateAssembly("Synthetic.Application")], ["Synthetic.Application"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], output, externalReferenceMapPath: map));
+
+        Assert.That(error!.Message, Does.Not.Contain(map).And.Not.Contain("Outside"));
+        Assert.That(Directory.Exists(output), Is.False);
+    }
+
+    [Test]
+    public void OneUnityReferenceNameCannotRepresentDistinctExternalManagedIdentities()
+    {
+        var first = CreateAssembly("Synthetic.First");
+        var second = CreateAssembly("Synthetic.Second");
+        first.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("Synthetic.Plugin", new Version(1, 0, 0, 0)));
+        second.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("Synthetic.Plugin", new Version(2, 0, 0, 0)));
+        var firstReferences = WriteReference("Synthetic.Plugin", new Version(1, 0, 0, 0), "first-references");
+        var secondReferences = WriteReference("Synthetic.Plugin", new Version(2, 0, 0, 0), "second-references");
+        var map = WriteExternalReferenceMap("{\"references\":[{\"assembly\":\"Synthetic.Plugin\",\"kind\":\"precompiled-plugin\"}]}");
+
+        var report = UnitySourceProjectEmitter.Emit([first, second], ["Synthetic.First", "Synthetic.Second"],
+            [firstReferences, secondReferences, Path.GetDirectoryName(typeof(object).Assembly.Location)!],
+            Path.Combine(_directory, "project"), externalReferenceMapPath: map);
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.Contains("SOURCE007").And.Contains("Distinct managed identities"));
     }
 
     private static IEnumerable<string> InvalidPackageManifests()
@@ -359,14 +469,24 @@ public class UnitySourceEmitterTests
     }
 
     private string WriteReference(Version version, string directoryName)
+        => WriteReference("Synthetic.Reference", version, directoryName);
+
+    private string WriteReference(string name, Version version, string directoryName)
     {
         var directory = Path.Combine(_directory, directoryName);
         Directory.CreateDirectory(directory);
-        var reference = CreateAssembly("Synthetic.Reference");
+        var reference = CreateAssembly(name);
         reference.Version = version;
-        using var stream = File.Create(Path.Combine(directory, "Synthetic.Reference.dll"));
+        using var stream = File.Create(Path.Combine(directory, name + ".dll"));
         reference.WriteManifest(stream);
         return directory;
+    }
+
+    private string WriteExternalReferenceMap(string content)
+    {
+        var path = Path.Combine(_directory, "external-reference-map.json");
+        File.WriteAllText(path, content, new UTF8Encoding(false));
+        return path;
     }
 
     [Test]

@@ -1,0 +1,7 @@
+{
+  "name": "com.example.recovery-reference",
+  "version": "1.0.0",
+  "displayName": "Recovery Reference Fixture",
+  "description": "Synthetic assembly-definition dependency for recovery validation.",
+  "unity": "2021.3"
+}

@@ -1,0 +1,5 @@
+<linker>
+  <assembly fullname="ExternalReferenceFixture" preserve="all" />
+  <assembly fullname="Neutral.Package" preserve="all" />
+  <assembly fullname="Neutral.Plugin" preserve="all" />
+</linker>

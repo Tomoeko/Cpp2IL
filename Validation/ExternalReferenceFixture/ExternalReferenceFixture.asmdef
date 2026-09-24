@@ -1,0 +1,7 @@
+{
+  "name": "ExternalReferenceFixture",
+  "references": ["Neutral.Package"],
+  "overrideReferences": true,
+  "precompiledReferences": ["Neutral.Plugin.dll"],
+  "autoReferenced": true
+}

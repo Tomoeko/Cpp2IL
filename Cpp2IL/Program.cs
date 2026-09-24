@@ -563,6 +563,7 @@ internal static class Program
         result.UnitySourceAssemblies = options.UnitySourceAssemblies.ToList();
         result.UnityReferenceDirectories = options.UnityReferenceDirectories.ToList();
         result.UnityPackageManifestPath = options.UnityPackageManifestPath;
+        result.UnityExternalReferenceMapPath = options.UnityExternalReferenceMapPath;
 
         // if(string.IsNullOrEmpty(options.OutputFormatId))      // throw new SoftException("No output format specified, so nothing to do!");
 
@@ -582,6 +583,9 @@ internal static class Program
         if (options.UnityPackageManifestPath != null &&
             result.OutputFormats?.Any(format => format.OutputFormatId == "cs_unity") != true)
             throw new SoftException("--unity-package-manifest requires --output-as cs_unity.");
+        if (options.UnityExternalReferenceMapPath != null &&
+            result.OutputFormats?.Any(format => format.OutputFormatId == "cs_unity") != true)
+            throw new SoftException("--unity-external-reference-map requires --output-as cs_unity.");
 
         try
         {
