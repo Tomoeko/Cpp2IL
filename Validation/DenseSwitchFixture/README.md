@@ -19,8 +19,22 @@ code. The sparse method became a direct compare-and-branch chain. The table's
 presence is evidence for this fixture's decode boundary, not a general rule
 for C# switches.
 
-A separate strict player-only diagnostic selected both methods and rejected
-both: the dense method has an unproved native exit at its indirect jump, and
-the sparse method has an unresolved local type. Neither method has accepted
-recovered managed IL, Unity source compilation, a rebuilt player, or recovered
-behavioral parity.
+A later strict player-only recovery selected and emitted both methods without
+detected degradation. The dense dispatch was proved as a closed CFG with
+file-backed, relocation-free table entries, an unsigned default guard, exact
+case instruction starts, and no unaccounted reachable exits. Its 16 cases are
+lowered to managed equality branches while ordinary lifting retains their
+effects and returns. Width-authenticated native loads and arithmetic establish
+the by-reference `Int32` trace type. The sparse compare chain uses the regular
+lifter. This proof applies to the checked native forms only.
+
+The exact-target round trip passed pinned managed IL verification and two
+declaration comparisons against validation-only original assemblies, each
+with zero differences or stripping losses. Recovered source compiled in the
+supplied Windows Unity 2021.3.35f1 editor, built as Windows x64 Release
+IL2CPP with zero errors, and matched all 525 independent editor and player
+behavior observations. Original and recovered native builds each reported
+four warnings. The emitted C# is readable but has expanded arithmetic and
+locals; the finite behavior oracle does not establish original syntax.
+Version-29 player metadata leaves return-row and return-attribute presence
+unknown, so player-only declaration fidelity remains explicitly partial.

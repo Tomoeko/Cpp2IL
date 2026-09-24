@@ -423,6 +423,8 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         for (var i = 0; i < 8 && ConstantFolder.Run(this); i++)
             SsaSimplifier.Run(this);
 
+        LocalVariables.PropagateLateSignedIntegerTypes(this);
+
         InternalCallGuardRemover.Run(this);
         KeyFunctionRecovery.Run(this);
 

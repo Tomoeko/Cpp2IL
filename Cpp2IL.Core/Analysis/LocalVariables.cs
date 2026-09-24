@@ -438,16 +438,14 @@ public static class LocalVariables
             switch (instruction.OpCode)
             {
                 case OpCode.Move:
-                    changed |= PropagateMove(instruction, method.AppContext.Binary.PointerSizeBytes);
+                    changed |= PropagateMove(instruction, method);
                     break;
                 case OpCode.Phi:
                     changed |= PropagatePhi(instruction);
                     break;
                 case OpCode.Add:
-                    changed |= PropagateArithmetic(instruction, method) || PropagateSignedIntegerAdd(instruction, method);
-                    break;
                 case OpCode.Subtract or OpCode.Multiply:
-                    changed |= PropagateArithmetic(instruction, method);
+                    changed |= PropagateArithmetic(instruction, method) || PropagateSignedIntegerArithmetic(instruction, method);
                     break;
                 case OpCode.Divide or OpCode.Modulo or OpCode.DivideUnsigned or OpCode.ModuloUnsigned:
                     changed |= PropagateArithmetic(instruction, method) || PropagateIntegerResult(instruction, method);
@@ -460,6 +458,25 @@ public static class LocalVariables
         }
 
         return changed;
+    }
+
+    /// <summary>
+    /// SSA copy and constant propagation can expose a typed integer source in
+    /// an arithmetic expression after the main type fixpoint. Fill only those
+    /// results whose native width and signed managed source are established.
+    /// </summary>
+    public static void PropagateLateSignedIntegerTypes(MethodAnalysisContext method)
+    {
+        for (var pass = 0; pass <= method.Locals.Count; pass++)
+        {
+            var changed = false;
+            foreach (var instruction in method.ControlFlowGraph!.Instructions)
+                if (instruction.OpCode is OpCode.Add or OpCode.Subtract or OpCode.Multiply)
+                    changed |= PropagateSignedIntegerArithmetic(instruction, method);
+            if (!changed)
+                return;
+        }
+        throw new DecompilerException("Late integer type propagation did not settle");
     }
 
     // A local assigned a float/double literal (a lifted rodata constant load) is that float type
@@ -492,10 +509,10 @@ public static class LocalVariables
         return SetTypeIfUnknown(destination, floatType);
     }
 
-    // A native-width Add of signed integer locals preserves their managed stack type.
-    // Require a typed source and an equally typed source or representable literal;
-    // a reference address, unsigned value, or unknown width gives no such proof.
-    private static bool PropagateSignedIntegerAdd(Instruction instruction, MethodAnalysisContext method)
+    // Native-width integer arithmetic preserves an evidenced Int32/Int64 stack type.
+    // Native lifting must first normalize a 32-bit immediate to its signed
+    // value. Unknown-width operands and unmanaged addresses give no proof.
+    private static bool PropagateSignedIntegerArithmetic(Instruction instruction, MethodAnalysisContext method)
     {
         if (instruction.IntegerBitWidth is not (32 or 64) ||
             instruction.Operands is not [LocalVariable { Type: null } destination, var left, var right])
@@ -504,18 +521,34 @@ public static class LocalVariables
         var integerType = instruction.IntegerBitWidth == 32
             ? method.AppContext.SystemTypes.SystemInt32Type
             : method.AppContext.SystemTypes.SystemInt64Type;
-        return (left is LocalVariable { Type: { } leftType } && ReferenceEquals(leftType, integerType) &&
-                CompatibleSignedAddOperand(right, integerType, instruction.IntegerBitWidth) ||
-                right is LocalVariable { Type: { } rightType } && ReferenceEquals(rightType, integerType) &&
-                CompatibleSignedAddOperand(left, integerType, instruction.IntegerBitWidth)) &&
+        return (ReferenceEquals(SignedOperandType(left, instruction, method), integerType) &&
+                CompatibleSignedIntegerOperand(right, instruction, method, integerType) ||
+                ReferenceEquals(SignedOperandType(right, instruction, method), integerType) &&
+                CompatibleSignedIntegerOperand(left, instruction, method, integerType)) &&
                SetTypeIfUnknown(destination, integerType);
     }
 
-    private static bool CompatibleSignedAddOperand(IOperand operand, TypeAnalysisContext integerType, int width) =>
+    private static TypeAnalysisContext? SignedOperandType(IOperand operand, Instruction instruction,
+        MethodAnalysisContext method) => operand switch
+    {
+        LocalVariable { Type: { } type } => type,
+        MemoryOperand memory when instruction.IntegerBitWidth == 32 &&
+                                  X64Int32ByRefAccessProof.IsManagedAccess(method, memory) =>
+            method.AppContext.SystemTypes.SystemInt32Type,
+        _ => null,
+    };
+
+    private static bool CompatibleSignedIntegerOperand(IOperand operand, Instruction instruction,
+        MethodAnalysisContext method, TypeAnalysisContext integerType) =>
         operand switch
         {
-            LocalVariable { Type: { } type } => ReferenceEquals(type, integerType),
-            Immediate number => width == 64 || number.Value is >= int.MinValue and <= int.MaxValue,
+            LocalVariable { Type: null } local when instruction.IntegerBitWidth == 32 &&
+                ReferenceEquals(integerType, method.AppContext.SystemTypes.SystemInt32Type) &&
+                X86Int32ImmediateSourceProof.IsExclusiveArithmeticSource(method, local) =>
+                SetTypeIfUnknown(local, integerType),
+            LocalVariable or MemoryOperand => ReferenceEquals(SignedOperandType(operand, instruction, method), integerType),
+            Immediate number => instruction.IntegerBitWidth == 64 ||
+                                number.Value is >= int.MinValue and <= int.MaxValue,
             _ => false,
         };
 
@@ -560,8 +593,9 @@ public static class LocalVariables
             _ => null,
         };
 
-    private static bool PropagateMove(Instruction move, int pointerSize)
+    private static bool PropagateMove(Instruction move, MethodAnalysisContext method)
     {
+        var pointerSize = method.AppContext.Binary.PointerSizeBytes;
         var destination = move.Operands[0];
         var source = move.Operands[1];
 
@@ -589,6 +623,17 @@ public static class LocalVariables
         if (destination is LocalVariable { Type: null } derefDest
             && source is MemoryOperand { Index: null, Scale: 0, Addend: 0, Base: LocalVariable { Type: ByRefTypeAnalysisContext { ElementType: { IsValueType: false } referent } } })
             return SetTypeIfUnknown(derefDest, referent);
+
+        // Only a native 32-bit direct access through the original ABI parameter
+        // establishes the Int32 element. SSA aliases or rewritten registers fail.
+        if (move.IntegerBitWidth == 32 && source is MemoryOperand int32Load &&
+            destination is LocalVariable { Type: null } int32Destination &&
+            X64Int32ByRefAccessProof.IsManagedAccess(method, int32Load))
+            return SetTypeIfUnknown(int32Destination, method.AppContext.SystemTypes.SystemInt32Type);
+        if (move.IntegerBitWidth == 32 && destination is MemoryOperand int32Store &&
+            source is LocalVariable { Type: null } int32Source &&
+            X64Int32ByRefAccessProof.IsManagedAccess(method, int32Store))
+            return SetTypeIfUnknown(int32Source, method.AppContext.SystemTypes.SystemInt32Type);
 
         // Move local, [obj]: offset 0 of a reference-typed value is its klass pointer.
         if (destination is LocalVariable { Type: null } klassDest

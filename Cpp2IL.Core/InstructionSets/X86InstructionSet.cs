@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cpp2IL.Core.Api;
+using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Extensions;
 using Cpp2IL.Core.Il2CppApiFunctions;
 using Cpp2IL.Core.Model.Contexts;
@@ -56,6 +57,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
     public override List<ISIL.Instruction> GetIsilFromMethod(MethodAnalysisContext context)
     {
+        if (X64ClosedSwitchDispatchRecovery.Find(context) is { } closedSwitch)
+            return GetIsilFromClosedSwitch(context, closedSwitch);
+
         var instructions = new List<ISIL.Instruction>();
         var addresses = new List<ulong>();
 
@@ -155,7 +159,42 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     noReturnCalls, exceptionRegionFailure) ?? exceptionRegionFailure))];
         X86BodyBoundary.AppendFallthroughFailure(instructions);
 
-        // fix branches
+        FixBranchTargets(instructions, addresses);
+
+        return instructions;
+
+        List<ISIL.Instruction> QualifyExceptionRegions(List<ISIL.Instruction> lifted)
+            => X86CallerExceptionRegionProof.Check(context, nativeInstructions, noReturnCalls) is { } failure
+                ? [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(failure))]
+                : lifted;
+    }
+
+    private List<ISIL.Instruction> GetIsilFromClosedSwitch(MethodAnalysisContext context,
+        X64ClosedSwitchTableProof.Evidence evidence)
+    {
+        var instructions = new List<ISIL.Instruction>();
+        var addresses = new List<ulong>();
+        foreach (var instruction in evidence.Code)
+        {
+            if (instruction.IP < evidence.Dispatch)
+                continue; // The bound selector and dead scratch values permit replacement.
+            if (instruction.IP == evidence.Dispatch)
+                X64ClosedSwitchDispatchRecovery.AppendDispatch(evidence, instructions, addresses);
+            else
+                ConvertInstructionStatement(instruction, instructions, addresses, context);
+        }
+
+        // The table proof already established each native successor, its
+        // unwind region, and the code/data boundary. The ordinary contiguous
+        // decoder's exception-region check cannot represent this indirect edge.
+        X86BodyBoundary.AppendFallthroughFailure(instructions);
+        FixBranchTargets(instructions, addresses);
+        return instructions;
+    }
+
+    private static void FixBranchTargets(List<ISIL.Instruction> instructions,
+        List<ulong> addresses)
+    {
         for (var i = 0; i < instructions.Count; i++)
         {
             var instruction = instructions[i];
@@ -177,13 +216,6 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
             instruction.SetOperand(0, targetInstruction);
         }
-
-        return instructions;
-
-        List<ISIL.Instruction> QualifyExceptionRegions(List<ISIL.Instruction> lifted)
-            => X86CallerExceptionRegionProof.Check(context, nativeInstructions, noReturnCalls) is { } failure
-                ? [new(0, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(failure))]
-                : lifted;
     }
 
     private static ISIL.Register? ReturnRegisterClobberedBy(MethodAnalysisContext callee)
@@ -388,7 +420,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         switch (instruction.Mnemonic)
         {
             case Mnemonic.Mov:
-                Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+                var moved = Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+                if (context != null && X64Int32ByRefAccessProof.IsNativeAccess(context, instruction))
+                    moved.IntegerBitWidth = 32;
                 break;
             case Mnemonic.Movd:
             case Mnemonic.Movq:
@@ -628,8 +662,17 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     // if got to here, it didn't work
                     goto default;
                 }
-                else if (instruction.OpCount == 3) Add(instruction.IP, ISIL.OpCode.Multiply, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1), ConvertOperand(instruction, 2));
-                else Add(instruction.IP, ISIL.OpCode.Multiply, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+                else
+                {
+                    var product = instruction.OpCount == 3
+                        ? Add(instruction.IP, ISIL.OpCode.Multiply, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1), ConvertOperand(instruction, 2))
+                        : Add(instruction.IP, ISIL.OpCode.Multiply, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+                    var productWidth = instruction.Op0Register.GetSize() * 8;
+                    var memoryWidth = instruction.Op1Kind == OpKind.Memory || instruction.Op2Kind == OpKind.Memory
+                        ? instruction.MemorySize.GetSize() * 8 : productWidth;
+                    if (productWidth is 32 or 64 && memoryWidth == productWidth)
+                        product.IntegerBitWidth = productWidth;
+                }
 
                 break;
             case Mnemonic.Idiv:
@@ -720,17 +763,13 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
                 var left = ConvertOperand(instruction, 0);
                 var right = ConvertOperand(instruction, 1);
-                if (isSubtract)
-                    Add(instruction.IP, ISIL.OpCode.Subtract, left, left, right);
-                else
-                {
-                    var added = Add(instruction.IP, ISIL.OpCode.Add, left, left, right);
-                    var nativeWidth = (instruction.Op0Kind == OpKind.Register
-                        ? instruction.Op0Register.GetSize()
-                        : instruction.MemorySize.GetSize()) * 8;
-                    if (nativeWidth is 32 or 64)
-                        added.IntegerBitWidth = nativeWidth;
-                }
+                var arithmetic = Add(instruction.IP, isSubtract ? ISIL.OpCode.Subtract : ISIL.OpCode.Add,
+                    left, left, right);
+                var nativeWidth = (instruction.Op0Kind == OpKind.Register
+                    ? instruction.Op0Register.GetSize()
+                    : instruction.MemorySize.GetSize()) * 8;
+                if (nativeWidth is 32 or 64)
+                    arithmetic.IntegerBitWidth = nativeWidth;
 
                 break;
             case Mnemonic.Addss:
