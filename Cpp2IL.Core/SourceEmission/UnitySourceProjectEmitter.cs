@@ -116,6 +116,10 @@ public static class UnitySourceProjectEmitter
                 var references = module.AssemblyReferences.Select(r => r.Name!.ToString()).Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray();
                 var referencesByName = module.AssemblyReferences.GroupBy(r => r.Name!.ToString(), StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+                if (name is "Assembly-CSharp-Editor" or "Assembly-CSharp-Editor-firstpass" ||
+                    references.Any(reference => reference is "UnityEditor" ||
+                        reference.StartsWith("UnityEditor.", StringComparison.Ordinal)))
+                    report.Diagnostics.Add($"SOURCE009: {name}: Editor-only source placement and platform restriction are unresolved; the generated asmdef cannot establish a player-buildable project.");
                 var sourceReferences = references.Where(r => selected.Contains(r, StringComparer.Ordinal)).ToList();
                 var externalReferences = references.Except(sourceReferences, StringComparer.Ordinal).ToList();
                 foreach (var reference in module.AssemblyReferences)

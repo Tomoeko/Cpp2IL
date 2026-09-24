@@ -150,6 +150,36 @@ public class UnitySourceEmitterTests
         });
     }
 
+    [TestCase("Assembly-CSharp-Editor")]
+    [TestCase("Assembly-CSharp-Editor-firstpass")]
+    public void PredefinedEditorAssembliesCannotClaimRuntimeSourceLayout(string name)
+    {
+        var report = UnitySourceProjectEmitter.Emit([CreateAssembly(name)], [name],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], _directory);
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.StartsWith("SOURCE009:").And.Contains(name));
+        var definition = Directory.GetFiles(_directory, "*.asmdef", SearchOption.AllDirectories).Single();
+        using var json = JsonDocument.Parse(File.ReadAllText(definition));
+        Assert.That(json.RootElement.TryGetProperty("includePlatforms", out _), Is.False);
+    }
+
+    [Test]
+    public void UnityEditorReferenceCannotClaimRuntimeSourceLayout()
+    {
+        var assembly = CreateAssembly("Synthetic.EditorTools");
+        var version = new Version(1, 0, 0, 0);
+        assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("UnityEditor", version));
+        var referenceDirectory = WriteReference("UnityEditor", version, "references");
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.EditorTools"],
+            [referenceDirectory, Path.GetDirectoryName(typeof(object).Assembly.Location)!],
+            Path.Combine(_directory, "project"));
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.StartsWith("SOURCE009:").And.Contains("Synthetic.EditorTools"));
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void PredefinedAssemblyNeedsExplicitAutoReferenceEvidenceForExternalDependency(bool autoReferenced)
