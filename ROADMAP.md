@@ -28,9 +28,9 @@ A `dotnet build -c Release` validates this tool, not recovered Unity source. A z
 
 ## Current evidence
 
-The latest recorded bounded total is **340 selected methods across 68 exact-target fixture round trips**. This total includes distinct controls of some shapes and explicitly disclosed auxiliary-assisted cases; it is not a unique-method count or a broad recovery percentage. At least one selected interface method correctly has no managed body. The six-method composed reference-array replacement control is the latest complete player-only round trip: 6/6 strict emission, pinned typed IL verification, zero declaration-projection differences against its stripped oracle before and after rebuilding, Windows editor compilation, Windows x64 Release IL2CPP rebuild, and 264 matching observations in each original/recovered editor/player stage.
+The latest recorded bounded total is **343 selected methods across 69 exact-target fixture round trips**. This total includes distinct controls of some shapes and explicitly disclosed auxiliary-assisted cases; it is not a unique-method count or a broad recovery percentage. At least one selected interface method correctly has no managed body. The three-method parameter-array comparison control is the latest complete player-only round trip: 3/3 strict emission, pinned typed IL verification, zero declaration-projection differences against its stripped oracle before and after rebuilding, Windows editor compilation, Windows x64 Release IL2CPP rebuild, and 112 matching observations in each original/recovered editor/player stage. It proves two distinct parameter-origin reads with an intervening observable call and their null and bounds failures; it does not establish arbitrary array sequences.
 
-The current paired player-only audit preserves every ordered full-input and selected managed identity. The latest change produced zero disposition and first-reason transitions in either scope:
+The current paired player-only audit preserves every ordered full-input and selected managed identity. The committed parameter-array proof produced zero disposition and first-reason transitions in either scope:
 
 | Scope | Full input | Selected | Emitted | Failed | Partial | No managed body | Unresolved selected |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -39,7 +39,7 @@ The current paired player-only audit preserves every ordered full-input and sele
 
 Both broad strict commands exit 1. These are analysis dispositions, not verified 1:1 behaviors. Neither selected application has whole-scope typed IL, Unity source compilation, native rebuild or behavioral equivalence. Their original native `Release` configuration is unverified. A separate independent original-project diagnostic produced Unity integration errors and is not a clean acceptance baseline.
 
-The latest recorded Release solution build had zero errors and warnings. Its offline test run discovered 1,632 cases: 1,510 passed, 122 optional-input checks skipped and none failed. Skips are not passing fixture evidence. Raw receipts remain local and ignored.
+The latest recorded Release solution build with .NET SDK 10.0.107 had zero errors and four NuGet packaging warnings (NU5104). Its offline test run discovered 1,644 cases: 1,522 passed, 122 optional-input checks skipped and none failed. Skips are not passing fixture evidence. Raw receipts remain local and ignored. The reviewed parameter-array runs and original baseline have had generated projects and players pruned; a future baseline reuse needs a fresh original build.
 
 ## Milestone 0 — Reproducible baseline and honest reporting
 
@@ -65,7 +65,7 @@ Known gaps include authored `StructLayout.Size` when omitted and explicit natura
 
 **Status: partial.** Exact-target controls now cover bounded arithmetic, integer widths and shifts, floating comparisons, field and array reads/writes, reference barriers and null/bounds failures, direct calls, selected virtual/generic dispatch, constructor chains, static initialization, iterators, exception exits and composed operations. Complete-body proofs authenticate native bytes, unwind boundaries, layouts, aliases, helpers and effect order before they change the typed graph. Unsupported variants remain unresolved.
 
-The latest six-method control authenticates a reference-field store after an observable marker increment and source read; it preserves that order and the destination null failure. It does not establish arbitrary field stores, array sequences or concurrent behavior. Native optimization may erase original managed call boundaries and source ordering even when observed behavior matches.
+The six-method composed control authenticates a reference-field store after an observable marker increment and source read; it preserves that order and the destination null failure. The newer parameter-array control authenticates two distinct object-array parameters, a shared index offset, separate null and bounds guards, an intervening direct call, reference equality, and five final managed operations in emitted block order. Binary Ninja inspection corroborated the native read and call sequence in the neutral player; the binary was closed without saving analysis changes. These controls do not establish arbitrary field stores, array sequences or concurrent behavior. Native optimization may erase original managed call boundaries and source ordering even when observed behavior matches.
 
 **Exit criterion:** each admitted shape has a reproducible exact-target source/native pair, meaningful positive and negative evidence, valid emitted IL, and matching bounded behavior. Generalize shared ABI, helper and type rules only when the broader evidence supports them; keep all other shapes strict failures.
 
@@ -79,7 +79,7 @@ Project-wide dependency closure, assembly definitions, packages, platform define
 
 ## Milestone 5 — Independent integration and maintainable coverage
 
-**Status: incomplete.** The two broad selected scopes above still have 4,618/7,256 and 7,902/12,724 unresolved methods. The paired audit detects no broad gain from the latest composed field-store proof. Current first-reason triage identifies runtime null guards, terminal bounds helpers, missing decoded boundaries, unproved exits and ambiguous callsites as shared blockers. First reasons are ordered blockers, not independent root-cause counts; clearing one may reveal another. Broad `Emitted` transitions are never counted as validated behavior without the later gates.
+**Status: incomplete.** The two broad selected scopes above still have 4,618/7,256 and 7,902/12,724 unresolved methods. The paired audit detects no broad gain from the parameter-array proof. Leading first-reason families in the two selected scopes are runtime null guards (1,516/3,847), terminal bounds helpers (559/536), missing decoded boundaries (249/662), unproved exits (141/640), and ambiguous callsites (84/265). First reasons are ordered blockers, not independent root-cause counts; clearing one may reveal another. Broad `Emitted` transitions are never counted as validated behavior without the later gates.
 
 **Exit criterion:** repeatable improvement on controlled and independent inputs, explainable remaining gaps, valid compilation/rebuild/behavior for every claimed scope, and no private information in tracked changes. A claim of complete 1:1 recovery requires zero unresolved behavior and the applicable fidelity gates for that full declared scope. If player-only information is irrecoverable, report a bounded result instead.
 
