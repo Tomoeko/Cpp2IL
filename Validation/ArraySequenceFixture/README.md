@@ -33,8 +33,19 @@ store, opposite to the authored C# order. Player-only recovery therefore
 cannot establish that original source order from this native body; concurrent
 observation of those ordinary fields is outside this fixture's behavior check.
 
-The current strict player-only selected diagnostic emits the constructor but
-rejects `ReadThenWrite`: the bounds helper is proved nonreturning, while the
-caller's managed bounds and exception semantics remain unresolved. No
-recovered-code Unity compilation, native rebuild, or behavior claim follows
-from the original build.
+The exact-profile recovery now accepts this closed native body, including both
+typed array accesses and the intervening field effects in native order. It
+requires the complete file-backed, handler-free method, the proved null and
+bounds helpers, matching metadata and field layout, and no alternate native
+entry. The selected strict player-only recovery emitted both methods without
+fallback bodies; typed IL verification passed. Recovered declarations matched
+the original stripped assembly with zero differences, and the original
+stripped and unstripped declaration projections had no differences. The
+recovered source compiled in the supplied Windows Unity editor, built a
+Windows x64 Release IL2CPP player with zero errors and four Unity warnings,
+and matched all 67 independent observations in both the editor and player.
+The rebuilt declarations also matched the original with zero differences.
+
+This proof is deliberately bounded to the complete native instruction shape.
+It does not establish arbitrary sequences of array accesses or recover the
+authored order of ordinary field stores when optimization has reordered them.

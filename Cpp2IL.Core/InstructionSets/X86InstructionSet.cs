@@ -89,6 +89,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return arrayAccess; // The closed proof includes both helper exits and the caller unwind region.
         if (X86FieldArrayAccessProof.TryLift(context, nativeInstructions) is { } fieldArrayAccess)
             return fieldArrayAccess; // The field read and both array exception exits are proved together.
+        if (X64SequentialInt32FieldArrayProof.TryLift(context, nativeInstructions) is { } sequentialArrayAccess)
+            return sequentialArrayAccess; // Both array failures and the intervening field effects are proved together.
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
             return QualifyExceptionRegions(integerExtension);
         if (X86ScalarTruncationProof.TryLift(context, nativeInstructions) is { } scalarTruncation)
