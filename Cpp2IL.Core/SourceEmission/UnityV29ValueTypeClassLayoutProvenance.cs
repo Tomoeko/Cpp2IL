@@ -54,6 +54,10 @@ public static class UnityV29ValueTypeClassLayoutProvenance
 
         report.DeclarationFidelity = "partial";
         report.DeclarationDiagnostics.Add(Diagnostic);
+        if (report.SourceGeneration == "generated")
+            report.SourceGeneration = "partial";
+        foreach (var layout in layouts)
+            report.Diagnostics.Add($"SOURCE012: {layout.Name}: Authored ClassLayout Size is unknown for {layout.UnknownDeclaredClassSizeCount} selected value types; a native-size-derived candidate cannot establish their source layout declarations.");
     }
 
     internal static bool HasUnknownDeclaredClassSize(Il2CppTypeDefinition definition) =>

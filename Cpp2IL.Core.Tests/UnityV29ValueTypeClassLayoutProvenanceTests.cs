@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Cpp2IL.Core.OutputFormats;
 using Cpp2IL.Core.SourceEmission;
 using LibCpp2IL.Metadata;
 
@@ -38,7 +39,7 @@ public class UnityV29ValueTypeClassLayoutProvenanceTests
     }
 
     [Test]
-    public void ReportSeparatesRawNativeSizesFromWriterCandidatesAndUnknownDeclarations()
+    public void UnknownDeclaredSizesRemainDistinctFromNativeCandidatesAndRejectStrictSource()
     {
         var path = Path.Combine(Path.GetTempPath(), "cpp2il-layout-report-" + Guid.NewGuid().ToString("N") + ".json");
         try
@@ -61,9 +62,11 @@ public class UnityV29ValueTypeClassLayoutProvenanceTests
             Assert.Multiple(() =>
             {
                 Assert.That(root.GetProperty("SchemaVersion").GetInt32(), Is.EqualTo(5));
-                Assert.That(root.GetProperty("SourceGeneration").GetString(), Is.EqualTo("generated"));
+                Assert.That(root.GetProperty("SourceGeneration").GetString(), Is.EqualTo("partial"));
                 Assert.That(root.GetProperty("DeclarationFidelity").GetString(), Is.EqualTo("partial"));
-                Assert.That(root.GetProperty("Diagnostics").GetArrayLength(), Is.Zero);
+                Assert.That(root.GetProperty("Diagnostics").GetArrayLength(), Is.EqualTo(1));
+                Assert.That(root.GetProperty("Diagnostics")[0].GetString(),
+                    Does.StartWith("SOURCE012: Synthetic.Application: Authored ClassLayout Size is unknown for 5 selected value types"));
                 Assert.That(root.GetProperty("DeclarationDiagnostics")[0].GetString(), Does.StartWith("DECL002:"));
                 Assert.That(layout.GetProperty("Name").GetString(), Is.EqualTo("Synthetic.Application"));
                 Assert.That(layout.GetProperty("UnknownDeclaredClassSizeCount").GetInt32(), Is.EqualTo(5));
@@ -73,6 +76,7 @@ public class UnityV29ValueTypeClassLayoutProvenanceTests
                 Assert.That(types.Select(type => type.GetProperty("DeclaredClassSize").GetString()),
                     Is.All.EqualTo("UnknownDeclaredClassSize"));
             });
+            Assert.Throws<InvalidOperationException>(() => UnityCsOutputFormat.EnsureCompleteSourceGeneration(report));
         }
         finally
         {
@@ -92,6 +96,7 @@ public class UnityV29ValueTypeClassLayoutProvenanceTests
             Assert.That(report.DeclarationDiagnostics, Is.Empty);
             Assert.That(report.ValueTypeClassLayoutMetadata, Is.Empty);
             Assert.That(report.SourceGeneration, Is.EqualTo("generated"));
+            Assert.DoesNotThrow(() => UnityCsOutputFormat.EnsureCompleteSourceGeneration(report));
         });
     }
 }
