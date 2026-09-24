@@ -60,6 +60,7 @@ import word_array
 import word_fields
 import zero_arg_field_call
 import virtual_string_call
+import generic_dispatch
 
 
 VERSION = "2021.3.35f1"
@@ -79,6 +80,8 @@ PROFILES = {
     "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 4},
     "boolean-getter-metadata": {"assembly": "BooleanGetterMetadataFixture", "source": VALIDATION / "BooleanGetterMetadataFixture", "methods": 11},
     "virtual-string-call": {"assembly": "VirtualStringCallFixture", "source": VALIDATION / "VirtualStringCallFixture", "methods": 5},
+    "generic-dispatch": {"assembly": "GenericDispatchFixture", "source": VALIDATION / "GenericDispatchFixture", "methods": 4,
+                         "noManagedBody": (("GenericDispatchFixture.IRead`1", "Read"),)},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 8},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 4},
@@ -126,6 +129,21 @@ PROFILES = {
     "scalar-structs-negative": {"assembly": "ScalarStructNegativeFixture", "source": VALIDATION / "ScalarStructNegativeFixture", "methods": 3},
 }
 
+EMBEDDED_FIXTURE_PACKAGES = {
+    "virtual-string-call": {
+        "name": "com.example.cast-hierarchy",
+        "source": VALIDATION / "VirtualStringCallDependencies",
+        "files": ("package.json", "Runtime/Neutral.CastHierarchy.asmdef", "Runtime/Hierarchy.cs"),
+        "assembly": "Neutral.CastHierarchy.dll",
+    },
+    "generic-dispatch": {
+        "name": "com.example.generic-dispatch",
+        "source": VALIDATION / "GenericDispatchDependencies",
+        "files": ("package.json", "Runtime/Neutral.GenericDispatch.asmdef", "Runtime/DispatchBase.cs"),
+        "assembly": "Neutral.GenericDispatch.dll",
+    },
+}
+
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
@@ -163,6 +181,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return boolean_getter_metadata.verify(path, stage, VERSION)
     if profile == "virtual-string-call":
         return virtual_string_call.verify(path, stage, VERSION)
+    if profile == "generic-dispatch":
+        return generic_dispatch.verify(path, stage, VERSION)
     if profile == "array-call":
         return array_call.verify(path, stage, VERSION)
     if profile == "enum-passthrough":
@@ -607,14 +627,13 @@ def embedded_reference_lock_sha256(project):
     return embedded_package_lock_sha256(project, "com.example.recovery-reference")
 
 
-def install_virtual_string_call_dependency(project, receipt):
-    """Install the neutral class hierarchy as an explicit synthetic package."""
-    package_name = "com.example.cast-hierarchy"
-    source = VALIDATION / "VirtualStringCallDependencies" / package_name
-    package = project / "Packages" / package_name
-    files = ("package.json", "Runtime/Neutral.CastHierarchy.asmdef", "Runtime/Hierarchy.cs")
+def install_embedded_fixture_dependency(project, receipt, profile):
+    """Install and record one explicit synthetic fixture package."""
+    config = EMBEDDED_FIXTURE_PACKAGES[profile]
+    source = config["source"] / config["name"]
+    package = project / "Packages" / config["name"]
     copied = []
-    for relative in files:
+    for relative in config["files"]:
         original = source / relative
         target = package / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -625,37 +644,37 @@ def install_virtual_string_call_dependency(project, receipt):
     }
 
 
-def verify_virtual_string_call_dependency(project, dependency):
-    """Check the package sources, compiled assembly and exact Unity package resolution."""
-    package_name = "com.example.cast-hierarchy"
-    source = VALIDATION / "VirtualStringCallDependencies" / package_name
-    package = project / "Packages" / package_name
-    expected = {"package.json", "Runtime/Neutral.CastHierarchy.asmdef", "Runtime/Hierarchy.cs"}
+def verify_embedded_fixture_dependency(project, dependency, profile):
+    """Check package sources, compiled assembly and Unity package resolution."""
+    config = EMBEDDED_FIXTURE_PACKAGES[profile]
+    source = config["source"] / config["name"]
+    package = project / "Packages" / config["name"]
+    expected = set(config["files"])
     if not isinstance(dependency, dict) or dependency.get("provenance") != "synthetic-explicit-package":
-        raise ValueError("Synthetic cast hierarchy provenance is missing")
+        raise ValueError("Synthetic fixture package provenance is missing")
     files = dependency.get("embeddedPackageFiles")
     if not isinstance(files, list) or len(files) != len(expected):
-        raise ValueError("Synthetic cast hierarchy source inventory differs")
+        raise ValueError("Synthetic fixture package source inventory differs")
     recorded = {}
     for item in files:
         if not isinstance(item, dict) or item.get("path") not in expected or \
                 item["path"] in recorded or not isinstance(item.get("sha256"), str):
-            raise ValueError("Synthetic cast hierarchy source inventory differs")
+            raise ValueError("Synthetic fixture package source inventory differs")
         relative, source_hash = item["path"], item["sha256"]
         for root in (source, package):
             path = root / relative
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != source_hash:
-                raise ValueError("Synthetic cast hierarchy source changed since its receipt")
+                raise ValueError("Synthetic fixture package source changed since its receipt")
         recorded[relative] = source_hash
     if set(recorded) != expected:
-        raise ValueError("Synthetic cast hierarchy source inventory differs")
-    assembly = project / "Library/ScriptAssemblies/Neutral.CastHierarchy.dll"
+        raise ValueError("Synthetic fixture package source inventory differs")
+    assembly = project / "Library/ScriptAssemblies" / config["assembly"]
     if not assembly.is_file() or hashlib.sha256(assembly.read_bytes()).hexdigest() != \
             dependency.get("compiledAssemblySha256"):
-        raise ValueError("Synthetic cast hierarchy assembly differs from its receipt")
-    lock_hash = embedded_package_lock_sha256(project, package_name)
+        raise ValueError("Synthetic fixture package assembly differs from its receipt")
+    lock_hash = embedded_package_lock_sha256(project, config["name"])
     if lock_hash != dependency.get("embeddedPackageLockSha256"):
-        raise ValueError("Synthetic cast hierarchy package resolution differs from its receipt")
+        raise ValueError("Synthetic fixture package resolution differs from its receipt")
     return {"embeddedPackageFiles": recorded, "embeddedPackageLockSha256": lock_hash}
 
 
@@ -875,8 +894,8 @@ def main():
             }
         if args.profile == "external-references":
             install_external_reference_fixture(project, run_dir, receipt, args.timeout)
-        if args.profile == "virtual-string-call":
-            install_virtual_string_call_dependency(project, receipt)
+        if args.profile in EMBEDDED_FIXTURE_PACKAGES:
+            install_embedded_fixture_dependency(project, receipt, args.profile)
         receipt["sourceFiles"] = copy_sources(args.source_dir.resolve(), project / "Assets" / profile["assembly"])
         receipt["harnessFiles"] = copy_harness(args.profile, project / "Assets" / "Validation")
         prefix_command = [args.wine, str(editor)] if args.wine else [str(editor)]
@@ -937,13 +956,14 @@ def main():
                 project / "Assets/Plugins/Neutral.Plugin.dll").read_bytes()).hexdigest()
             dependencies["embeddedPackageLockSha256"] = embedded_reference_lock_sha256(project)
             verify_external_reference_fixture(project, run_dir, dependencies)
-        if args.profile == "virtual-string-call":
+        if args.profile in EMBEDDED_FIXTURE_PACKAGES:
             dependencies = receipt["auxiliaryDependencies"]
+            config = EMBEDDED_FIXTURE_PACKAGES[args.profile]
             dependencies["compiledAssemblySha256"] = hashlib.sha256((
-                project / "Library/ScriptAssemblies/Neutral.CastHierarchy.dll").read_bytes()).hexdigest()
+                project / "Library/ScriptAssemblies" / config["assembly"]).read_bytes()).hexdigest()
             dependencies["embeddedPackageLockSha256"] = embedded_package_lock_sha256(
-                project, "com.example.cast-hierarchy")
-            verify_virtual_string_call_dependency(project, dependencies)
+                project, config["name"])
+            verify_embedded_fixture_dependency(project, dependencies, args.profile)
         receipt["status"] = "passed"
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyError) as error:
         receipt["status"] = "failed"
