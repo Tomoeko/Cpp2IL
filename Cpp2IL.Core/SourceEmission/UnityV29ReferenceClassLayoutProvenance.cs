@@ -2,14 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.OutputFormats;
 using LibCpp2IL.Metadata;
 
 namespace Cpp2IL.Core.SourceEmission;
 
 /// <summary>
 /// Reports reference classes whose player metadata marks nondefault packing or
-/// class size. The current DLL writer omits their ClassLayout. A nondefault
-/// class-size flag does not directly retain the authored managed Size.
+/// class size. A nondefault class-size flag does not directly retain the
+/// authored managed Size, even when the declared packing is known.
 /// </summary>
 public static class UnityV29ReferenceClassLayoutProvenance
 {
@@ -32,7 +33,7 @@ public static class UnityV29ReferenceClassLayoutProvenance
             foreach (var type in assembly.Types)
             {
                 var definition = type.Definition;
-                if (definition == null || !HasUnemittedClassLayout(definition))
+                if (definition == null || !HasNondefaultClassLayout(definition))
                     continue;
 
                 types.Add(CreateTypeReport(type.FullName!, definition, definition.Size));
@@ -52,21 +53,34 @@ public static class UnityV29ReferenceClassLayoutProvenance
         if (layouts.Count == 0)
             return;
 
-        report.DeclarationFidelity = "partial";
         if (layouts.Any(layout => layout.UnknownDeclaredClassSizeCount != 0))
+        {
+            report.DeclarationFidelity = "partial";
             report.DeclarationDiagnostics.Add(DeclarationDiagnostic);
-        if (report.SourceGeneration == "generated")
-            report.SourceGeneration = "partial";
+        }
         foreach (var layout in layouts)
+        {
+            if (layout.UnemittedClassLayoutCount == 0)
+                continue;
+
+            report.DeclarationFidelity = "partial";
+            if (report.SourceGeneration == "generated")
+                report.SourceGeneration = "partial";
             report.Diagnostics.Add($"SOURCE011: {layout.Name}: Managed ClassLayout rows were not emitted for {layout.UnemittedClassLayoutCount} selected reference classes with nondefault packing or class-size flags; generated source cannot preserve their layout declarations.");
+        }
     }
 
     internal static bool HasUnemittedClassLayout(Il2CppTypeDefinition definition) =>
+        HasNondefaultClassLayout(definition) &&
+        !AsmResolverDllOutputFormat.TryGetReferenceClassPack(definition, out _);
+
+    private static bool HasNondefaultClassLayout(Il2CppTypeDefinition definition) =>
         !definition.IsValueType && !definition.IsEnumType && !definition.IsInterface &&
         (!definition.PackingSizeIsDefault || !definition.ClassSizeIsDefault);
 
     internal static UnityReferenceClassLayoutTypeReport CreateTypeReport(
         string name, Il2CppTypeDefinition definition, int rawNativeSize) =>
         new(name, rawNativeSize, definition.PackingSizeIsDefault, definition.ClassSizeIsDefault,
-            definition.PackingSize, definition.SpecifiedPackingSize);
+            definition.PackingSize, definition.SpecifiedPackingSize,
+            AsmResolverDllOutputFormat.TryGetReferenceClassPack(definition, out _));
 }

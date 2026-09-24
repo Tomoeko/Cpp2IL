@@ -123,17 +123,17 @@ public sealed record UnityValueTypeClassLayoutTypeReport(string Name, int RawNat
 
 public sealed record UnityReferenceClassLayoutAssemblyReport(string Name, IReadOnlyList<UnityReferenceClassLayoutTypeReport> Types)
 {
-    public int UnemittedClassLayoutCount => Types.Count;
+    public int UnemittedClassLayoutCount => Types.Count(type => !type.ClassLayoutRowEmitted);
     public int UnknownDeclaredClassSizeCount => Types.Count(type => !type.ClassSizeIsDefault);
     public string EvidenceSource => "v29-player-type-and-current-dll-writer";
 }
 
 public sealed record UnityReferenceClassLayoutTypeReport(
     string Name, int RawNativeSize, bool PackingSizeIsDefault, bool ClassSizeIsDefault,
-    uint PlayerPackingSize, uint PlayerSpecifiedPackingSize)
+    uint PlayerPackingSize, uint PlayerSpecifiedPackingSize, bool ClassLayoutRowEmitted)
 {
     public string DeclaredClassSize => ClassSizeIsDefault ? "NoNondefaultClassSizeFlag" : "UnknownDeclaredClassSize";
-    public string ClassLayoutEmission => "ClassLayoutRowOmitted";
+    public string ClassLayoutEmission => ClassLayoutRowEmitted ? "PackOnlyClassLayoutRowEmitted" : "ClassLayoutRowOmitted";
 }
 
 public sealed class UnitySourceAssemblyReport

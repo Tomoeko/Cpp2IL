@@ -292,7 +292,7 @@ public abstract class AsmResolverDllOutputFormat : Cpp2IlOutputFormat
 
         //Set up its layout
         if (typeDef != null)
-            ConfigureTypeSize(typeDef, ret);
+            ConfigureTypeLayout(typeDef, ret);
 
         //Create nested types
         foreach (var cppNestedType in typeContext.NestedTypes)
@@ -304,10 +304,34 @@ public abstract class AsmResolverDllOutputFormat : Cpp2IlOutputFormat
         return ret;
     }
 
-    private static void ConfigureTypeSize(Il2CppTypeDefinition il2CppDefinition, TypeDefinition asmResolverDefinition)
+    internal static bool TryGetReferenceClassPack(Il2CppTypeDefinition definition, out ushort packingSize)
     {
-        if (!il2CppDefinition.IsValueType || il2CppDefinition.IsEnumType)
-            return; // Only structs can have their layout changed
+        packingSize = 0;
+        if (definition.IsValueType || definition.IsEnumType || definition.IsInterface ||
+            definition.PackingSizeIsDefault || !definition.ClassSizeIsDefault ||
+            (definition.Attributes & System.Reflection.TypeAttributes.LayoutMask) is not
+                (System.Reflection.TypeAttributes.SequentialLayout or System.Reflection.TypeAttributes.ExplicitLayout))
+            return false;
+
+        var specified = definition.SpecifiedPackingSize;
+        if (specified is not (1 or 2 or 4 or 8 or 16 or 32 or 64 or 128))
+            return false;
+
+        packingSize = (ushort)specified;
+        return true;
+    }
+
+    internal static void ConfigureTypeLayout(Il2CppTypeDefinition il2CppDefinition, TypeDefinition asmResolverDefinition)
+    {
+        if (!il2CppDefinition.IsValueType)
+        {
+            if (TryGetReferenceClassPack(il2CppDefinition, out var classPackingSize))
+                asmResolverDefinition.ClassLayout = new(classPackingSize, 0);
+            return;
+        }
+
+        if (il2CppDefinition.IsEnumType)
+            return;
 
         ushort packingSize = 0;
         var classSize = 0U;
