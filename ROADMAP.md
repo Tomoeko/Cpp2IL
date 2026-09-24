@@ -412,6 +412,8 @@ A fresh paired player-only audit after the bounded class-cast, literal, type-tok
 
 The two broad player inputs are authenticated as Unity 2021.3.35f1 Windows x64 IL2CPP, but no contemporaneous build receipt proves their IL2CPP compiler configuration was Release. A read-only probe of the 17-instruction terminal-throw cohort finds one of 26 first-corpus candidates rejected for an unproved value-type receiver and the other 25, plus all 293 second-corpus candidates, rejected by the alternate metadata initializer before MethodDef routing can be established. The initializer has a different native register/branch layout, so widening the current byte-length guard is unsound. Treat these cohorts as secondary observed player variants until an exact supplied-editor Release control reproduces and validates that helper.
 
+The paired player-only audit after the unwind-bounded terminal-throw change preserves both ordered full-input identity sets and selected denominators. Neither corpus has a full-input or selected disposition or reason change. Selected counts remain 1,653 emitted / 4,584 failed / 2 partial / 1,017 without managed bodies out of 7,256, and 4,198 emitted / 7,967 failed / 80 partial / 479 without managed bodies out of 12,724. Both broad strict commands exit 1. No whole-scope typed IL, Unity compilation, native rebuild or behavioral-equivalence result is established, and Release configuration for these players remains unverified.
+
 | Recovery checkpoint | Corpus | Emitted | Failed | Partial | No managed body |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Initial baseline | Private | 1,832 | 4,393 | 14 | 1,017 |
