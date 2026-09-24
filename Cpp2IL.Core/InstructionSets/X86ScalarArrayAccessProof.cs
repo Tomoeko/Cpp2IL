@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Cpp2IL.Core.Model.Contexts;
 using Iced.Intel;
@@ -12,11 +13,11 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Closed exact-profile integer array access: prove both runtime exception exits and the only
+/// Closed exact-profile scalar array access: prove both runtime exception exits and the only
 /// successful memory access before replacing the diamond with managed ldelem or stelem.
 /// This does not generalize to unchecked native array access or other element types.
 /// </summary>
-internal static class X86IntegerArrayAccessProof
+internal static class X86ScalarArrayAccessProof
 {
     internal static List<IsilInstruction>? TryLift(MethodAnalysisContext context, IReadOnlyList<Instruction> body)
     {
@@ -59,7 +60,8 @@ internal static class X86IntegerArrayAccessProof
              !ReferenceEquals(element, app.SystemTypes.SystemInt32Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemUInt32Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemInt64Type) &&
-             !ReferenceEquals(element, app.SystemTypes.SystemUInt64Type)) ||
+             !ReferenceEquals(element, app.SystemTypes.SystemUInt64Type) &&
+             !ReferenceEquals(element, app.SystemTypes.SystemSingleType)) ||
             !ReferenceEquals(index.ParameterType, app.SystemTypes.SystemInt32Type) ||
             array.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
@@ -80,13 +82,19 @@ internal static class X86IntegerArrayAccessProof
                             ReferenceEquals(element, app.SystemTypes.SystemSByteType);
         var isWideElement = ReferenceEquals(element, app.SystemTypes.SystemInt64Type) ||
                             ReferenceEquals(element, app.SystemTypes.SystemUInt64Type);
+        var isSingleElement = ReferenceEquals(element, app.SystemTypes.SystemSingleType);
         var elementSize = isByteElement ? 1 : isWideElement ? 8 : 4;
         var nullCall = body[9];
         var boundsCall = body[11];
-        if (!TryProveShape(body, isWrite, elementSize) ||
+        if (!TryProveShape(body, isWrite, elementSize, isSingleElement))
+            return null;
+        var provedRegion = isSingleElement
+            ? TryCompleteSingleRegion(app, context.UnderlyingPointer, body)
+            : body;
+        if (provedRegion == null ||
             X86RuntimeNullThrowProof.TryIdentify(app, nullCall.NearBranchTarget) == null ||
             !X86RuntimeBoundsThrowProof.TryIdentify(app, boundsCall.NearBranchTarget) ||
-            X86CallerExceptionRegionProof.Check(context, body,
+            X86CallerExceptionRegionProof.Check(context, provedRegion,
                 new HashSet<ulong> { nullCall.IP, boundsCall.IP }) != null)
             return null;
 
@@ -97,7 +105,7 @@ internal static class X86IntegerArrayAccessProof
         if (isWrite)
             return
             [
-                new(0, ISIL.OpCode.Move, memory, new IsilRegister(null, "r8")),
+                new(0, ISIL.OpCode.Move, memory, new IsilRegister(null, isSingleElement ? "xmm2" : "r8")),
                 new(1, ISIL.OpCode.Return),
             ];
         var result = new IsilRegister(null, "array_read_result");
@@ -130,13 +138,47 @@ internal static class X86IntegerArrayAccessProof
             return Il2CppTypeEnum.IL2CPP_TYPE_U8;
         if (ReferenceEquals(element, app.SystemTypes.SystemInt64Type))
             return Il2CppTypeEnum.IL2CPP_TYPE_I8;
+        if (ReferenceEquals(element, app.SystemTypes.SystemSingleType))
+            return Il2CppTypeEnum.IL2CPP_TYPE_R4;
         return ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)
             ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
     }
 
-    internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4)
+    internal static IReadOnlyList<Instruction>? TryCompleteSingleRegion(ApplicationAnalysisContext app,
+        ulong entry, IReadOnlyList<Instruction> body)
     {
-        if (body.Count < 12 || elementSize is not (1 or 4 or 8))
+        if (body.Count < 12)
+            return null;
+        // The exact native region has one INT3 after the proved nonreturning bounds call.
+        // X86Utils may stop before that byte or decode onward through alignment into the next
+        // function. Reconstruct the complete unwind region from file-backed player bytes.
+        var trapAddress = body[11].NextIP;
+        if (trapAddress == ulong.MaxValue || app.Binary is not PE pe ||
+            !pe.TryMapVirtualAddressToRaw(trapAddress, out var raw))
+            return null;
+        var end = trapAddress + 1;
+        var unwind = X64UnwindProof.ForApplication(app);
+        var span = unwind?.ClassifySpan(entry, end);
+        if (span is not { Kind: X64UnwindProof.SpanKind.HandlerFree } ||
+            span.Value.Start != entry || span.Value.RootStart != entry || span.Value.End != end ||
+            !unwind!.MatchesUnwind(entry, end, 4, 0, [4, 0x42]))
+            return null;
+        var bytes = pe.GetRawBinaryContent();
+        if (raw < 0 || raw >= bytes.Length || bytes[(int)raw] != 0xCC)
+            return null;
+        var decoder = Decoder.Create(64, new ByteArrayCodeReader([0xCC]), trapAddress);
+        var trap = decoder.Decode();
+        if (trap.Code != Code.Int3 || trap.IP != trapAddress || trap.NextIP != end ||
+            body.Count > 12 && body[12].IP < end &&
+            (body[12].IP != trapAddress || body[12].Code != Code.Int3 || body[12].NextIP != end))
+            return null;
+        return body.Take(12).Append(trap).ToArray();
+    }
+
+    internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4,
+        bool isSingleElement = false)
+    {
+        if (body.Count < 12 || elementSize is not (1 or 4 or 8) || isSingleElement && elementSize != 4)
             return false;
         for (var i = 0; i < 12; i++)
         {
@@ -162,7 +204,7 @@ internal static class X86IntegerArrayAccessProof
                boundsBranch.NearBranchTarget == body[11].IP &&
                body[5].Code == Code.Movsxd_r64_rm32 &&
                Registers(body[5], Mnemonic.Movsxd, Register.RAX, Register.EDX) &&
-               SuccessfulElementAccess(element, isWrite, elementSize) &&
+               SuccessfulElementAccess(element, isWrite, elementSize, isSingleElement) &&
                Stack(body[7], Mnemonic.Add, 0x28) &&
                body[8].Code == Code.Retnq && body[8].OpCount == 0 &&
                Call(body[9]) && body[10].Code == Code.Int3 &&
@@ -187,10 +229,19 @@ internal static class X86IntegerArrayAccessProof
             // encoding observed in the one-byte fixture's successful arm.
             ? Memory(instruction, operand, Register.RAX, Register.RCX, 1, 0x20, 1)
             : Memory(instruction, operand, Register.RCX, Register.RAX, elementSize, 0x20, elementSize);
-    private static bool SuccessfulElementAccess(Instruction instruction, bool isWrite, int elementSize)
+    private static bool SuccessfulElementAccess(Instruction instruction, bool isWrite, int elementSize,
+        bool isSingleElement)
     {
         if (instruction.OpCount != 2)
             return false;
+        if (isSingleElement)
+            return isWrite
+                ? instruction.Code == Code.Movss_xmmm32_xmm &&
+                  ElementMemory(instruction, 0, 4) &&
+                  instruction.Op1Kind == OpKind.Register && instruction.Op1Register == Register.XMM2
+                : instruction.Code == Code.Movss_xmm_xmmm32 &&
+                  instruction.Op0Kind == OpKind.Register && instruction.Op0Register == Register.XMM0 &&
+                  ElementMemory(instruction, 1, 4);
         if (isWrite)
         {
             var valueRegister = elementSize == 8 ? Register.R8 :

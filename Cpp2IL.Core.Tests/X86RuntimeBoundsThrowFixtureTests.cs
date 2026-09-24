@@ -51,8 +51,8 @@ public class X86RuntimeBoundsThrowFixtureTests
             Assert.That(calls.Where(instruction =>
                 X86RuntimeNullThrowProof.TryIdentify(app, instruction.NearBranchTarget) != null).ToArray(), Has.Length.EqualTo(1));
             var native = X86Utils.Iterate(access).ToArray();
-            Assert.That(X86IntegerArrayAccessProof.TryProveShape(native, isWrite, elementSize), Is.True);
-            Assert.That(X86IntegerArrayAccessProof.TryProveShape(native.Take(12).ToArray(), isWrite, elementSize), Is.True,
+            Assert.That(X86ScalarArrayAccessProof.TryProveShape(native, isWrite, elementSize), Is.True);
+            Assert.That(X86ScalarArrayAccessProof.TryProveShape(native.Take(12).ToArray(), isWrite, elementSize), Is.True,
                 "The final proven nonreturning bounds call needs no trailing padding instruction.");
             Assert.That(access.Parameters[0].ParameterType, Is.TypeOf<Cpp2IL.Core.Model.Contexts.SzArrayTypeAnalysisContext>());
             var expectedElement = (elementSize, unsigned) switch
@@ -72,28 +72,28 @@ public class X86RuntimeBoundsThrowFixtureTests
                 Is.EqualTo(new[] { IsilOpCode.Move, IsilOpCode.Return }));
             var wrongBranch = native.ToArray();
             wrongBranch[4].Code = Code.Ja_rel8_64;
-            Assert.That(X86IntegerArrayAccessProof.TryProveShape(wrongBranch, isWrite, elementSize), Is.False);
+            Assert.That(X86ScalarArrayAccessProof.TryProveShape(wrongBranch, isWrite, elementSize), Is.False);
             var wrongElement = native.ToArray();
             wrongElement[6].MemoryDisplacement64 = 0x24;
-            Assert.That(X86IntegerArrayAccessProof.TryProveShape(wrongElement, isWrite, elementSize), Is.False);
-            Assert.That(X86IntegerArrayAccessProof.TryProveShape(native, isWrite, elementSize == 8 ? 4 : 8), Is.False,
+            Assert.That(X86ScalarArrayAccessProof.TryProveShape(wrongElement, isWrite, elementSize), Is.False);
+            Assert.That(X86ScalarArrayAccessProof.TryProveShape(native, isWrite, elementSize == 8 ? 4 : 8), Is.False,
                 "The same offset must not be interpreted with another element width.");
             if (narrow && !isWrite)
             {
                 var signExtendedRead = native.ToArray();
                 signExtendedRead[6].Code = Code.Movsx_r32_rm8;
-                Assert.That(X86IntegerArrayAccessProof.TryProveShape(signExtendedRead, false, 1), Is.False,
+                Assert.That(X86ScalarArrayAccessProof.TryProveShape(signExtendedRead, false, 1), Is.False,
                     "Only the observed folded MOVZX return body is proved for both byte element types.");
                 var widerRead = native.ToArray();
                 widerRead[6].Code = Code.Movzx_r32_rm16;
-                Assert.That(X86IntegerArrayAccessProof.TryProveShape(widerRead, false, 1), Is.False);
+                Assert.That(X86ScalarArrayAccessProof.TryProveShape(widerRead, false, 1), Is.False);
             }
             if (isWrite)
             {
                 var wrongSource = native.ToArray();
                 wrongSource[6].Op1Register = elementSize == 8 ? Register.R9 :
                     elementSize == 1 ? Register.R9L : Register.R9D;
-                Assert.That(X86IntegerArrayAccessProof.TryProveShape(wrongSource, true, elementSize), Is.False);
+                Assert.That(X86ScalarArrayAccessProof.TryProveShape(wrongSource, true, elementSize), Is.False);
             }
             var identity = X86RuntimeNullThrowProof.BindIdentity(app, "IndexOutOfRangeException")!;
             var originalAttributes = identity.Attributes;
