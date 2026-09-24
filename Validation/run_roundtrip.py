@@ -30,7 +30,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "throw-only",
     "metadata-guard-move",
     "metadata-guard-parameter",
-    "integer-extensions", "byte-fields", "float-comparisons", "xmm-spill",
+    "integer-extensions", "byte-fields", "float-comparisons", "xmm-spill", "xmm-ref-mutation",
     "components", "metadata-literal", "division", "arithmetic", "integers",
     "scalar-structs", "shifts",
 )}

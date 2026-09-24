@@ -230,6 +230,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64ScalarFloatRefMutationRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Scalar-float byref mutation IL emitted from complete native, ABI, and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             methodContext.Analyze();
 
             if (methodContext.ConvertedIsil.Count == 0)

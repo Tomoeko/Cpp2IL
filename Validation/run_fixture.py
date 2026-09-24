@@ -51,6 +51,7 @@ import scalar_truncation
 import sequential_null_guards
 import static_word_getter
 import xmm_spill
+import xmm_ref_mutation
 import word_array
 import word_fields
 import zero_arg_field_call
@@ -103,6 +104,7 @@ PROFILES = {
     "byte-fields": {"assembly": "ByteFieldFixture", "source": VALIDATION / "ByteFieldFixture", "methods": 4},
     "float-comparisons": {"assembly": "FloatComparisonFixture", "source": VALIDATION / "FloatComparisonFixture", "methods": 12},
     "xmm-spill": {"assembly": "XmmSpillFixture", "source": VALIDATION / "XmmSpillFixture", "methods": 2},
+    "xmm-ref-mutation": {"assembly": "XmmRefMutationFixture", "source": VALIDATION / "XmmRefMutationFixture", "methods": 2},
     "components": {"assembly": "ComponentFixture", "source": VALIDATION / "ComponentFixture", "methods": 3},
     "metadata-literal": {"assembly": "MetadataLiteralFixture", "source": VALIDATION / "MetadataLiteralFixture", "methods": 1},
     "narrow-comparisons": {"assembly": "NarrowComparisonFixture", "source": VALIDATION / "NarrowComparisonFixture", "methods": 14},
@@ -207,6 +209,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return float_comparison.verify(path, stage, VERSION)
     if profile == "xmm-spill":
         return xmm_spill.verify(path, stage, VERSION)
+    if profile == "xmm-ref-mutation":
+        return xmm_ref_mutation.verify(path, stage, VERSION)
     if profile == "components":
         return verify_component_behavior(path, stage)
     if profile == "metadata-literal":
