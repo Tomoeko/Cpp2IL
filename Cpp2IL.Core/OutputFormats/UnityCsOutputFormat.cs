@@ -71,10 +71,18 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
         }
         UnityV29ValueTypeClassLayoutProvenance.AddToReport(sourceReport, UnityV29ValueTypeClassLayoutProvenance.Analyze(context, selected));
         UnityV29ReferenceClassLayoutProvenance.AddToReport(sourceReport, UnityV29ReferenceClassLayoutProvenance.Analyze(context, selected));
-        foreach (var name in UnityV29AttributeTypeProvenance.GetAffectedAssemblyNames(context, selected))
+        foreach (var assessment in UnityV29AttributeTypeProvenance.AssessEmission(context, selected))
         {
-            sourceReport.SourceGeneration = "partial";
-            sourceReport.Diagnostics.Add($"SOURCE010: {name}: V29 player metadata preserves custom-attribute System.Type identity as an index, but not the original serialized type-name qualification; exact attribute declaration fidelity is unresolved.");
+            if (assessment.IdentitiesEmitted)
+            {
+                sourceReport.DeclarationFidelity = "partial";
+                sourceReport.DeclarationDiagnostics.Add($"DECL004: {assessment.AssemblyName}: {assessment.IndexedValueCount} V29 custom-attribute System.Type values matched their indexed identities in the managed emission model, but the original serialized type-name qualification is unavailable. Compare against an independent managed oracle to validate raw declaration encoding.");
+            }
+            else
+            {
+                sourceReport.SourceGeneration = "partial";
+                sourceReport.Diagnostics.Add($"SOURCE010: {assessment.AssemblyName}: One or more of {assessment.IndexedValueCount} V29 custom-attribute System.Type values could not be matched to emitted attributes with their indexed type identity.");
+            }
         }
         if (report.Methods.Any(m => selected.Contains(m.AssemblyName, StringComparer.Ordinal) && m.IsUnresolved))
         {
