@@ -84,6 +84,29 @@ public class IlRecoverySafetyTests
     }
 
     [Test]
+    public void SharedCallIdentityIsDiagnosedBeforeProvisionalArgumentType()
+    {
+        var app = Cpp2IlApi.CurrentAppContext!;
+        const ulong address = 0x12345678;
+        var first = new InjectedMethodAnalysisContext(app.SystemTypes.SystemObjectType, "First",
+            app.SystemTypes.SystemVoidType, ReflectionMethodAttributes.Public | ReflectionMethodAttributes.Static, []);
+        var second = new InjectedMethodAnalysisContext(app.SystemTypes.SystemObjectType, "Second",
+            app.SystemTypes.SystemVoidType, ReflectionMethodAttributes.Public | ReflectionMethodAttributes.Static, []);
+        var provisional = new LocalVariable("provisional", new Register(null, "rcx"));
+        var (context, definition) = CreateMethod(
+            [new(0, OpCode.CallVoid, new Immediate((long)address), provisional), new(1, OpCode.Return)]);
+        context.Locals.Add(provisional);
+        app.MethodsByAddress.Add(address, [first, second]);
+        try
+        {
+            Assert.That(() => IlGenerator.GenerateIl(context, definition),
+                Throws.TypeOf<DecompilerException>().With.Message.Contains("Call target is ambiguous"));
+            Assert.That(definition.CilMethodBody, Is.Null, "Preflight failure must not leave a partial body.");
+        }
+        finally { app.MethodsByAddress.Remove(address); }
+    }
+
+    [Test]
     public void UnresolvedNativeStoreCannotBeDiscarded()
     {
         var (context, definition) = CreateMethod(

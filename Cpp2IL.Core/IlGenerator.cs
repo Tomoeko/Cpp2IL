@@ -89,6 +89,21 @@ public static partial class IlGenerator
                 string.Join("; ", unsupported.Take(12).Select(i => i.ToString())) +
                 (unsupported.Length > 12 ? "; additional failures omitted" : ""));
 
+        // An unresolved call can introduce provisional argument locals with no sound type.
+        // Report the missing callee identity before one of those locals obscures the cause.
+        foreach (var call in context.ControlFlowGraph.Instructions.Where(i =>
+                     i.OpCode is OpCode.Call or OpCode.CallVoid))
+        {
+            if (call.Operands.Count > 0 && call.Operands[0] is MethodAnalysisContext)
+                continue;
+            if (call.Operands.Count > 0 && call.Operands[0] is Immediate target &&
+                context.AppContext.MethodsByAddress.TryGetValue(target.UnsignedValue, out var aliases) &&
+                aliases.Count > 1)
+                throw new DecompilerException(
+                    "Call target is ambiguous: shared native address has no proved managed callsite identity");
+            throw new DecompilerException("Call target is unresolved");
+        }
+
         NarrowFieldEqualityProof.Validate(context);
 
         // Native return registers can remain live even when metadata identifies a void callee.
