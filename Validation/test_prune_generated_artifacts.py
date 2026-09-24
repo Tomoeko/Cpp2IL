@@ -106,6 +106,31 @@ class PruneGeneratedArtifactsTests(unittest.TestCase):
             self.assertFalse((run / "project").exists())
             self.assertFalse((run / "player").exists())
 
+    def test_only_one_run_can_be_pruned_without_discarding_its_player_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "validation"
+            for name in ("selected", "other"):
+                run = root / name
+                run.mkdir(parents=True)
+                receipt = run / "receipt.json"
+                receipt.write_text('{"status":"passed"}')
+                old = time.time() - 48 * 3600
+                os.utime(receipt, (old, old))
+                for tree in ("project", "player", "player-input"):
+                    (run / tree).mkdir()
+
+            candidates = plan(root, now=time.time(), only=("selected",), retain_player_input=True)
+            self.assertEqual({candidate.path.relative_to(root).as_posix() for candidate in candidates},
+                             {"selected/project", "selected/player"})
+            with self.assertRaises(ValueError):
+                plan(root, now=time.time(), only=("../other",))
+
+            prune(candidates, root, Path(directory) / "manifests")
+            self.assertTrue((root / "selected" / "player-input").is_dir())
+            self.assertTrue((root / "other" / "project").is_dir())
+            self.assertTrue((root / "other" / "player").is_dir())
+            self.assertTrue((root / "other" / "player-input").is_dir())
+
 
 if __name__ == "__main__":
     unittest.main()

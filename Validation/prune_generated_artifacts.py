@@ -49,7 +49,7 @@ def allocated_bytes(path):
 
 
 def plan(validation_root, minimum_age_seconds=24 * 3600, now=None, excluded=(),
-         retain_player_input=False):
+         retain_player_input=False, only=()):
     if not math.isfinite(minimum_age_seconds) or minimum_age_seconds < 0:
         raise ValueError("minimum age must be finite and nonnegative")
     validation_root = Path(validation_root)
@@ -58,8 +58,12 @@ def plan(validation_root, minimum_age_seconds=24 * 3600, now=None, excluded=(),
     root = validation_root.resolve()
     cutoff = (time.time() if now is None else now) - minimum_age_seconds
     excluded = set(excluded)
+    only = set(only)
+    if any(not name or name in (".", "..") or Path(name).name != name for name in only):
+        raise ValueError("run names must identify immediate validation directories")
     candidates = []
-    for run in sorted(validation_root.iterdir()):
+    runs = (validation_root / name for name in sorted(only)) if only else sorted(validation_root.iterdir())
+    for run in runs:
         if not run.is_dir() or run.is_symlink() or run.name in excluded:
             continue
         receipt = next((run / name for name in ("roundtrip.json", "receipt.json")
@@ -156,14 +160,19 @@ def main():
                         help="Require a terminal receipt at least this old (default: 24)")
     parser.add_argument("--exclude", action="append", default=[], metavar="RUN_NAME",
                         help="Keep one immediate Files/validation run directory")
+    parser.add_argument("--only", action="append", default=[], metavar="RUN_NAME",
+                        help="Plan only this immediate Files/validation run directory; repeatable")
     parser.add_argument("--retain-player-input", action="store_true",
                         help="Prune completed project/player trees while keeping player inputs for local tests")
     parser.add_argument("--show-paths", action="store_true", help="List each planned tree")
     args = parser.parse_args()
     if not math.isfinite(args.min_age_hours) or args.min_age_hours < 0:
         parser.error("--min-age-hours must be finite and nonnegative")
-    candidates = plan(VALIDATION, args.min_age_hours * 3600, excluded=args.exclude,
-                      retain_player_input=args.retain_player_input)
+    try:
+        candidates = plan(VALIDATION, args.min_age_hours * 3600, excluded=args.exclude,
+                          retain_player_input=args.retain_player_input, only=args.only)
+    except ValueError as error:
+        parser.error(str(error))
     gib = sum(candidate.allocated_bytes for candidate in candidates) / 1024**3
     print(f"{len(candidates)} generated trees; about {gib:.2f} GiB allocated")
     if args.show_paths:
