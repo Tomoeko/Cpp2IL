@@ -1,0 +1,5 @@
+# Nullable Boolean field-store control
+
+Two ordinary sealed classes isolate a zero-argument instance method that writes `false` through a nullable reference field. Fifteen ordinary long fields place the reference beyond the x64 short-displacement range without explicit layout attributes. Neighboring long fields and a sum of the padding fields check for observed unintended writes; the sum does not prove byte-for-byte preservation of every padding field.
+
+The `nested-boolean-store` oracle checks true-to-false mutation, an already-false value, alias identity, unchanged neighboring fields and padding sum, a null target, and a null owner. The original and recovered Windows x64 Release IL2CPP builds pass all four editor and player observations. Player-only strict recovery emits all three selected methods; typed IL verification and both declaration comparisons pass. The generated source compiles in the supplied Unity 2021.3.35f1 Windows editor. Local receipts remain under ignored `Files/`; generated projects and players were pruned after review.

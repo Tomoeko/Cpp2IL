@@ -20,6 +20,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "enum-passthrough", "static-field-getter", "static-word-getter", "reference-field", "reference-null", "sequential-null-guards",
     "reference-store", "external-references", "numerics-reference", "byte-threshold", "field-guard",
     "zero-arg-field-call", "scalar-truncation", "loop-calls", "word-fields",
+    "nested-boolean-store",
     "iterator-factory-manual",
     "iterator-factory-variant",
     "literal-concat",

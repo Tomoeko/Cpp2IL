@@ -41,6 +41,7 @@ import metadata_guard_move
 import metadata_guard_parameter
 import loop_calls
 import narrow_array
+import nested_boolean_store
 import reference_null
 import reference_store
 import runtime_cast_concat
@@ -65,6 +66,7 @@ PROFILES = {
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
+    "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 3},
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
     "reference-array": {"assembly": "ReferenceArrayFixture", "source": VALIDATION / "ReferenceArrayFixture", "methods": 3},
@@ -135,6 +137,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return field_array.verify(path, stage, VERSION)
     if profile == "narrow-array":
         return narrow_array.verify(path, stage, VERSION)
+    if profile == "nested-boolean-store":
+        return nested_boolean_store.verify(path, stage, VERSION)
     if profile == "float-array":
         return float_array.verify(path, stage, VERSION)
     if profile == "word-array":
