@@ -107,6 +107,71 @@ internal static class RuntimeNullGuardCoalescer
         }
     }
 
+    // The probe represents a target NullCheck on the proven null arm. Its field operand is
+    // reused from an actual later native-origin load, rather than selected by offset alone.
+    internal sealed record NullArmFieldProbeEvidence(Instruction Probe, LocalVariable Destination,
+        Instruction NativeRead, FieldReference Access, LocalVariable Receiver,
+        FieldAccessEvidence EarlierRead, Instruction Comparison, Instruction Branch,
+        Block Guard, Block NullArm, Block NormalArm, RuntimeNullThrowEvidence? Helper,
+        bool RequireNativeBinding)
+    {
+        internal bool IsValidFor(MethodAnalysisContext method)
+        {
+            var graph = method.ControlFlowGraph;
+            if (graph == null || !method.NullCheckedFieldAccesses.Contains(EarlierRead) ||
+                !EarlierRead.IsValidFor(method) || !SupportedPair(method, Receiver, EarlierRead.Receiver,
+                    Access, RequireNativeBinding) ||
+                !ReferenceEquals(Access.Field, EarlierRead.Field) || Access.Offset != EarlierRead.Offset ||
+                !ReferenceEquals(Access, NativeRead.Operands.ElementAtOrDefault(1)) ||
+                NativeRead is not { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                    CallSemantics: CallSemantics.Direct, Operands: [LocalVariable nativeValue, FieldReference] } ||
+                !ReferenceEquals(nativeValue.Type, method.AppContext.SystemTypes.SystemInt32Type) ||
+                graph.FindBlockByInstruction(NativeRead) is not { } reads ||
+                graph.FindBlockByInstruction(EarlierRead.Operation) != reads ||
+                reads.Instructions.Where(IsActiveInstruction).Take(2).ToArray() is not
+                    [var firstRead, var secondRead] ||
+                !ReferenceEquals(firstRead, EarlierRead.Operation) ||
+                !ReferenceEquals(secondRead, NativeRead) ||
+                Probe is not { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                    CallSemantics: CallSemantics.Direct, Operands: [LocalVariable destination, FieldReference access] } ||
+                !ReferenceEquals(destination, Destination) || !ReferenceEquals(access, Access) ||
+                !ReferenceEquals(Destination.Type, method.AppContext.SystemTypes.SystemInt32Type) ||
+                graph.FindBlockByInstruction(Probe) != NullArm ||
+                NullArm.Instructions is not [var onlyProbe, { OpCode: OpCode.Jump,
+                    IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct, Operands: [Block next] }] ||
+                !ReferenceEquals(onlyProbe, Probe) || !ReferenceEquals(next, NormalArm) ||
+                NullArm.Predecessors is not [var predecessor] || !ReferenceEquals(predecessor, Guard) ||
+                NullArm.Successors is not [var successor] || !ReferenceEquals(successor, NormalArm) ||
+                Guard.Successors.Count != 2 || !Guard.Successors.Contains(NullArm) ||
+                !Guard.Successors.Contains(NormalArm) ||
+                NormalArm.Predecessors.Count != 2 ||
+                !NormalArm.Predecessors.Contains(Guard) || !NormalArm.Predecessors.Contains(NullArm) ||
+                NormalArm.Instructions.Where(IsActiveInstruction).ToArray() is not
+                    [{ OpCode: OpCode.Jump, IntegerBitWidth: 0,
+                        CallSemantics: CallSemantics.Direct, Operands: [Block nextRead] }] ||
+                !ReferenceEquals(nextRead, reads) ||
+                Guard.Instructions.Where(IsActiveInstruction).ToArray() is not
+                    [var firstGuard, var lastGuard] ||
+                !ReferenceEquals(firstGuard, Comparison) || !ReferenceEquals(lastGuard, Branch) ||
+                Branch is not { OpCode: OpCode.ConditionalJump, IntegerBitWidth: 0,
+                    CallSemantics: CallSemantics.Direct, Operands: [Block taken, LocalVariable condition] } ||
+                !ReferenceEquals(taken, NullArm) || graph.FindBlockByInstruction(Branch) != Guard ||
+                Comparison is not { OpCode: OpCode.CheckEqual, IntegerBitWidth: 64,
+                    CallSemantics: CallSemantics.Direct,
+                    Operands: [LocalVariable result, LocalVariable compared, Immediate { Value: 0 }] } ||
+                !ReferenceEquals(result, condition) || !ReferenceEquals(compared, Receiver) ||
+                graph.FindBlockByInstruction(Comparison) != Guard ||
+                Guard.Instructions.IndexOf(Comparison) >= Guard.Instructions.IndexOf(Branch) ||
+                OperandEffects.LocalsWithMutableStorage(graph.Instructions).Any(local =>
+                    local.Register.Number == Receiver.Register.Number) ||
+                RequireNativeBinding && HasOutputOptions(method) ||
+                RequireNativeBinding && (Helper == null ||
+                    !X64SequentialNullFieldProof.Matches(method, Access, EarlierRead.Access, Helper)))
+                return false;
+            return true;
+        }
+    }
+
     public static int Run(MethodAnalysisContext method)
     {
         if (method.AppContext.Binary is not PE { PointerSizeBytes: 8 } ||
@@ -133,6 +198,8 @@ internal static class RuntimeNullGuardCoalescer
         var graph = method.ControlFlowGraph!;
         var changed = 0;
         while (TryRewriteOne(method, graph, provesRuntimeNullThrow, provesNativeTarget,
+                   provesNativeField, requireNativeFieldBinding) ||
+               TryRewriteDelayedFieldGuard(method, graph, provesRuntimeNullThrow,
                    provesNativeField, requireNativeFieldBinding))
         {
             changed++;
@@ -336,6 +403,160 @@ internal static class RuntimeNullGuardCoalescer
         else if (comparison.Operands is [_, Immediate { Value: 0 }, LocalVariable right])
             receiver = right;
         return receiver != null;
+    }
+
+    /// <summary>
+    /// The first of two target null checks cannot be moved to a later field read when the
+    /// second receiver's field is read first. Keep the first branch and make only its null
+    /// arm perform an implicit managed null check through the first receiver's own field.
+    /// The ordinary path, including the earlier second-receiver read, is left untouched.
+    /// </summary>
+    private static bool TryRewriteDelayedFieldGuard(MethodAnalysisContext method, ISILControlFlowGraph graph,
+        Func<Instruction, bool> provesRuntimeNullThrow, Func<FieldReference, bool> provesNativeField,
+        bool requireNativeBinding)
+    {
+        if (method.NullCheckedFieldAccesses is not [var earlier] || !earlier.IsValidFor(method) ||
+            !method.IsStatic || method.Parameters.Count != 2 ||
+            !ReferenceEquals(method.ReturnType, method.AppContext.SystemTypes.SystemInt32Type))
+            return false;
+        var definitions = new Dictionary<LocalVariable, Instruction>();
+        foreach (var instruction in graph.Instructions)
+            if (instruction.Destination is LocalVariable destination)
+            {
+                if (method.ParameterLocals.Contains(destination) || !definitions.TryAdd(destination, instruction))
+                    return false;
+            }
+        var escaped = new HashSet<int>(OperandEffects.LocalsWithMutableStorage(graph.Instructions)
+            .Select(local => local.Register.Number));
+
+        foreach (var guard in graph.Blocks)
+        {
+            if (guard.Successors.Count != 2 || guard.Instructions.Where(IsActiveInstruction).ToArray() is not
+                    [var comparison, var branch] ||
+                comparison is not { OpCode: OpCode.CheckEqual, IntegerBitWidth: 64,
+                    CallSemantics: CallSemantics.Direct,
+                    Operands: [LocalVariable condition, LocalVariable receiver, Immediate { Value: 0 }] } ||
+                branch is not { OpCode: OpCode.ConditionalJump, IntegerBitWidth: 0,
+                    CallSemantics: CallSemantics.Direct, Operands: [Block nullArm, LocalVariable branchCondition] } ||
+                !ReferenceEquals(condition, branchCondition) ||
+                (!definitions.TryGetValue(condition, out var definition) ||
+                 !ReferenceEquals(definition, comparison)) ||
+                !method.ParameterLocals.Contains(receiver) ||
+                escaped.Contains(receiver.Register.Number) || !guard.Successors.Contains(nullArm) ||
+                nullArm == graph.EntryBlock || nullArm == graph.ExitBlock ||
+                nullArm.Predecessors is not [var onlyGuard] || !ReferenceEquals(onlyGuard, guard) ||
+                nullArm.Successors is not [var exit] || !ReferenceEquals(exit, graph.ExitBlock) ||
+                nullArm.Instructions.Where(IsActiveInstruction).ToArray() is not [var terminal] ||
+                terminal is not { OpCode: OpCode.RuntimeNullThrow, IntegerBitWidth: 0,
+                    CallSemantics: CallSemantics.Direct } || !provesRuntimeNullThrow(terminal))
+                continue;
+
+            var normalArm = guard.Successors.Single(successor => !ReferenceEquals(successor, nullArm));
+            if (normalArm == graph.EntryBlock || normalArm == graph.ExitBlock ||
+                normalArm.Predecessors is not [var normalPredecessor] ||
+                !ReferenceEquals(normalPredecessor, guard) ||
+                normalArm.Instructions.Where(IsActiveInstruction).ToArray() is not
+                    [{ OpCode: OpCode.Jump, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct,
+                        Operands: [Block fieldBlock] }] ||
+                normalArm.Successors is not [var fieldSuccessor] ||
+                !ReferenceEquals(fieldBlock, fieldSuccessor) ||
+                fieldBlock.Predecessors is not [var fieldPredecessor] ||
+                !ReferenceEquals(fieldPredecessor, normalArm) ||
+                fieldBlock.Instructions.Where(IsActiveInstruction).Take(2).ToArray() is not
+                    [var firstRead, var laterRead] ||
+                !ReferenceEquals(firstRead, earlier.Operation) ||
+                laterRead is not { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                    CallSemantics: CallSemantics.Direct,
+                    Operands: [LocalVariable loaded, FieldReference access] } ||
+                !ReferenceEquals(loaded.Type, method.AppContext.SystemTypes.SystemInt32Type) ||
+                !ReferenceEquals(access.Local, receiver) ||
+                !ReferenceEquals(access.Field, earlier.Field) || access.Offset != earlier.Offset ||
+                !SupportedPair(method, receiver, earlier.Receiver, access, requireNativeBinding) ||
+                !provesNativeField(access) ||
+                requireNativeBinding && (terminal.Operands is not [RuntimeNullThrowEvidence helper] ||
+                    !X64SequentialNullFieldProof.Matches(method, access, earlier.Access, helper)))
+                continue;
+
+            var occupied = new HashSet<int>(method.Locals.Select(local => local.Register.Number));
+            var probeNumber = occupied.Where(number => number >= 0).DefaultIfEmpty(0).Max();
+            if (probeNumber == int.MaxValue)
+                continue;
+            var destination = new LocalVariable("nullProbe", new Register(probeNumber + 1, "nullProbe", 1),
+                method.AppContext.SystemTypes.SystemInt32Type);
+            var probe = new Instruction(-1, OpCode.Move, destination, access);
+            var jump = new Instruction(-1, OpCode.Jump, normalArm);
+            var helperEvidence = terminal.Operands.Count == 1 ? terminal.Operands[0] as RuntimeNullThrowEvidence : null;
+
+            // NullArm has exactly this predecessor and no phi. NormalArm contains only a jump,
+            // so the unreachable-after-probe edge cannot require an invented SSA merge value.
+            nullArm.Instructions.Clear();
+            nullArm.Instructions.Add(probe);
+            nullArm.Instructions.Add(jump);
+            nullArm.Successors.Clear();
+            nullArm.Successors.Add(normalArm);
+            graph.ExitBlock.Predecessors.Remove(nullArm);
+            normalArm.Predecessors.Add(nullArm);
+            nullArm.CalculateBlockType();
+            method.Locals.Add(destination);
+            method.NullArmFieldProbes.Add(new NullArmFieldProbeEvidence(probe, destination, laterRead,
+                access, receiver, earlier, comparison, branch, guard, nullArm, normalArm,
+                helperEvidence, requireNativeBinding));
+            return true;
+        }
+        return false;
+
+    }
+
+    // DCE changes an unused comparison to Nop but retains its old width marker.
+    private static bool IsActiveInstruction(Instruction instruction) => instruction.OpCode != OpCode.Nop ||
+        instruction.Operands.Count != 0 || instruction.CallSemantics != CallSemantics.Direct;
+
+    private static bool SupportedPair(MethodAnalysisContext method, LocalVariable first,
+        LocalVariable second, FieldReference fieldAccess, bool requireNativeBinding)
+    {
+        var field = fieldAccess.Field;
+        var owner = field.DeclaringType;
+        var parameters = method.Parameters;
+        return method.IsStatic && parameters.Count == 2 &&
+               ReferenceEquals(method.ReturnType, method.AppContext.SystemTypes.SystemInt32Type) &&
+               method.OverrideReturnType == null &&
+               ReferenceEquals(method.DefaultReturnType, method.AppContext.SystemTypes.SystemInt32Type) &&
+               method.ParameterOperands is [Register firstRegister, Register secondRegister, ..] &&
+               method.ParameterOperands.Count == (requireNativeBinding ? 3 : 2) &&
+               (!requireNativeBinding || method.ParameterOperands[2] is Register hidden &&
+                   method.ParameterLocals.Count(local => local.IsMethodInfo) == 1 &&
+                   method.ParameterLocals.Any(local => local.IsMethodInfo &&
+                       local.Register.Number == hidden.Number)) &&
+               method.ParameterLocals.Contains(first) && method.ParameterLocals.Contains(second) &&
+               !ReferenceEquals(first, second) && first.Register.Version == -1 &&
+               second.Register.Version == -1 && first.Register.Number == firstRegister.Number &&
+               second.Register.Number == secondRegister.Number &&
+               ReferenceEquals(first.Type, owner) && ReferenceEquals(second.Type, owner) &&
+               parameters.Select((parameter, index) =>
+                   parameter.ParameterIndex == index && !parameter.IsRef &&
+                   parameter.OverrideParameterType == null &&
+                   ReferenceEquals(parameter.ParameterType, owner) &&
+                   ReferenceEquals(parameter.DefaultParameterType, owner) &&
+                   parameter.Attributes == parameter.DefaultAttributes).All(valid => valid) &&
+               ReferenceEquals(owner.DeclaringAssembly, method.DeclaringType?.DeclaringAssembly) &&
+               owner.DeclaringType == null &&
+               (owner.Attributes & TypeAttributes.VisibilityMask) == TypeAttributes.Public &&
+               owner.Attributes == owner.DefaultAttributes &&
+               (!requireNativeBinding ||
+                (owner.Attributes & TypeAttributes.Sealed) != 0 &&
+                ReferenceEquals(owner.BaseType, method.AppContext.SystemTypes.SystemObjectType) &&
+                ReferenceEquals(owner.BaseType, owner.DefaultBaseType) &&
+                owner.Definition is { HasCctor: false, GenericContainer: null,
+                    PackingSizeIsDefault: true, ClassSizeIsDefault: true }) &&
+               owner.Methods.All(candidate => candidate.Name is not (".cctor" or "op_Equality" or "op_Inequality") &&
+                   candidate.DefaultName is not (".cctor" or "op_Equality" or "op_Inequality")) &&
+               (field.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Public &&
+               field.Attributes == field.DefaultAttributes && field.Name == field.DefaultName &&
+               !field.IsStatic && owner.Fields.Contains(field) &&
+               ReferenceEquals(field.FieldType, method.AppContext.SystemTypes.SystemInt32Type) &&
+               ReferenceEquals(fieldAccess.Local, first) &&
+               fieldAccess.Offset == field.Offset && field.Offset >= 0 &&
+               (!requireNativeBinding || NarrowFieldEqualityProof.HasUnchangedFieldLayout(fieldAccess, 32));
     }
 
     internal static bool HasUnchangedNativeSignature(MethodAnalysisContext target)

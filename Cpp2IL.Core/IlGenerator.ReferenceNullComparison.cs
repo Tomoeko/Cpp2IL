@@ -24,17 +24,21 @@ public static partial class IlGenerator
         var context = locals.Context;
         if (!IsReferenceNullComparisonShape(comparison,
                 context.AppContext.SystemTypes.SystemBooleanType, out var reference) ||
-            !X86RuntimeNullThrowProof.IsSupportedProfile(context.AppContext) ||
-            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context,
-                requireUniqueBinding: false) ||
-            (!RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context) &&
-             !X86ReferenceNullReturnProof.IsApplicable(context,
-                 X86Utils.Iterate(context).ToArray())) ||
             context.ControlFlowGraph is not { } graph ||
             !graph.Instructions.Contains(comparison) ||
             !locals.Parameters.ContainsKey(reference) ||
             !HasUnchangedParameterStorage(graph, reference) ||
-            !UnchangedReferenceParameter(context, locals, reference, reference.Type!))
+            // ValidateCallSemantics already revalidated every probe before GenerateIl
+            // changes branch operands from blocks to instruction labels.
+            !(context.NullArmFieldProbes.Any(probe =>
+                  ReferenceEquals(probe.Comparison, comparison)) ||
+              X86RuntimeNullThrowProof.IsSupportedProfile(context.AppContext) &&
+              RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context,
+                  requireUniqueBinding: false) &&
+              (RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context) ||
+               X86ReferenceNullReturnProof.IsApplicable(context,
+                   X86Utils.Iterate(context).ToArray())) &&
+              UnchangedReferenceParameter(context, locals, reference, reference.Type!)))
             return false;
 
         var instructions = method.CilMethodBody!.Instructions;

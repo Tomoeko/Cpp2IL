@@ -73,6 +73,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
     // Retains the proof that a removed target-runtime null arm is still represented by
     // an emitted instance-field access after later graph transformations.
     internal List<RuntimeNullGuardCoalescer.FieldAccessEvidence> NullCheckedFieldAccesses = [];
+    internal List<RuntimeNullGuardCoalescer.NullArmFieldProbeEvidence> NullArmFieldProbes = [];
 
     public static int MaxMethodSizeBytes = 30000; // 30KB
 
