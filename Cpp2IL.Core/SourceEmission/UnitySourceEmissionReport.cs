@@ -8,7 +8,7 @@ namespace Cpp2IL.Core.SourceEmission;
 
 public sealed class UnitySourceEmissionReport
 {
-    public int SchemaVersion => 4;
+    public int SchemaVersion => 5;
     public string UnityVersion { get; set; } = "2021.3.35f1";
     public string SourceDialect => "C# 9 with Unity restrictions";
     public string SourceGeneration { get; set; } = "incomplete";
@@ -25,6 +25,7 @@ public sealed class UnitySourceEmissionReport
     public List<string> Diagnostics { get; } = [];
     public List<UnityReturnMetadataAssemblyReport> ReturnMetadata { get; } = [];
     public List<UnityValueTypeClassLayoutAssemblyReport> ValueTypeClassLayoutMetadata { get; } = [];
+    public List<UnityReferenceClassLayoutAssemblyReport> ReferenceClassLayoutMetadata { get; } = [];
     public List<string> DeclarationDiagnostics { get; } = [];
 
     public void WriteJson(string path)
@@ -69,6 +70,20 @@ public sealed class UnitySourceEmissionReport
                     ",\"RawNativeSize\":" + type.RawNativeSize +
                     ",\"EmittedClassSizeCandidate\":" + type.EmittedClassSizeCandidate +
                     ",\"DeclaredClassSize\":" + JsonText.Quote(type.DeclaredClassSize) + "}")) + "]}")) + "],\n" +
+            "  \"ReferenceClassLayoutMetadata\":[" + string.Join(",", ReferenceClassLayoutMetadata.Select(item =>
+                "{\"Name\":" + JsonText.Quote(item.Name) +
+                ",\"UnemittedClassLayoutCount\":" + item.UnemittedClassLayoutCount +
+                ",\"UnknownDeclaredClassSizeCount\":" + item.UnknownDeclaredClassSizeCount +
+                ",\"EvidenceSource\":" + JsonText.Quote(item.EvidenceSource) +
+                ",\"Types\":[" + string.Join(",", item.Types.Select(type =>
+                    "{\"Name\":" + JsonText.Quote(type.Name) +
+                    ",\"RawNativeSize\":" + type.RawNativeSize +
+                    ",\"PackingSizeIsDefault\":" + (type.PackingSizeIsDefault ? "true" : "false") +
+                    ",\"ClassSizeIsDefault\":" + (type.ClassSizeIsDefault ? "true" : "false") +
+                    ",\"PlayerPackingSize\":" + type.PlayerPackingSize +
+                    ",\"PlayerSpecifiedPackingSize\":" + type.PlayerSpecifiedPackingSize +
+                    ",\"DeclaredClassSize\":" + JsonText.Quote(type.DeclaredClassSize) +
+                    ",\"ClassLayoutEmission\":" + JsonText.Quote(type.ClassLayoutEmission) + "}")) + "]}")) + "],\n" +
             "  \"DeclarationDiagnostics\":" + JsonText.Array(DeclarationDiagnostics) + ",\n" +
             "  \"Diagnostics\":" + JsonText.Array(Diagnostics) + "\n}\n";
         File.WriteAllText(path, json, new UTF8Encoding(false));
@@ -104,6 +119,21 @@ public sealed record UnityValueTypeClassLayoutTypeReport(string Name, int RawNat
     // Match the existing DLL writer's conversion. -1 becomes zero; zero remains zero.
     public uint EmittedClassSizeCandidate => RawNativeSize == -1 ? 0 : unchecked((uint)RawNativeSize);
     public string DeclaredClassSize => "UnknownDeclaredClassSize";
+}
+
+public sealed record UnityReferenceClassLayoutAssemblyReport(string Name, IReadOnlyList<UnityReferenceClassLayoutTypeReport> Types)
+{
+    public int UnemittedClassLayoutCount => Types.Count;
+    public int UnknownDeclaredClassSizeCount => Types.Count(type => !type.ClassSizeIsDefault);
+    public string EvidenceSource => "v29-player-type-and-current-dll-writer";
+}
+
+public sealed record UnityReferenceClassLayoutTypeReport(
+    string Name, int RawNativeSize, bool PackingSizeIsDefault, bool ClassSizeIsDefault,
+    uint PlayerPackingSize, uint PlayerSpecifiedPackingSize)
+{
+    public string DeclaredClassSize => ClassSizeIsDefault ? "NoNondefaultClassSizeFlag" : "UnknownDeclaredClassSize";
+    public string ClassLayoutEmission => "ClassLayoutRowOmitted";
 }
 
 public sealed class UnitySourceAssemblyReport

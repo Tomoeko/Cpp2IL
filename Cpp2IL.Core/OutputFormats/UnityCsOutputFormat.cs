@@ -70,6 +70,7 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
                 "DECL001: Version-29 player metadata cannot certify absence of return-parameter rows or return custom attributes. An independent managed oracle is required to validate these declaration facts.");
         }
         UnityV29ValueTypeClassLayoutProvenance.AddToReport(sourceReport, UnityV29ValueTypeClassLayoutProvenance.Analyze(context, selected));
+        UnityV29ReferenceClassLayoutProvenance.AddToReport(sourceReport, UnityV29ReferenceClassLayoutProvenance.Analyze(context, selected));
         foreach (var name in UnityV29AttributeTypeProvenance.GetAffectedAssemblyNames(context, selected))
         {
             sourceReport.SourceGeneration = "partial";
@@ -81,9 +82,15 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
             sourceReport.Diagnostics.Add("SOURCE003: Selected application methods contain unresolved recovery. See the recovery report; fallback bodies are not recovered behavior.");
         }
         sourceReport.WriteJson(Path.Combine(projectDirectory, "source-emission-report.json"));
-        if (strict && sourceReport.SourceGeneration != "generated")
-            throw new InvalidOperationException("Strict Unity source output rejected decompiler diagnostics. See the source emission report.");
+        if (strict)
+            EnsureCompleteSourceGeneration(sourceReport);
 
         Logger.InfoNewline("Unity source project generated. Method dispositions are in source-recovery-report.json. Exact-editor compilation, native rebuilding, and behavioral validation remain unverified.", "UnitySource");
+    }
+
+    internal static void EnsureCompleteSourceGeneration(UnitySourceEmissionReport report)
+    {
+        if (report.SourceGeneration != "generated")
+            throw new InvalidOperationException("Strict Unity source output rejected decompiler diagnostics. See the source emission report.");
     }
 }
