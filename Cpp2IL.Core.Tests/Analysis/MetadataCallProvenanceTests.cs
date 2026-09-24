@@ -1,23 +1,39 @@
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
 using LibCpp2IL;
-using System.Reflection;
 
 namespace Cpp2IL.Core.Tests.Analysis;
 
+[NonParallelizable]
 public class MetadataCallProvenanceTests
 {
     private ApplicationAnalysisContext _app = null!;
+    private ulong? _boundAddress;
 
-    [SetUp]
-    public void Setup()
+    [OneTimeSetUp]
+    public void LoadPublicTypeModel()
     {
         Cpp2IlApi.ResetInternalState();
         _app = TestGameLoader.LoadSimple2019Game();
     }
+
+    [TearDown]
+    public void RemoveSyntheticCallBinding()
+    {
+        if (_boundAddress is not { } address)
+            return;
+
+        _app.MethodsByAddress.Remove(address);
+        _boundAddress = null;
+    }
+
+    [OneTimeTearDown]
+    public void ReleasePublicTypeModel() => Cpp2IlApi.ResetInternalState();
 
     [TestCase(false)]
     [TestCase(true)]
@@ -59,7 +75,7 @@ public class MetadataCallProvenanceTests
         var attributes = MethodAttributes.Public | (isStatic ? MethodAttributes.Static : 0);
         var first = new InjectedMethodAnalysisContext(owner, "First", owner, attributes, [owner]);
         var second = new InjectedMethodAnalysisContext(owner, "Second", owner, attributes, [owner]);
-        _app.MethodsByAddress[target] = [first, second];
+        BindMethods(target, [first, second]);
 
         var context = CreateMethod();
         var result = new LocalVariable("result", new Register(1, "result"), owner);
@@ -81,7 +97,7 @@ public class MetadataCallProvenanceTests
         var attributes = MethodAttributes.Public | MethodAttributes.Static;
         var first = new InjectedMethodAnalysisContext(owner, "First", owner, attributes, [owner]);
         var second = new InjectedMethodAnalysisContext(owner, "Second", owner, attributes, [owner]);
-        _app.MethodsByAddress[target] = [first, second];
+        BindMethods(target, [first, second]);
 
         var context = CreateMethod();
         var result = new LocalVariable("result", new Register(1, "result"), owner);
@@ -104,7 +120,7 @@ public class MetadataCallProvenanceTests
             attributes, []);
         var withValue = new InjectedMethodAnalysisContext(owner, ".ctor", _app.SystemTypes.SystemVoidType,
             attributes, [_app.SystemTypes.SystemInt32Type]);
-        _app.MethodsByAddress[target] = [empty, withValue];
+        BindMethods(target, [empty, withValue]);
 
         var context = CreateMethod();
         var instance = new LocalVariable("instance", new Register(1, "instance"), owner);
@@ -128,7 +144,7 @@ public class MetadataCallProvenanceTests
             attributes, []);
         var unrelated = new InjectedMethodAnalysisContext(other, ".ctor", _app.SystemTypes.SystemVoidType,
             attributes, []);
-        _app.MethodsByAddress[target] = [unrelated, constructor];
+        BindMethods(target, [unrelated, constructor]);
 
         var context = CreateMethod();
         var instance = new LocalVariable("instance", new Register(1, "instance"), owner);
@@ -153,7 +169,7 @@ public class MetadataCallProvenanceTests
             attributes);
         var boundConstructor = new InjectedMethodAnalysisContext(_app.SystemTypes.SystemObjectType,
             ".ctor", _app.SystemTypes.SystemVoidType, attributes, []);
-        _app.MethodsByAddress[target] = [boundConstructor];
+        BindMethods(target, [boundConstructor]);
 
         var context = CreateMethod();
         var instance = new LocalVariable("instance", new Register(1, "instance"), owner);
@@ -177,7 +193,7 @@ public class MetadataCallProvenanceTests
         var attributes = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
         var boundConstructor = new InjectedMethodAnalysisContext(genericType, ".ctor",
             _app.SystemTypes.SystemVoidType, attributes, []);
-        _app.MethodsByAddress[target] = [boundConstructor];
+        BindMethods(target, [boundConstructor]);
 
         var context = CreateMethod();
         var instance = new LocalVariable("instance", new Register(1, "instance"), owner);
@@ -204,7 +220,7 @@ public class MetadataCallProvenanceTests
             _app.SystemTypes.SystemVoidType, MethodAttributes.Public, []);
         var derivedMethod = new InjectedMethodAnalysisContext(derived, "Dispose",
             _app.SystemTypes.SystemVoidType, MethodAttributes.Public, []);
-        _app.MethodsByAddress[target] = [derivedMethod, baseConstructor];
+        BindMethods(target, [derivedMethod, baseConstructor]);
 
         var caller = new InjectedMethodAnalysisContext(derived,
             callerIsConstructor ? ".ctor" : "OrdinaryMethod", _app.SystemTypes.SystemVoidType,
@@ -229,9 +245,9 @@ public class MetadataCallProvenanceTests
             _app.SystemTypes.SystemVoidType, attributes, []);
         var baseConstructor = new InjectedMethodAnalysisContext(baseType, ".ctor",
             _app.SystemTypes.SystemVoidType, attributes, []);
-        _app.MethodsByAddress[target] = reverseAliases
+        BindMethods(target, reverseAliases
             ? [baseConstructor, derivedConstructor]
-            : [derivedConstructor, baseConstructor];
+            : [derivedConstructor, baseConstructor]);
 
         var caller = new InjectedMethodAnalysisContext(derived, ".ctor",
             _app.SystemTypes.SystemVoidType, attributes, []);
@@ -259,7 +275,7 @@ public class MetadataCallProvenanceTests
             _app.SystemTypes.SystemVoidType, attributes, []);
         var immediateBaseConstructor = new InjectedMethodAnalysisContext(middle, ".ctor",
             _app.SystemTypes.SystemVoidType, attributes, []);
-        _app.MethodsByAddress[target] = [rootConstructor, immediateBaseConstructor];
+        BindMethods(target, [rootConstructor, immediateBaseConstructor]);
 
         var caller = new InjectedMethodAnalysisContext(derived, ".ctor",
             _app.SystemTypes.SystemVoidType, attributes, []);
@@ -289,7 +305,7 @@ public class MetadataCallProvenanceTests
             _app.SystemTypes.SystemVoidType, attributes, []);
         var unrelatedConstructor = new InjectedMethodAnalysisContext(unrelated, ".ctor",
             _app.SystemTypes.SystemVoidType, attributes, []);
-        _app.MethodsByAddress[target] = [rootConstructor, unrelatedConstructor];
+        BindMethods(target, [rootConstructor, unrelatedConstructor]);
 
         var caller = new InjectedMethodAnalysisContext(derived, ".ctor",
             _app.SystemTypes.SystemVoidType, attributes, []);
@@ -325,7 +341,7 @@ public class MetadataCallProvenanceTests
             _app.SystemTypes.SystemVoidType, attributes, []);
         var immediateBaseConstructor = new InjectedMethodAnalysisContext(middle, ".ctor",
             _app.SystemTypes.SystemVoidType, attributes, []);
-        _app.MethodsByAddress[target] = [rootConstructor, immediateBaseConstructor];
+        BindMethods(target, [rootConstructor, immediateBaseConstructor]);
         if (includeSelfAlias)
             _app.MethodsByAddress[target].Add(new InjectedMethodAnalysisContext(owner, ".ctor",
                 _app.SystemTypes.SystemVoidType, attributes, []));
@@ -345,4 +361,13 @@ public class MetadataCallProvenanceTests
     private InjectedMethodAnalysisContext CreateMethod() => new(_app.SystemTypes.SystemObjectType,
         "SyntheticCall", _app.SystemTypes.SystemStringType, MethodAttributes.Public | MethodAttributes.Static,
         [_app.SystemTypes.SystemIntPtrType]) { Locals = [], ParameterLocals = [], ParameterOperands = [], AnalysisWarnings = [] };
+
+    private void BindMethods(ulong address, List<MethodAnalysisContext> methods)
+    {
+        Assert.That(_boundAddress, Is.Null, "Each test must own only one synthetic call binding.");
+        Assert.That(_app.MethodsByAddress.ContainsKey(address), Is.False,
+            "Synthetic call address must not replace a fixture binding.");
+        _app.MethodsByAddress.Add(address, methods);
+        _boundAddress = address;
+    }
 }
