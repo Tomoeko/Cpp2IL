@@ -73,15 +73,15 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
         UnityV29ReferenceClassLayoutProvenance.AddToReport(sourceReport, UnityV29ReferenceClassLayoutProvenance.Analyze(context, selected));
         foreach (var assessment in UnityV29AttributeTypeProvenance.AssessEmission(context, selected))
         {
-            if (assessment.IdentitiesEmitted)
+            if (assessment.RetainedArgumentsEmitted)
             {
                 sourceReport.DeclarationFidelity = "partial";
-                sourceReport.DeclarationDiagnostics.Add($"DECL004: {assessment.AssemblyName}: {assessment.IndexedValueCount} V29 custom-attribute System.Type values matched their indexed identities in the managed emission model, but the original serialized type-name qualification is unavailable. Compare against an independent managed oracle to validate raw declaration encoding.");
+                sourceReport.DeclarationDiagnostics.Add($"DECL004: {assessment.AssemblyName}: {assessment.IndexedValueCount} V29 custom-attribute System.Type values and their retained sibling arguments matched the managed emission model, but the original serialized type-name qualification is unavailable. Compare against an independent managed oracle to validate raw declaration encoding.");
             }
             else
             {
                 sourceReport.SourceGeneration = "partial";
-                sourceReport.Diagnostics.Add($"SOURCE010: {assessment.AssemblyName}: One or more of {assessment.IndexedValueCount} V29 custom-attribute System.Type values could not be matched to emitted attributes with their indexed type identity.");
+                sourceReport.Diagnostics.Add($"SOURCE010: {assessment.AssemblyName}: One or more V29 custom attributes containing {assessment.IndexedValueCount} indexed System.Type values could not be matched to emitted attributes with their retained argument types and values.");
             }
         }
         if (report.Methods.Any(m => selected.Contains(m.AssemblyName, StringComparer.Ordinal) && m.IsUnresolved))
