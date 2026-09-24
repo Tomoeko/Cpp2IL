@@ -1,0 +1,5 @@
+{
+  "name": "ThrowOnlyFixture",
+  "noEngineReferences": true,
+  "references": []
+}
