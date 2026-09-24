@@ -32,6 +32,8 @@ import boolean_getter
 import byte_threshold
 import float_array
 import float_comparison
+import forwarded_argument
+import struct_forward_call
 import integer_extensions
 import iterator_factory
 import iterator_factory_manual
@@ -97,6 +99,8 @@ PROFILES = {
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
+    "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
+    "struct-forward-call": {"assembly": "StructForwardCallFixture", "source": VALIDATION / "StructForwardCallFixture", "methods": 5},
     "scalar-truncation": {"assembly": "ScalarTruncationFixture", "source": VALIDATION / "ScalarTruncationFixture", "methods": 2},
     "loop-calls": {"assembly": "LoopCallFixture", "source": VALIDATION / "LoopCallFixture", "methods": 4},
     "word-fields": {"assembly": "WordFieldFixture", "source": VALIDATION / "WordFieldFixture", "methods": 4},
@@ -195,6 +199,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return field_guard.verify(path, stage, VERSION)
     if profile == "zero-arg-field-call":
         return zero_arg_field_call.verify(path, stage, VERSION)
+    if profile == "forwarded-argument":
+        return forwarded_argument.verify(path, stage, VERSION)
+    if profile == "struct-forward-call":
+        return struct_forward_call.verify(path, stage, VERSION)
     if profile == "scalar-truncation":
         return scalar_truncation.verify(path, stage, VERSION)
     if profile == "loop-calls":
