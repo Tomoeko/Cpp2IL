@@ -31,6 +31,7 @@ import narrow_array
 import reference_null
 import reference_store
 import scalar_truncation
+import static_word_getter
 import xmm_spill
 import word_array
 import word_fields
@@ -51,6 +52,7 @@ PROFILES = {
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 8},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 3},
+    "static-word-getter": {"assembly": "StaticWordGetterFixture", "source": VALIDATION / "StaticWordGetterFixture", "methods": 2},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
     "reference-store": {"assembly": "ReferenceStoreFixture", "source": VALIDATION / "ReferenceStoreFixture", "methods": 2},
@@ -103,6 +105,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return enum_passthrough.verify(path, stage, VERSION)
     if profile == "static-field-getter":
         return static_field_getter.verify(path, stage, VERSION)
+    if profile == "static-word-getter":
+        return static_word_getter.verify(path, stage, VERSION)
     if profile == "reference-field":
         return reference_field.verify(path, stage, VERSION)
     if profile == "reference-null":

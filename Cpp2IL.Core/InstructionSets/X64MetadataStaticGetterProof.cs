@@ -72,9 +72,7 @@ internal static class X64MetadataStaticGetterProof
             native[4].Code != Code.Call_rel32_64 ||
             !RipLoad(native[6], out var slot) ||
             slot != native[3].IPRelativeMemoryAddress ||
-            !FieldLoad(native[7], NativeRegister.RAX,
-                (ulong)Il2CppClassLayout.StaticFieldsOffset64) ||
-            !FieldLoad(native[8], NativeRegister.RAX, out var fieldOffset) ||
+            !FieldLoadPair(native[7], native[8], out var fieldOffset, out var loadSize) ||
             !Stack(native[9], Mnemonic.Add) ||
             native[10].Code != Code.Retnq || native[10].OpCount != 0 ||
             X86CallerExceptionRegionProof.Check(method, native.Take(11).ToArray(),
@@ -90,12 +88,13 @@ internal static class X64MetadataStaticGetterProof
         var usage = app.LibCpp2IlContext.GetRawTypeGlobalByAddress(slot);
         if (usage is not { Type: MetadataUsageType.TypeInfo, IsValid: true } ||
             !ReferenceEquals(app.ResolveIl2CppType(usage.AsType()), owner) ||
-            fieldOffset > int.MaxValue || fieldOffset + 8 > owner.Definition.RawSizes.static_fields_size)
+            fieldOffset > int.MaxValue || fieldOffset + loadSize > owner.Definition.RawSizes.static_fields_size)
             return null;
 
         var fields = owner.Fields.Where(field => field.IsStatic && field.Offset == (long)fieldOffset)
             .ToArray();
-        if (fields is not [{ } matched] || !UnchangedField(matched, method.ReturnType, definition.RawReturnType))
+        if (fields is not [{ } matched] || !UnchangedField(matched, method.ReturnType,
+                definition.RawReturnType, loadSize))
             return null;
         return new Evidence(matched, slot);
     }
@@ -123,7 +122,7 @@ internal static class X64MetadataStaticGetterProof
         (owner.Attributes & TypeAttributes.LayoutMask) != TypeAttributes.ExplicitLayout;
 
     private static bool UnchangedField(FieldAnalysisContext field, TypeAnalysisContext returnType,
-        Il2CppType returnRawType)
+        Il2CppType returnRawType, uint loadSize)
     {
         var app = field.AppContext;
         var raw = field.BackingData?.Field.RawFieldType;
@@ -136,6 +135,12 @@ internal static class X64MetadataStaticGetterProof
         };
         var reference = raw?.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS &&
             NullCheckedCall.IsReferenceClass(type);
+        var int32 = raw?.Type switch
+        {
+            Il2CppTypeEnum.IL2CPP_TYPE_I4 => ReferenceEquals(type, app.SystemTypes.SystemInt32Type),
+            Il2CppTypeEnum.IL2CPP_TYPE_U4 => ReferenceEquals(type, app.SystemTypes.SystemUInt32Type),
+            _ => false,
+        };
         return field.Name == field.DefaultName && field.Attributes == field.DefaultAttributes &&
                field.OverrideFieldType == null && field.Offset == field.DefaultOffset &&
                field.Offset >= 0 && field.IsStatic &&
@@ -144,7 +149,46 @@ internal static class X64MetadataStaticGetterProof
                field.StaticArrayInitialValue.Length == 0 &&
                raw is { NumMods: 0, Byref: 0, Pinned: 0 } &&
                returnRawType.Type == raw.Type &&
-               ReferenceEquals(type, returnType) && (nativeInteger || reference);
+               ReferenceEquals(type, returnType) &&
+               ((loadSize == 8 && (nativeInteger || reference)) || (loadSize == 4 && int32));
+    }
+
+    private static bool FieldLoadPair(NativeInstruction staticFieldsLoad, NativeInstruction fieldLoad,
+        out ulong fieldOffset, out uint loadSize)
+    {
+        if (FieldLoad(staticFieldsLoad, NativeRegister.RAX,
+                (ulong)Il2CppClassLayout.StaticFieldsOffset64) &&
+            FieldLoad(fieldLoad, NativeRegister.RAX, out fieldOffset))
+        {
+            loadSize = 8;
+            return true;
+        }
+
+        if (StaticFieldsPointerToRcx(staticFieldsLoad) && DwordFieldLoadToEax(fieldLoad, out fieldOffset))
+        {
+            loadSize = 4;
+            return true;
+        }
+
+        fieldOffset = 0;
+        loadSize = 0;
+        return false;
+    }
+
+    private static bool StaticFieldsPointerToRcx(NativeInstruction instruction) =>
+        instruction.Code == Code.Mov_r64_rm64 && instruction.Op0Kind == OpKind.Register &&
+        instruction.Op0Register == NativeRegister.RCX && instruction.Op1Kind == OpKind.Memory &&
+        instruction.MemoryBase == NativeRegister.RAX && instruction.MemoryIndex == NativeRegister.None &&
+        instruction.MemorySize.GetSize() == 8 &&
+        instruction.MemoryDisplacement64 == (ulong)Il2CppClassLayout.StaticFieldsOffset64;
+
+    private static bool DwordFieldLoadToEax(NativeInstruction instruction, out ulong fieldOffset)
+    {
+        fieldOffset = instruction.MemoryDisplacement64;
+        return instruction.Code == Code.Mov_r32_rm32 && instruction.Op0Kind == OpKind.Register &&
+               instruction.Op0Register == NativeRegister.EAX && instruction.Op1Kind == OpKind.Memory &&
+               instruction.MemoryBase == NativeRegister.RCX && instruction.MemoryIndex == NativeRegister.None &&
+               instruction.MemorySize.GetSize() == 4;
     }
 
     private static bool FileBackedWritableData(PE pe, X64UnwindProof.Index unwind,
