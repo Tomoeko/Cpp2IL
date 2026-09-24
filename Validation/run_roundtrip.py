@@ -23,6 +23,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "reference-store", "external-references", "numerics-reference", "byte-threshold", "field-guard",
     "zero-arg-field-call", "forwarded-argument", "struct-forward-call", "struct-static-forward-call", "scalar-truncation", "loop-calls", "word-fields",
     "nested-boolean-store",
+    "unused-reference-nested-store",
     "iterator-factory-manual",
     "iterator-factory-variant",
     "iterator-factory-direct-ctor",

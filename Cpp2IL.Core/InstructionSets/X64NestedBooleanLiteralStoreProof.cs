@@ -30,14 +30,15 @@ internal static class X64NestedBooleanLiteralStoreProof
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) || method.IsStatic || method.IsVirtual ||
             method.Name is ".ctor" or ".cctor" || method.Name != method.DefaultName ||
-            !method.IsVoid || method.OverrideReturnType != null || method.Parameters.Count != 0 ||
+            !method.IsVoid || method.OverrideReturnType != null || method.Parameters.Count > 1 ||
             method.GenericParameters.Count != 0 ||
             method.DeclaringType is not { Definition: { GenericContainer: null } } owner ||
             !NullCheckedCall.IsReferenceClass(owner) ||
-            method.Definition is not { GenericContainer: null, parameterCount: 0,
+            method.Definition is not { GenericContainer: null,
                 RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
                     NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
-            (definition.InternalParameterData?.Length ?? 0) != 0 ||
+            definition.parameterCount > 1 ||
+            !HasSupportedParameters(method, definition) ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
@@ -112,6 +113,35 @@ internal static class X64NestedBooleanLiteralStoreProof
             return null;
 
         return new Evidence(receiverField, valueField, value);
+    }
+
+    private static bool HasSupportedParameters(MethodAnalysisContext method,
+        LibCpp2IL.Metadata.Il2CppMethodDefinition definition)
+    {
+        if (!RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
+            RuntimeNullGuardCoalescer.HasOutputOptions(method))
+            return false;
+        if (method.Parameters.Count == 0)
+            return true;
+        if (method.Parameters is not [var ignored] ||
+            definition.InternalParameterData is not [var raw] ||
+            ignored.ParameterIndex != 0 ||
+            !ReferenceEquals(ignored.DeclaringMethod, method) ||
+            !ReferenceEquals(ignored.Definition, raw) || ignored.IsRef ||
+            ignored.Name != ignored.DefaultName ||
+            ignored.Attributes != ignored.DefaultAttributes ||
+            ignored.OverrideAttributes != null || ignored.OverrideParameterType != null ||
+            ignored.UseOverrideDefaultValue ||
+            raw.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                NumMods: 0, Byref: 0, Pinned: 0 } ||
+            ignored.ParameterType is not { Definition: { GenericContainer: null } } type ||
+            !NullCheckedCall.IsReferenceClass(type))
+            return false;
+
+        // The complete native body below reads RCX for `this` but never reads
+        // the second argument register, RDX. Keep the ignored argument within
+        // the ordinary single-register reference ABI.
+        return true;
     }
 
     private static bool Stack(NativeInstruction instruction, Mnemonic mnemonic) =>
