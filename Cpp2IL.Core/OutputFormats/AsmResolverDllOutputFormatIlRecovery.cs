@@ -223,6 +223,20 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64InheritedInt32ConstructorRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Inherited Int32 constructor IL emitted from a complete shared native body, proved inert immediate-base thunk, and unchanged field layout; behavior remains unverified.");
+                return;
+            }
+
+            if (X64AncestorConstructorThunkRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Immediate-base constructor call IL emitted from a complete shared native tail thunk and unchanged constructor chain; behavior remains unverified.");
+                return;
+            }
+
             if (X64GenericBaseConstructorRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
