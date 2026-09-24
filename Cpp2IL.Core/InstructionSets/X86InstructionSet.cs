@@ -67,6 +67,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return byteThreshold; // The complete leaf proves one unsigned byte-field predicate.
         if (X86ScalarArrayAccessProof.TryLift(context, nativeInstructions) is { } arrayAccess)
             return arrayAccess; // The closed proof includes both helper exits and the caller unwind region.
+        if (X86FieldArrayAccessProof.TryLift(context, nativeInstructions) is { } fieldArrayAccess)
+            return fieldArrayAccess; // The field read and both array exception exits are proved together.
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
             return QualifyExceptionRegions(integerExtension);
         if (X86ScalarTruncationProof.TryLift(context, nativeInstructions) is { } scalarTruncation)

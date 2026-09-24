@@ -10,6 +10,7 @@ import static_field_getter
 import catch_divide
 import reference_field
 import exception_regions
+import field_array
 import field_guard
 import hashlib
 import json
@@ -46,6 +47,7 @@ PROFILES = {
     "catch-divide": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "CatchDivideFixture", "methods": 1},
     "exception-regions": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "ExceptionRegionFixture", "methods": 2},
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
+    "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
@@ -93,6 +95,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return exception_regions.verify(path, stage, VERSION)
     if profile == "array-access":
         return array_access.verify(path, stage, VERSION)
+    if profile == "field-array":
+        return field_array.verify(path, stage, VERSION)
     if profile == "narrow-array":
         return narrow_array.verify(path, stage, VERSION)
     if profile == "float-array":

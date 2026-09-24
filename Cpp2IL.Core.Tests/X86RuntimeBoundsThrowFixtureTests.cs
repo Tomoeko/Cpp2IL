@@ -4,6 +4,8 @@ using System.Linq;
 using System.Reflection;
 using AssetRipper.Primitives;
 using Cpp2IL.Core.InstructionSets;
+using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Model.CustomAttributes;
 using Cpp2IL.Core.Utils;
 using Iced.Intel;
 using IsilOpCode = Cpp2IL.Core.ISIL.OpCode;
@@ -104,6 +106,21 @@ public class X86RuntimeBoundsThrowFixtureTests
                     !X86RuntimeBoundsThrowProof.TryIdentify(app, instruction.NearBranchTarget)), Is.True);
             }
             finally { identity.Attributes = originalAttributes; }
+
+            var optionType = new InjectedTypeAnalysisContext(access.DeclaringType!.DeclaringAssembly,
+                "Unity.IL2CPP.CompilerServices", "Il2CppSetOptionAttribute",
+                app.SystemTypes.SystemAttributeType,
+                TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed);
+            var optionConstructor = optionType.InjectMethodContext(".ctor",
+                app.SystemTypes.SystemVoidType, MethodAttributes.Public);
+            var originalCustomAttributes = access.CustomAttributes;
+            try
+            {
+                access.CustomAttributes = [new AnalyzedCustomAttribute(optionConstructor)];
+                Assert.That(X86ScalarArrayAccessProof.TryLift(access, native), Is.Null,
+                    "An IL2CPP output option can alter the implicit exception contract.");
+            }
+            finally { access.CustomAttributes = originalCustomAttributes; }
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }

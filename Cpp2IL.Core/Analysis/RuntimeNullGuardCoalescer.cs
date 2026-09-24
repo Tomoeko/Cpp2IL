@@ -421,7 +421,7 @@ internal static class RuntimeNullGuardCoalescer
                current.ReceiverRegister == proof.ReceiverRegister;
     }
 
-    private static bool HasOutputOptions(MethodAnalysisContext method)
+    internal static bool HasOutputOptions(MethodAnalysisContext method)
     {
         if (HasOption(method) || method.DeclaringType is { } owner && HasOption(owner.DeclaringAssembly))
             return true;

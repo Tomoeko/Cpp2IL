@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
 using Iced.Intel;
 using LibCpp2IL;
@@ -91,7 +92,8 @@ internal static class X86ScalarArrayAccessProof
             ? ReferenceEquals(element, app.SystemTypes.SystemInt16Type) : null;
         var nullCall = body[9];
         var boundsCall = body[11];
-        if (!TryProveShape(body, isWrite, elementSize, isSingleElement, signedWordRead))
+        if (!TryProveShape(body, isWrite, elementSize, isSingleElement, signedWordRead) ||
+            RuntimeNullGuardCoalescer.HasOutputOptions(context))
             return null;
         var provedRegion = isSingleElement || isWordElement
             ? TryCompleteTrapTerminatedRegion(app, context.UnderlyingPointer, body)
@@ -169,14 +171,14 @@ internal static class X86ScalarArrayAccessProof
     }
 
     internal static IReadOnlyList<Instruction>? TryCompleteTrapTerminatedRegion(ApplicationAnalysisContext app,
-        ulong entry, IReadOnlyList<Instruction> body)
+        ulong entry, IReadOnlyList<Instruction> body, int terminalCallIndex = 11)
     {
-        if (body.Count < 12)
+        if (terminalCallIndex is not (11 or 12) || body.Count <= terminalCallIndex)
             return null;
         // The exact native region has one INT3 after the proved nonreturning bounds call.
         // X86Utils may stop before that byte or decode onward through alignment into the next
         // function. Reconstruct the complete unwind region from file-backed player bytes.
-        var trapAddress = body[11].NextIP;
+        var trapAddress = body[terminalCallIndex].NextIP;
         if (trapAddress == ulong.MaxValue || app.Binary is not PE pe ||
             !pe.TryMapVirtualAddressToRaw(trapAddress, out var raw))
             return null;
@@ -193,10 +195,12 @@ internal static class X86ScalarArrayAccessProof
         var decoder = Decoder.Create(64, new ByteArrayCodeReader([0xCC]), trapAddress);
         var trap = decoder.Decode();
         if (trap.Code != Code.Int3 || trap.IP != trapAddress || trap.NextIP != end ||
-            body.Count > 12 && body[12].IP < end &&
-            (body[12].IP != trapAddress || body[12].Code != Code.Int3 || body[12].NextIP != end))
+            body.Count > terminalCallIndex + 1 && body[terminalCallIndex + 1].IP < end &&
+            (body[terminalCallIndex + 1].IP != trapAddress ||
+             body[terminalCallIndex + 1].Code != Code.Int3 ||
+             body[terminalCallIndex + 1].NextIP != end))
             return null;
-        return body.Take(12).Append(trap).ToArray();
+        return body.Take(terminalCallIndex + 1).Append(trap).ToArray();
     }
 
     internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4,
