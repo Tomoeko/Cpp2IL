@@ -18,4 +18,6 @@ passed. The local accepted receipt is under
 
 This fixture proves only its bounded native shape. A related 113-byte shape in
 other player inputs currently fails the separate runtime metadata initializer
-helper proof; it remains unsupported pending independent authentication.
+helper proof and reverses the state/owner native field-write order. It remains
+unsupported pending independent authentication of both differences. Those
+players' IL2CPP Release build configuration is also unverified.
