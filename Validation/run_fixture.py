@@ -24,6 +24,7 @@ import sys
 import time
 
 import byte_fields
+import boolean_getter
 import byte_threshold
 import float_array
 import float_comparison
@@ -53,6 +54,7 @@ PROFILES = {
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
     "reference-array": {"assembly": "ReferenceArrayFixture", "source": VALIDATION / "ReferenceArrayFixture", "methods": 3},
+    "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 4},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 8},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 3},
@@ -107,6 +109,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return word_array.verify(path, stage, VERSION)
     if profile == "reference-array":
         return reference_array.verify(path, stage, VERSION)
+    if profile == "boolean-getter":
+        return boolean_getter.verify(path, stage, VERSION)
     if profile == "array-call":
         return array_call.verify(path, stage, VERSION)
     if profile == "enum-passthrough":
