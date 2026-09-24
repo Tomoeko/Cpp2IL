@@ -1,0 +1,5 @@
+# Boolean getter metadata control
+
+This synthetic fixture keeps two Boolean getter questions separate. `GenericFieldOwner` is a non-generic class whose constructed generic ancestor has no direct instance fields. The generic definition has a five-step non-generic base chain to `System.Object`; one earlier base owns a native-sized integer field. The derived class owns a Boolean field and a neighboring reference field. `VirtualBooleanBase` and `VirtualBooleanOverride` each read their own Boolean field; calls through a base-typed reference exercise virtual dispatch.
+
+The `boolean-getter-metadata` driver independently checks both Boolean values, inherited integer value preservation, neighboring reference identity and aliasing, base and override field independence, dispatch, and null receivers. Its eleven selected methods are eight implicit constructors and three getters. The exact Windows x64 Release IL2CPP baseline must establish the native shape and layout before either case can support a recovery proof. A successful behavior oracle by itself does not establish recovered source or native behavior.
