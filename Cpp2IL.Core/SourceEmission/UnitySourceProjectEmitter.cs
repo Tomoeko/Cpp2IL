@@ -23,10 +23,6 @@ namespace Cpp2IL.Core.SourceEmission;
 public static class UnitySourceProjectEmitter
 {
     public const string TargetUnityVersion = "2021.3.35f1";
-    // Unity's NET_Unity_4_8 profile supplies this exact framework identity.
-    private static readonly Version TargetSystemNumericsVersion = new(4, 0, 0, 0);
-    private static readonly byte[] TargetSystemNumericsToken = [0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89];
-
     public static DecompilerSettings CreateSettings() => new(LanguageVersion.CSharp9_0)
     {
         FileScopedNamespaces = false,
@@ -143,6 +139,18 @@ public static class UnitySourceProjectEmitter
                 foreach (var reference in externalReferences)
                 {
                     var configured = externalReferenceMap.TryGet(reference, out var entry);
+                    var mismatchedFrameworkIdentity = Unity2021TargetFrameworkAssemblies.IsKnownName(reference) &&
+                        !referencesByName[reference].All(Unity2021TargetFrameworkAssemblies.HasTargetIdentity);
+                    // NET_Unity_4_8 does not provide the host core library. For player-derived
+                    // source, it cannot be classified as a target reference by its name alone.
+                    var unavailableCoreLibrary = playerMetadataVersion is >= 29f and < 30f &&
+                        reference == "System.Private.CoreLib";
+                    if (mismatchedFrameworkIdentity || unavailableCoreLibrary)
+                    {
+                        report.Diagnostics.Add($"SOURCE007: {name}: {reference}: Managed identity is not supplied by the Unity {TargetUnityVersion} NET_Unity_4_8 target; source dependency kind is unresolved.");
+                        referenceKinds.Add(new UnityExternalReferenceReport { Name = reference, Kind = "unclassified", Provenance = "target-identity-mismatch" });
+                        continue;
+                    }
                     if (Unity2021TargetAssemblies.IsKnownName(reference) &&
                         !referencesByName[reference].All(Unity2021TargetAssemblies.HasTargetIdentity))
                     {
@@ -264,12 +272,10 @@ public static class UnitySourceProjectEmitter
             "System.Collections" or "System.Xml" or "System.Xml.Linq" or "Microsoft.CSharp";
 
     internal static bool IsTargetProvidedAssembly(AsmResolver.DotNet.AssemblyReference reference) =>
-        IsTargetProvidedAssembly(reference.Name?.ToString() ?? "") ||
-        Unity2021TargetAssemblies.HasTargetIdentity(reference) ||
-        reference.Name?.ToString() == "System.Numerics" &&
-        reference.Version == TargetSystemNumericsVersion &&
-        string.IsNullOrEmpty(reference.Culture?.ToString()) &&
-        (reference.PublicKeyOrToken ?? []).SequenceEqual(TargetSystemNumericsToken);
+        reference.Name?.ToString() is { } name &&
+        (Unity2021TargetFrameworkAssemblies.IsKnownName(name)
+            ? Unity2021TargetFrameworkAssemblies.HasTargetIdentity(reference)
+            : IsTargetProvidedAssembly(name) || Unity2021TargetAssemblies.HasTargetIdentity(reference));
 
     private static bool IsReservedSourceAssembly(string name) => IsTargetProvidedAssembly(name) ||
         Unity2021TargetAssemblies.IsKnownName(name) ||

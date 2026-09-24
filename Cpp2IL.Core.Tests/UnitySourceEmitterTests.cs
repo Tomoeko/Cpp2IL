@@ -180,6 +180,79 @@ public class UnitySourceEmitterTests
         });
     }
 
+    [TestCase("mscorlib", "4.0.0.0", "B77A5C561934E089")]
+    [TestCase("System", "4.0.0.0", "B77A5C561934E089")]
+    [TestCase("System.Core", "4.0.0.0", "B77A5C561934E089")]
+    [TestCase("System.Xml", "4.0.0.0", "B77A5C561934E089")]
+    [TestCase("System.Xml.Linq", "4.0.0.0", "B77A5C561934E089")]
+    [TestCase("Microsoft.CSharp", "4.0.0.0", "B03F5F7F11D50A3A")]
+    [TestCase("netstandard", "2.1.0.0", "CC7B13FFCD2DDD51")]
+    [TestCase("System.Runtime", "4.1.2.0", "B03F5F7F11D50A3A")]
+    [TestCase("System.Collections", "4.0.11.0", "B03F5F7F11D50A3A")]
+    public void FrameworkReferenceRequiresExactTargetVersionTokenAndCulture(string name, string version, string token)
+    {
+        var exact = new AsmResolver.DotNet.AssemblyReference(name, Version.Parse(version))
+        {
+            PublicKeyOrToken = Convert.FromHexString(token),
+        };
+        var wrongVersion = new AsmResolver.DotNet.AssemblyReference(name, new Version(99, 0, 0, 0))
+        {
+            PublicKeyOrToken = Convert.FromHexString(token),
+        };
+        var wrongToken = new AsmResolver.DotNet.AssemblyReference(name, Version.Parse(version))
+        {
+            PublicKeyOrToken = [0, 0, 0, 0, 0, 0, 0, 0],
+        };
+        var wrongCulture = new AsmResolver.DotNet.AssemblyReference(name, Version.Parse(version))
+        {
+            Culture = "fr-FR",
+            PublicKeyOrToken = Convert.FromHexString(token),
+        };
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(exact), Is.True);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(wrongVersion), Is.False);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(wrongToken), Is.False);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(wrongCulture), Is.False);
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void MismatchedFrameworkReferenceCannotClaimTargetProvidedStatus(bool explicitTargetMap)
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        const string name = "System.Core";
+        assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference(name, new Version(99, 0, 0, 0)));
+        var references = WriteReference(name, new Version(99, 0, 0, 0), "references");
+        var map = explicitTargetMap
+            ? WriteExternalReferenceMap("{\"references\":[{\"assembly\":\"System.Core\",\"kind\":\"target-provided\"}]}")
+            : null;
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [references, Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "project"),
+            externalReferenceMapPath: map);
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.StartsWith("SOURCE007:").And.Contains(name).And.Contains("identity"));
+        Assert.That(report.Assemblies.Single().ExternalReferenceKinds.Single(item => item.Name == name),
+            Has.Property(nameof(UnityExternalReferenceReport.Kind)).EqualTo("unclassified")
+                .And.Property(nameof(UnityExternalReferenceReport.Provenance)).EqualTo("target-identity-mismatch"));
+    }
+
+    [Test]
+    public void PlayerDerivedSourceCannotTreatHostCoreLibraryAsUnityTarget()
+    {
+        var report = UnitySourceProjectEmitter.Emit([CreateAssembly("Synthetic.Application")], ["Synthetic.Application"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], _directory, playerMetadataVersion: 29f);
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.StartsWith("SOURCE007:").And.Contains("System.Private.CoreLib"));
+        Assert.That(report.Assemblies.Single().ExternalReferenceKinds.Single(item => item.Name == "System.Private.CoreLib").Kind,
+            Is.EqualTo("unclassified"));
+    }
+
     [Test]
     public void UnityModuleReferenceRequiresAnInstalledNameAndExactIdentity()
     {
