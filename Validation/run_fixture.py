@@ -49,6 +49,7 @@ import metadata_guard_parameter
 import loop_calls
 import narrow_array
 import nested_boolean_store
+import nested_boolean_getter
 import nested_flag_setter
 import reference_null
 import reference_store
@@ -81,6 +82,7 @@ PROFILES = {
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 3},
+    "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 3},
     "unused-reference-nested-store": {"assembly": "NestedFlagSetterFixture", "source": VALIDATION / "NestedFlagSetterFixture", "methods": 4},
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
@@ -189,6 +191,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return narrow_array.verify(path, stage, VERSION)
     if profile == "nested-boolean-store":
         return nested_boolean_store.verify(path, stage, VERSION)
+    if profile == "nested-boolean-getter":
+        return nested_boolean_getter.verify(path, stage, VERSION)
     if profile == "unused-reference-nested-store":
         return nested_flag_setter.verify(path, stage, VERSION)
     if profile == "float-array":
