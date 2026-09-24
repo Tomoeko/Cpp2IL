@@ -150,6 +150,75 @@ public class UnitySourceEmitterTests
         });
     }
 
+    [Test]
+    public void UnityModuleReferenceRequiresAnInstalledNameAndExactIdentity()
+    {
+        var exactEngine = new AsmResolver.DotNet.AssemblyReference("UnityEngine.CoreModule", new Version(0, 0, 0, 0));
+        var exactEditor = new AsmResolver.DotNet.AssemblyReference("UnityEditor.CoreModule", new Version(0, 0, 0, 0));
+        var exactEngineBase = new AsmResolver.DotNet.AssemblyReference("UnityEngine", new Version(0, 0, 0, 0));
+        var exactEditorBase = new AsmResolver.DotNet.AssemblyReference("UnityEditor", new Version(0, 0, 0, 0));
+        var wrongVersion = new AsmResolver.DotNet.AssemblyReference("UnityEngine.CoreModule", new Version(1, 0, 0, 0));
+        var wrongBaseVersion = new AsmResolver.DotNet.AssemblyReference("UnityEngine", new Version(1, 0, 0, 0));
+        var wrongToken = new AsmResolver.DotNet.AssemblyReference("UnityEngine.CoreModule", new Version(0, 0, 0, 0))
+        {
+            PublicKeyOrToken = [1, 2, 3, 4, 5, 6, 7, 8],
+        };
+        var unknownModule = new AsmResolver.DotNet.AssemblyReference("UnityEngine.FutureModule", new Version(0, 0, 0, 0));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(exactEngine), Is.True);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(exactEditor), Is.True);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(exactEngineBase), Is.True);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(exactEditorBase), Is.True);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(wrongVersion), Is.False);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(wrongBaseVersion), Is.False);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(wrongToken), Is.False);
+            Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(unknownModule), Is.False);
+        });
+    }
+
+    [TestCase("UnityEngine.CoreModule")]
+    [TestCase("UnityEngine")]
+    public void MismatchedUnityAssemblyCannotBeClaimedByExplicitTargetReferenceMap(string name)
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference(name, new Version(1, 0, 0, 0)));
+        var references = WriteReference(name, new Version(1, 0, 0, 0), "references");
+        var map = WriteExternalReferenceMap("{\"references\":[{\"assembly\":\"" + name + "\",\"kind\":\"target-provided\"}]}");
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [references, Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "project"),
+            externalReferenceMapPath: map);
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.StartsWith("SOURCE007:").And.Contains(name).And.Contains("identity"));
+        Assert.That(report.Assemblies.Single().ExternalReferenceKinds.Single(item => item.Name == name),
+            Has.Property(nameof(UnityExternalReferenceReport.Kind)).EqualTo("unclassified")
+                .And.Property(nameof(UnityExternalReferenceReport.Provenance)).EqualTo("target-identity-mismatch"));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void UnknownUnityModuleNameCannotClaimTargetProvidedStatus(bool explicitTargetMap)
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("UnityEngine.FutureModule", new Version(0, 0, 0, 0)));
+        var references = WriteReference("UnityEngine.FutureModule", new Version(0, 0, 0, 0), "references");
+        var map = explicitTargetMap
+            ? WriteExternalReferenceMap("{\"references\":[{\"assembly\":\"UnityEngine.FutureModule\",\"kind\":\"target-provided\"}]}")
+            : null;
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [references, Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "project"),
+            externalReferenceMapPath: map);
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics, Has.Some.StartsWith("SOURCE007:").And.Contains("UnityEngine.FutureModule"));
+        Assert.That(report.Assemblies.Single().ExternalReferenceKinds.Single(item => item.Name == "UnityEngine.FutureModule").Kind,
+            Is.EqualTo("unclassified"));
+    }
+
     [TestCase("Assembly-CSharp-Editor")]
     [TestCase("Assembly-CSharp-Editor-firstpass")]
     public void PredefinedEditorAssembliesCannotClaimRuntimeSourceLayout(string name)
@@ -537,6 +606,7 @@ public class UnitySourceEmitterTests
         var references = Path.Combine(_directory, "references");
         Directory.CreateDirectory(references);
         var engine = CreateAssembly("UnityEngine.CoreModule");
+        engine.Version = new Version(0, 0, 0, 0);
         foreach (var name in new[] { "MonoBehaviour", "ScriptableObject" })
             engine.ManifestModule!.TopLevelTypes.Add(new TypeDefinition("UnityEngine", name, TypeAttributes.Public,
                 engine.ManifestModule.CorLibTypeFactory.Object.Type));
@@ -551,7 +621,7 @@ public class UnitySourceEmitterTests
         var engine = module.AssemblyReferences.FirstOrDefault(r => r.Name == "UnityEngine.CoreModule");
         if (engine == null)
         {
-            engine = new AsmResolver.DotNet.AssemblyReference("UnityEngine.CoreModule", new Version(1, 0, 0, 0));
+            engine = new AsmResolver.DotNet.AssemblyReference("UnityEngine.CoreModule", new Version(0, 0, 0, 0));
             module.AssemblyReferences.Add(engine);
         }
         var type = new TypeDefinition(ns, name, TypeAttributes.Public,

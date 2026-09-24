@@ -143,6 +143,20 @@ public static class UnitySourceProjectEmitter
                 foreach (var reference in externalReferences)
                 {
                     var configured = externalReferenceMap.TryGet(reference, out var entry);
+                    if (Unity2021TargetAssemblies.IsKnownName(reference) &&
+                        !referencesByName[reference].All(Unity2021TargetAssemblies.HasTargetIdentity))
+                    {
+                        report.Diagnostics.Add($"SOURCE007: {name}: {reference}: Managed identity differs from the Unity {TargetUnityVersion} target assembly; source dependency kind is unresolved.");
+                        referenceKinds.Add(new UnityExternalReferenceReport { Name = reference, Kind = "unclassified", Provenance = "target-identity-mismatch" });
+                        continue;
+                    }
+                    if (configured && entry.Kind == "target-provided" &&
+                        !referencesByName[reference].All(IsTargetProvidedAssembly))
+                    {
+                        report.Diagnostics.Add($"SOURCE007: {name}: {reference}: An explicit map cannot establish that an unknown assembly is supplied by the Unity {TargetUnityVersion} target.");
+                        referenceKinds.Add(new UnityExternalReferenceReport { Name = reference, Kind = "unclassified", Provenance = "unknown-target-identity" });
+                        continue;
+                    }
                     if (referencesByName[reference].All(IsTargetProvidedAssembly))
                     {
                         if (configured && entry.Kind != "target-provided")
@@ -247,18 +261,18 @@ public static class UnitySourceProjectEmitter
 
     public static bool IsTargetProvidedAssembly(string name) =>
         name is "mscorlib" or "netstandard" or "System" or "System.Core" or "System.Runtime" or "System.Private.CoreLib" or
-            "System.Collections" or "System.Xml" or "System.Xml.Linq" or "Microsoft.CSharp" or "UnityEngine" or "UnityEditor" ||
-        name.StartsWith("UnityEngine.", StringComparison.Ordinal) && name.EndsWith("Module", StringComparison.Ordinal) ||
-        name.StartsWith("UnityEditor.", StringComparison.Ordinal) && name.EndsWith("Module", StringComparison.Ordinal);
+            "System.Collections" or "System.Xml" or "System.Xml.Linq" or "Microsoft.CSharp";
 
     internal static bool IsTargetProvidedAssembly(AsmResolver.DotNet.AssemblyReference reference) =>
         IsTargetProvidedAssembly(reference.Name?.ToString() ?? "") ||
+        Unity2021TargetAssemblies.HasTargetIdentity(reference) ||
         reference.Name?.ToString() == "System.Numerics" &&
         reference.Version == TargetSystemNumericsVersion &&
         string.IsNullOrEmpty(reference.Culture?.ToString()) &&
         (reference.PublicKeyOrToken ?? []).SequenceEqual(TargetSystemNumericsToken);
 
     private static bool IsReservedSourceAssembly(string name) => IsTargetProvidedAssembly(name) ||
+        Unity2021TargetAssemblies.IsKnownName(name) ||
         name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
         name.StartsWith("UnityEditor.", StringComparison.Ordinal) || name.StartsWith("Unity.", StringComparison.Ordinal);
 
