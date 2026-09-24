@@ -36,6 +36,33 @@ public class X64PeOnceFlagProofTests
     }
 
     [Test]
+    public void RelocationTableMustNotChangeAnyMethodSlotByte()
+    {
+        var block = new byte[12];
+        BinaryPrimitives.WriteUInt32LittleEndian(block.AsSpan(0, 4), 0x1000);
+        BinaryPrimitives.WriteUInt32LittleEndian(block.AsSpan(4, 4), 12);
+        BinaryPrimitives.WriteUInt16LittleEndian(block.AsSpan(8, 2), 0xA005);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(X64PeOnceFlagProof.HasNoRelocationInRange(block,
+                0x1000, 5), Is.True);
+            Assert.That(X64PeOnceFlagProof.HasNoRelocationInRange(block,
+                0x1000, 8), Is.False);
+            Assert.That(X64PeOnceFlagProof.HasNoRelocationInRange(block,
+                0x100C, 8), Is.False);
+            Assert.That(X64PeOnceFlagProof.HasNoRelocationInRange(block,
+                0x100D, 8), Is.True);
+            Assert.That(X64PeOnceFlagProof.HasNoRelocationInRange(block,
+                0x100D, 0), Is.False);
+            Assert.That(X64PeOnceFlagProof.HasNoRelocationInRange(block,
+                uint.MaxValue - 3, 8), Is.False);
+            Assert.That(X64PeOnceFlagProof.HasNoRelocationInRange(block.AsSpan(0, 10),
+                0x100D, 8), Is.False);
+        });
+    }
+
+    [Test]
     public void ExactPlayerAcceptsFileBackedZeroFlagOnlyWithRelocationEvidence()
     {
         var directory = Environment.GetEnvironmentVariable(

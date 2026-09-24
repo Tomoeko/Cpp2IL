@@ -1,0 +1,5 @@
+{
+  "name": "GuardedSinkFixture",
+  "references": ["Neutral.GuardedSink"],
+  "autoReferenced": true
+}

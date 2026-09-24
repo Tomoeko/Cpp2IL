@@ -61,6 +61,7 @@ import word_fields
 import zero_arg_field_call
 import virtual_string_call
 import generic_dispatch
+import guarded_sink
 
 
 VERSION = "2021.3.35f1"
@@ -82,6 +83,7 @@ PROFILES = {
     "virtual-string-call": {"assembly": "VirtualStringCallFixture", "source": VALIDATION / "VirtualStringCallFixture", "methods": 5},
     "generic-dispatch": {"assembly": "GenericDispatchFixture", "source": VALIDATION / "GenericDispatchFixture", "methods": 4,
                          "noManagedBody": (("GenericDispatchFixture.IRead`1", "Read"),)},
+    "guarded-sink": {"assembly": "GuardedSinkFixture", "source": VALIDATION / "GuardedSinkFixture", "methods": 3},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 8},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 4},
@@ -142,6 +144,12 @@ EMBEDDED_FIXTURE_PACKAGES = {
         "files": ("package.json", "Runtime/Neutral.GenericDispatch.asmdef", "Runtime/DispatchBase.cs"),
         "assembly": "Neutral.GenericDispatch.dll",
     },
+    "guarded-sink": {
+        "name": "com.example.guarded-sink",
+        "source": VALIDATION / "GuardedSinkDependencies",
+        "files": ("package.json", "Runtime/Neutral.GuardedSink.asmdef", "Runtime/GuardedSink.cs"),
+        "assembly": "Neutral.GuardedSink.dll",
+    },
 }
 
 def write_json(path, value):
@@ -183,6 +191,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return virtual_string_call.verify(path, stage, VERSION)
     if profile == "generic-dispatch":
         return generic_dispatch.verify(path, stage, VERSION)
+    if profile == "guarded-sink":
+        return guarded_sink.verify(path, stage, VERSION)
     if profile == "array-call":
         return array_call.verify(path, stage, VERSION)
     if profile == "enum-passthrough":

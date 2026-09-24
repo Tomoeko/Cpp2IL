@@ -30,6 +30,28 @@ internal static class X64PeOnceFlagProof
                     return false;
             }
 
+            return IsUnrelocatedRange(pe, unwind, address, 1);
+        }
+        catch (Exception exception) when (exception is ArgumentException or
+                                          IndexOutOfRangeException or OverflowException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Proves that the loader cannot change any byte in a file-backed metadata
+    /// usage slot through an x64 base relocation.
+    /// </summary>
+    internal static bool IsUnrelocatedRange(PE pe, X64UnwindProof.Index unwind,
+        ulong address, uint length)
+    {
+        try
+        {
+            if (length == 0 || address < unwind.ImageBase ||
+                address - unwind.ImageBase > uint.MaxValue - (ulong)length + 1)
+                return false;
+
             var image = pe.GetRawBinaryContent();
             if (ReadUInt16(image, 0) != 0x5A4D)
                 return false;
@@ -55,8 +77,9 @@ internal static class X64PeOnceFlagProof
                 relocationSize);
             if (relocationRaw < 0 || relocationRaw > image.Length - relocationSize)
                 return false;
-            return HasNoRelocationOnByte(image.Slice(relocationRaw,
-                (int)relocationSize), checked((uint)(address - unwind.ImageBase)));
+            return HasNoRelocationInRange(image.Slice(relocationRaw,
+                (int)relocationSize), checked((uint)(address - unwind.ImageBase)),
+                length);
         }
         catch (Exception exception) when (exception is ArgumentException or
                                           IndexOutOfRangeException or OverflowException)
@@ -66,10 +89,15 @@ internal static class X64PeOnceFlagProof
     }
 
     internal static bool HasNoRelocationOnByte(ReadOnlySpan<byte> blocks,
-        uint targetRva)
+        uint targetRva) => HasNoRelocationInRange(blocks, targetRva, 1);
+
+    internal static bool HasNoRelocationInRange(ReadOnlySpan<byte> blocks,
+        uint targetRva, uint length)
     {
         try
         {
+            if (length == 0 || (ulong)targetRva + length > (ulong)uint.MaxValue + 1)
+                return false;
             for (var at = 0; at < blocks.Length;)
             {
                 if (blocks.Length - at < 8)
@@ -88,8 +116,8 @@ internal static class X64PeOnceFlagProof
                     if (kind != 10)
                         return false;
                     var relocatedRva = checked(page + (uint)(entry & 0x0FFF));
-                    if (relocatedRva <= targetRva &&
-                        (ulong)targetRva - relocatedRva < 8)
+                    if ((ulong)relocatedRva < (ulong)targetRva + length &&
+                        (ulong)targetRva < (ulong)relocatedRva + 8)
                         return false;
                 }
                 at += checked((int)size);

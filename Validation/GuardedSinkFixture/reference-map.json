@@ -1,0 +1,5 @@
+{
+  "references": [
+    { "assembly": "Neutral.GuardedSink", "kind": "asmdef" }
+  ]
+}

@@ -36,11 +36,22 @@ cohort has therefore not been reproduced here. This fixture is an original
 native-shape and behavior control; it does not support relaxing an alias-count
 gate or claim recovery of those broad methods.
 
-A current-tool strict, player-only source attempt exited with status 1 and
+A preproof strict, player-only source attempt exited with status 1 and
 unresolved behavior: the selected constructor was Emitted, the abstract method
 was NoManagedBody, and both wrappers Failed on the unproved metadata
 initialization guard and its dependent native zero-flag value (1 Emitted,
 2 Failed, 1 NoManagedBody of 4).
-No recovered Unity rebuild or behavior claim follows from that attempt. The
-package source and compiled assembly are explicit synthetic auxiliary inputs
-for a separate validation scope and must be disclosed if used.
+
+The bounded MethodRef proof now emits the constructor and both wrappers from
+player inputs; the abstract interface method remains NoManagedBody. Pinned IL
+verification and both declaration comparisons against the original stripped
+managed oracle pass with zero differences. Fresh generated source compiles in
+the exact Windows editor and rebuilds as Windows x64 Release IL2CPP with zero
+errors. Original and recovered editor/player runs each pass nine independent
+observations. The final proof rejects target classes with static constructors
+and MethodRef slots affected by PE base relocations; its source and
+configuration are byte-identical to the Unity-accepted run, and pinned IL
+verification passes again. The package source, reference map and compiled
+assembly are explicit synthetic auxiliary inputs for source reference closure;
+they were not body-recovery inputs. Other generic call and alias shapes remain
+unverified.
