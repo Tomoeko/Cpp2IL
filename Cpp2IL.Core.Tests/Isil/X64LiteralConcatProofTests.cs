@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Reflection;
 using AssetRipper.Primitives;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.InstructionSets;
@@ -139,6 +140,111 @@ public class X64LiteralConcatProofTests
             var wrongLiteralSlot = native.ToArray();
             wrongLiteralSlot[13].MemoryDisplacement64 += 8;
             Assert.That(X64LiteralConcatProof.TryProveShape(wrongLiteralSlot), Is.False);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void ExactPlayerBindsProvedClassCastLookupBeforeLiteralConcat()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_RUNTIME_CAST_CONCAT_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_RUNTIME_CAST_CONCAT_FIXTURE_INPUT to the neutral exact player input.");
+
+        var binary = Path.Combine(directory, "GameAssembly.dll");
+        var metadata = Path.Combine(directory, "RecoveryFixture_Data", "il2cpp_data",
+            "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata,
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var assembly = app.GetAssemblyByName("RuntimeCastConcatFixture")!;
+            var compose = assembly.Types.Single(type => type.Name == "Resolver").Methods
+                .Single(method => method.Name == "Compose");
+            var lookup = assembly.Types.Single(type => type.Name == "ResolverBase").Methods
+                .Single(method => method.Name == "Lookup");
+            compose.EnsureRawBytes();
+            lookup.EnsureRawBytes();
+            var callerBody = X86Utils.Iterate(compose).TakeWhile(instruction =>
+                instruction.Code != Code.Int3).ToArray();
+            var calleeBody = X86Utils.Iterate(lookup).TakeWhile(instruction =>
+                instruction.Code != Code.Int3).ToArray();
+            var pe = (PE)app.Binary;
+            var unwind = X64UnwindProof.ForApplication(app)!;
+            var castShape = X64ClassCastLookupProof.TryProveShape(calleeBody);
+            Assert.That(castShape, Is.Not.Null);
+            Assert.That(X64ClassCastLookupProof.Find(lookup, calleeBody), Is.Not.Null);
+            Assert.That(X64LiteralConcatProof.TryProveShape(callerBody), Is.True);
+            Assert.That(X64LiteralConcatProof.TryBindLookup(app, compose.DeclaringType!, pe,
+                unwind, callerBody[10].NearBranchTarget, out var boundLookup,
+                out var returnedClass), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(boundLookup, Is.SameAs(lookup));
+                Assert.That(returnedClass, Is.SameAs(lookup.ReturnType));
+                Assert.That(X64LiteralConcatProof.ProveInheritedStringField(returnedClass,
+                    callerBody[15].MemoryDisplacement64, out _), Is.True);
+            });
+
+            var proof = X64LiteralConcatProof.Find(compose, callerBody);
+            var lifted = X64LiteralConcatProof.TryLift(compose, callerBody);
+            Assert.Multiple(() =>
+            {
+                Assert.That(proof, Is.Not.Null);
+                Assert.That(proof!.Lookup, Is.SameAs(lookup));
+                Assert.That(proof.ValueField.Name, Is.EqualTo("Text"));
+                Assert.That(proof.Literal, Is.EqualTo("|tag"));
+                Assert.That(lifted, Is.Not.Null);
+                Assert.That(lifted![0].Operands[0], Is.SameAs(lookup));
+            });
+
+            Assert.That(X64ClassCastLookupProof.BindProvedShape(lookup,
+                castShape! with { Initializer = callerBody[10].NearBranchTarget }),
+                Is.Null, "An unrelated call target cannot authenticate the cast initializer.");
+
+            var rawLookup = lookup.Definition!;
+            var originalFlags = rawLookup.flags;
+            try
+            {
+                rawLookup.flags = (ushort)(((MethodAttributes)originalFlags &
+                    ~MethodAttributes.MemberAccessMask) | MethodAttributes.Private);
+                Assert.That(X64ClassCastLookupProof.Find(lookup, calleeBody), Is.Not.Null,
+                    "The independent native cast proof does not require method visibility.");
+                Assert.That(X64LiteralConcatProof.TryBindLookup(app, compose.DeclaringType!,
+                    pe, unwind, callerBody[10].NearBranchTarget, out _, out _), Is.False,
+                    "Generated source cannot call a private method on the base type.");
+            }
+            finally { rawLookup.flags = originalFlags; }
+
+            var hiddenMethod = compose.DeclaringType!.Methods.Single(method =>
+                method.Name == ".ctor");
+            var originalName = hiddenMethod.OverrideName;
+            try
+            {
+                hiddenMethod.OverrideName = lookup.Name;
+                Assert.That(X64ClassCastLookupProof.Find(lookup, calleeBody), Is.Not.Null,
+                    "The callee's independent cast evidence is unchanged.");
+                Assert.That(X64LiteralConcatProof.TryBindLookup(app, compose.DeclaringType,
+                    pe, unwind, callerBody[10].NearBranchTarget, out _, out _), Is.False,
+                    "An inherited call can bind differently when the caller hides its name.");
+            }
+            finally { hiddenMethod.OverrideName = originalName; }
+
+            var aliases = app.MethodsByAddress[lookup.UnderlyingPointer];
+            aliases.Add(lookup);
+            try
+            {
+                Assert.That(X64LiteralConcatProof.TryBindLookup(app, compose.DeclaringType!,
+                    pe, unwind, callerBody[10].NearBranchTarget, out _, out _), Is.False,
+                    "The cast callee must have one native method binding.");
+            }
+            finally { aliases.RemoveAt(aliases.Count - 1); }
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }

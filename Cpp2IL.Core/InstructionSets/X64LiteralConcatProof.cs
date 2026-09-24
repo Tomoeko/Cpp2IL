@@ -17,7 +17,8 @@ namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
 /// Proves the complete exact-target body of a zero-argument instance method that
-/// calls a simple inherited reference getter, reads an inherited string field,
+/// calls a proved inherited reference getter or class-cast lookup, reads an
+/// inherited string field,
 /// and tail-calls String.Concat with one metadata-backed literal. The runtime
 /// null arm is replaced by the null check inherent in the field read.
 /// </summary>
@@ -238,6 +239,47 @@ internal static class X64LiteralConcatProof
         return true;
     }
 
+    private static bool ProveClassCastLookup(MethodAnalysisContext lookup,
+        TypeAnalysisContext owner, ulong address, out TypeAnalysisContext returnedClass)
+    {
+        returnedClass = null!;
+        if (lookup.UnderlyingPointer != address ||
+            lookup.DeclaringType is not { Definition: { GenericContainer: null } } baseOwner ||
+            !OrdinaryClass(baseOwner) || !Inherits(owner, baseOwner) ||
+            !ReferenceEquals(baseOwner.DeclaringAssembly, owner.DeclaringAssembly) ||
+            !HasUnhiddenBaseMethod(owner, baseOwner, lookup.Name) ||
+            lookup.Visibility is not (MethodAttributes.Public or MethodAttributes.Family or
+                MethodAttributes.FamORAssem))
+            return false;
+
+        lookup.EnsureRawBytes();
+        var proof = X64ClassCastLookupProof.Find(lookup, X86Utils.Iterate(lookup).ToArray());
+        if (proof == null ||
+            !ReferenceEquals(proof.SourceField.DeclaringType, baseOwner) ||
+            !ReferenceEquals(proof.TargetType, lookup.ReturnType))
+            return false;
+
+        returnedClass = proof.TargetType;
+        return true;
+    }
+
+    private static bool HasUnhiddenBaseMethod(TypeAnalysisContext owner,
+        TypeAnalysisContext baseOwner, string name)
+    {
+        for (var type = owner; type != null; type = type.BaseType)
+        {
+            if (ReferenceEquals(type, baseOwner))
+                return true;
+            if (type.Methods.Any(method => method.Name == name) ||
+                type.Fields.Any(field => field.Name == name) ||
+                type.Properties.Any(property => property.Name == name) ||
+                type.Events.Any(eventContext => eventContext.Name == name) ||
+                type.NestedTypes.Any(nested => nested.Name == name))
+                return false;
+        }
+        return false;
+    }
+
     internal static bool TryBindLookup(ApplicationAnalysisContext app,
         TypeAnalysisContext owner, PE pe, X64UnwindProof.Index unwind,
         ulong address, out MethodAnalysisContext lookup,
@@ -249,7 +291,8 @@ internal static class X64LiteralConcatProof
             return false;
         foreach (var candidate in aliases)
         {
-            if (!ProveLookup(candidate, owner, pe, unwind, out var valueType))
+            if (!ProveLookup(candidate, owner, pe, unwind, out var valueType) &&
+                !ProveClassCastLookup(candidate, owner, address, out valueType))
                 continue;
             if (lookup != null)
                 return false;

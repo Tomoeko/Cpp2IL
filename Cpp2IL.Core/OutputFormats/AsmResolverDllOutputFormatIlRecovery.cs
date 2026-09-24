@@ -216,6 +216,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64TypeFromHandleRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Type-from-handle IL emitted from complete bounded native, metadata, and class-init evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64NestedBooleanLiteralStoreRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
