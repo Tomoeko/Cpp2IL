@@ -555,6 +555,9 @@ public static partial class IlGenerator
             case OpCode.Xor:
                 if (instruction.OpCode is OpCode.DivideUnsigned or OpCode.ModuloUnsigned && instruction.IntegerBitWidth is not (32 or 64))
                     throw new DecompilerException("Unsigned division requires an established 32/64-bit native width");
+                if (instruction.OpCode == OpCode.Add && instruction.IntegerBitWidth is 32 or 64 &&
+                    IntegerStackWidth(DestinationType(instruction.Operands[0])) != instruction.IntegerBitWidth)
+                    throw new DecompilerException("Native Add destination width does not match its recovered managed type");
                 if (instruction.OpCode is OpCode.Divide or OpCode.Modulo or OpCode.DivideUnsigned or OpCode.ModuloUnsigned &&
                     instruction.IntegerBitWidth != 0 && IntegerStackWidth(DestinationType(instruction.Operands[0])) != instruction.IntegerBitWidth)
                     throw new DecompilerException("Native division destination width does not match its recovered managed type");

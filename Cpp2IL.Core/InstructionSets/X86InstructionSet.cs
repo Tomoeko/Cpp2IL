@@ -712,7 +712,14 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 if (isSubtract)
                     Add(instruction.IP, ISIL.OpCode.Subtract, left, left, right);
                 else
-                    Add(instruction.IP, ISIL.OpCode.Add, left, left, right);
+                {
+                    var added = Add(instruction.IP, ISIL.OpCode.Add, left, left, right);
+                    var nativeWidth = (instruction.Op0Kind == OpKind.Register
+                        ? instruction.Op0Register.GetSize()
+                        : instruction.MemorySize.GetSize()) * 8;
+                    if (nativeWidth is 32 or 64)
+                        added.IntegerBitWidth = nativeWidth;
+                }
 
                 break;
             case Mnemonic.Addss:

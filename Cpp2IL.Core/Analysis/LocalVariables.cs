@@ -443,7 +443,10 @@ public static class LocalVariables
                 case OpCode.Phi:
                     changed |= PropagatePhi(instruction);
                     break;
-                case OpCode.Add or OpCode.Subtract or OpCode.Multiply:
+                case OpCode.Add:
+                    changed |= PropagateArithmetic(instruction, method) || PropagateSignedIntegerAdd(instruction, method);
+                    break;
+                case OpCode.Subtract or OpCode.Multiply:
                     changed |= PropagateArithmetic(instruction, method);
                     break;
                 case OpCode.Divide or OpCode.Modulo or OpCode.DivideUnsigned or OpCode.ModuloUnsigned:
@@ -479,7 +482,8 @@ public static class LocalVariables
     // Arithmetic on a float operand is float arithmetic, so the result is that float type.
     private static bool PropagateArithmetic(Instruction instruction, MethodAnalysisContext method)
     {
-        if (instruction.Operands is not [LocalVariable { Type: null } destination, var left, var right])
+        if (instruction.IntegerBitWidth != 0 ||
+            instruction.Operands is not [LocalVariable { Type: null } destination, var left, var right])
             return false;
 
         if ((FloatOperandType(left, method) ?? FloatOperandType(right, method)) is not { } floatType)
@@ -487,6 +491,33 @@ public static class LocalVariables
 
         return SetTypeIfUnknown(destination, floatType);
     }
+
+    // A native-width Add of signed integer locals preserves their managed stack type.
+    // Require a typed source and an equally typed source or representable literal;
+    // a reference address, unsigned value, or unknown width gives no such proof.
+    private static bool PropagateSignedIntegerAdd(Instruction instruction, MethodAnalysisContext method)
+    {
+        if (instruction.IntegerBitWidth is not (32 or 64) ||
+            instruction.Operands is not [LocalVariable { Type: null } destination, var left, var right])
+            return false;
+
+        var integerType = instruction.IntegerBitWidth == 32
+            ? method.AppContext.SystemTypes.SystemInt32Type
+            : method.AppContext.SystemTypes.SystemInt64Type;
+        return (left is LocalVariable { Type: { } leftType } && ReferenceEquals(leftType, integerType) &&
+                CompatibleSignedAddOperand(right, integerType, instruction.IntegerBitWidth) ||
+                right is LocalVariable { Type: { } rightType } && ReferenceEquals(rightType, integerType) &&
+                CompatibleSignedAddOperand(left, integerType, instruction.IntegerBitWidth)) &&
+               SetTypeIfUnknown(destination, integerType);
+    }
+
+    private static bool CompatibleSignedAddOperand(IOperand operand, TypeAnalysisContext integerType, int width) =>
+        operand switch
+        {
+            LocalVariable { Type: { } type } => ReferenceEquals(type, integerType),
+            Immediate number => width == 64 || number.Value is >= int.MinValue and <= int.MaxValue,
+            _ => false,
+        };
 
     // An integer operand makes the result an integer. Excludes bool operands so flag logic stays boolean.
     private static bool PropagateIntegerResult(Instruction instruction, MethodAnalysisContext method)
