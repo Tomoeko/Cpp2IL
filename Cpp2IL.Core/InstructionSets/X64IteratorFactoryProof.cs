@@ -17,12 +17,19 @@ namespace Cpp2IL.Core.InstructionSets;
 /// <summary>
 /// Proves a complete exact-target iterator factory. The allocation TypeInfo, the
 /// captured owner and state fields, and the one-argument constructor are bound
-/// separately from player metadata and native code. In particular, a folded call
-/// to Object::.ctor is not mistaken for the iterator constructor.
+/// separately from player metadata and native code. The accepted factory shapes
+/// either inline the constructor's state write or call its independently proved
+/// native body; a folded Object::.ctor call is never treated as that constructor.
 /// </summary>
 internal static class X64IteratorFactoryProof
 {
     private static readonly byte[] SavedRbxRdiFrame = [0x0A, 0x34, 0x06, 0x00, 0x0A, 0x32, 0x06, 0x70];
+
+    private enum FactoryShape
+    {
+        InlinedState,
+        DirectConstructor,
+    }
 
     internal sealed record Evidence(TypeAnalysisContext Iterator, MethodAnalysisContext Constructor,
         FieldAnalysisContext State, FieldAnalysisContext Owner);
@@ -30,7 +37,7 @@ internal static class X64IteratorFactoryProof
     internal static List<ISIL.Instruction>? TryLift(MethodAnalysisContext method,
         IReadOnlyList<NativeInstruction> decoded)
     {
-        if (Find(method, decoded) is not { } proof)
+        if ((Find(method, decoded) ?? FindDirectConstructor(method, decoded)) is not { } proof)
             return null;
 
         var result = new ISIL.Register(null, "iterator_factory_result");
@@ -45,6 +52,14 @@ internal static class X64IteratorFactoryProof
     }
 
     internal static Evidence? Find(MethodAnalysisContext method, IReadOnlyList<NativeInstruction> decoded)
+        => Find(method, decoded, FactoryShape.InlinedState);
+
+    internal static Evidence? FindDirectConstructor(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> decoded)
+        => Find(method, decoded, FactoryShape.DirectConstructor);
+
+    private static Evidence? Find(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> decoded, FactoryShape shape)
     {
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
@@ -56,11 +71,17 @@ internal static class X64IteratorFactoryProof
         var region = unwind.ClassifySpan(method.UnderlyingPointer, method.UnderlyingPointer + 1);
         if (region.Kind != X64UnwindProof.SpanKind.HandlerFree ||
             region.Start != method.UnderlyingPointer || region.RootStart != region.Start ||
-            region.End - region.Start is < 112 or > 127 ||
+            (shape == FactoryShape.InlinedState
+                ? region.End - region.Start is < 112 or > 127
+                : region.End - region.Start != 109) ||
             !unwind.MatchesUnwind(region.Start, region.End, 10, 0, SavedRbxRdiFrame))
             return null;
         var body = decoded.Take(28).ToArray();
-        if (!ProveNativeShape(body, region.End, pe, unwind, app) ||
+        if (shape == FactoryShape.DirectConstructor &&
+            !MatchesDirectFactoryBytes(method, decoded, pe, unwind,
+                region.Start, region.End))
+            return null;
+        if (!ProveNativeShape(body, region.End, pe, unwind, app, shape) ||
             X86CallerExceptionRegionProof.Check(method, body,
                 new HashSet<ulong> { body[27].IP }) != null ||
             Enumerable.Range(1, checked((int)(body[27].NextIP - region.Start) - 1))
@@ -78,8 +99,27 @@ internal static class X64IteratorFactoryProof
             !HasAllocatedIteratorMetadata(iterator, owner, method))
             return null;
 
-        var stateOffset = body[20].MemoryDisplacement64;
-        var ownerOffset = body[17].MemoryDisplacement64;
+        var constructors = iterator.Methods.Where(candidate => candidate.Name == ".ctor" &&
+            candidate.Parameters.Count == 1).ToArray();
+        if (constructors is not [{ } constructor])
+            return null;
+
+        X64FoldedInt32ConstructorProof.Evidence? directConstructor = null;
+        if (shape == FactoryShape.DirectConstructor)
+        {
+            if (constructor.UnderlyingPointer != body[17].NearBranchTarget)
+                return null;
+            constructor.EnsureRawBytes();
+            directConstructor = X64FoldedInt32ConstructorProof.Find(
+                constructor, X86Utils.Iterate(constructor).ToArray());
+            if (directConstructor == null)
+                return null;
+        }
+
+        var stateOffset = shape == FactoryShape.InlinedState
+            ? body[20].MemoryDisplacement64
+            : (ulong)directConstructor!.State.Offset;
+        var ownerOffset = body[shape == FactoryShape.InlinedState ? 17 : 18].MemoryDisplacement64;
         if (stateOffset is < 16 or > int.MaxValue || ownerOffset is < 16 or > int.MaxValue ||
             stateOffset == ownerOffset)
             return null;
@@ -88,6 +128,7 @@ internal static class X64IteratorFactoryProof
         var ownerFields = iterator.Fields.Where(field => !field.IsStatic &&
             field.Offset == (long)ownerOffset).ToArray();
         if (stateFields is not [{ } state] || ownerFields is not [{ } capturedOwner] ||
+            (directConstructor != null && !ReferenceEquals(state, directConstructor.State)) ||
             state.Name != state.DefaultName || capturedOwner.Name != capturedOwner.DefaultName ||
             capturedOwner.Visibility != FieldAttributes.Public ||
             (capturedOwner.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) != 0 ||
@@ -105,13 +146,41 @@ internal static class X64IteratorFactoryProof
                 new ISIL.FieldReference(capturedOwner, receiver, (int)ownerOffset)))
             return null;
 
-        var constructors = iterator.Methods.Where(candidate => candidate.Name == ".ctor" &&
-            candidate.Parameters.Count == 1).ToArray();
-        if (constructors is not [{ } constructor] ||
+        if (shape == FactoryShape.InlinedState &&
             !ProveConstructor(constructor, iterator, state, body[16].NearBranchTarget,
                 pe, unwind, app))
             return null;
         return new Evidence(iterator, constructor, state, capturedOwner);
+    }
+
+    private static bool MatchesDirectFactoryBytes(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> decoded, PE pe, X64UnwindProof.Index unwind,
+        ulong start, ulong end)
+    {
+        // A managed-address estimate may stop before the trap or continue into
+        // another function. Bind its full decode and the 108-byte real body to
+        // the player; the separate native-shape gate checks the trap in the PE.
+        method.EnsureRawBytes();
+        if (end - start != 109 || method.RawBytes.Length < 108 ||
+            start < unwind.ImageBase ||
+            start - unwind.ImageBase > uint.MaxValue - 108 ||
+            !decoded.SequenceEqual(X86Utils.Iterate(method)))
+            return false;
+        var first = pe.MapVirtualAddressToRaw(start, false);
+        var bytes = pe.GetRawBinaryContent();
+        if (first < 0 || first > bytes.Length - 109 ||
+            Enumerable.Range(0, 109).Any(offset =>
+                pe.MapVirtualAddressToRaw(start + (ulong)offset, false) !=
+                    first + offset ||
+                !unwind.IsExecutableRva(checked((uint)(
+                    start + (ulong)offset - unwind.ImageBase)))) ||
+            !method.RawBytes.AsSpan().Slice(0, 108)
+                .SequenceEqual(bytes.Slice((int)first, 108)))
+            return false;
+        var exactBody = X86Utils.Iterate(method.RawBytes.AsSpan().Slice(0, 108),
+            start, false);
+        return exactBody.Count == 28 && decoded.Take(28).SequenceEqual(exactBody) &&
+               exactBody[^1].NextIP == start + 108;
     }
 
     private static bool HasFactorySignature(MethodAnalysisContext method,
@@ -173,7 +242,8 @@ internal static class X64IteratorFactoryProof
     }
 
     private static bool ProveNativeShape(IReadOnlyList<NativeInstruction> body, ulong regionEnd,
-        PE pe, X64UnwindProof.Index unwind, ApplicationAnalysisContext app)
+        PE pe, X64UnwindProof.Index unwind, ApplicationAnalysisContext app,
+        FactoryShape shape)
     {
         if (body.Count != 28 || body[27].NextIP > regionEnd ||
             regionEnd - body[27].NextIP > 15 ||
@@ -202,13 +272,21 @@ internal static class X64IteratorFactoryProof
             Move(body[11], NativeRegister.RBX, NativeRegister.RAX) &&
             Test(body[12], NativeRegister.RAX) &&
             Branch(body[13], Mnemonic.Je, body[27].IP) &&
-            Xor(body[14], NativeRegister.EDX) &&
-            Move(body[15], NativeRegister.RCX, NativeRegister.RAX) &&
-            DirectCall(body[16]) &&
-            FieldLea(body[17], NativeRegister.RCX, NativeRegister.RBX) &&
-            Move(body[18], NativeRegister.RDX, NativeRegister.RDI) &&
-            Store(body[19], NativeRegister.RCX, 0, NativeRegister.RDI, 8) &&
-            StoreZero(body[20], NativeRegister.RBX) &&
+            (shape == FactoryShape.InlinedState
+                ? Xor(body[14], NativeRegister.EDX) &&
+                  Move(body[15], NativeRegister.RCX, NativeRegister.RAX) &&
+                  DirectCall(body[16]) &&
+                  FieldLea(body[17], NativeRegister.RCX, NativeRegister.RBX) &&
+                  Move(body[18], NativeRegister.RDX, NativeRegister.RDI) &&
+                  Store(body[19], NativeRegister.RCX, 0, NativeRegister.RDI, 8) &&
+                  StoreZero(body[20], NativeRegister.RBX)
+                : Xor(body[14], NativeRegister.R8D) &&
+                  Xor(body[15], NativeRegister.EDX) &&
+                  Move(body[16], NativeRegister.RCX, NativeRegister.RAX) &&
+                  DirectCall(body[17]) &&
+                  FieldLea(body[18], NativeRegister.RCX, NativeRegister.RBX) &&
+                  Move(body[19], NativeRegister.RDX, NativeRegister.RDI) &&
+                  Store(body[20], NativeRegister.RCX, 0, NativeRegister.RDI, 8)) &&
             DirectCall(body[21]) &&
             X64ReferenceWriteBarrierProof.TryIdentify(pe, unwind, body[21].NearBranchTarget) &&
             Move(body[22], NativeRegister.RAX, NativeRegister.RBX) &&

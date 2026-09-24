@@ -40,6 +40,7 @@ import integer_extensions
 import iterator_factory
 import iterator_factory_manual
 import iterator_factory_variant
+import iterator_factory_direct_ctor
 import literal_concat
 import metadata_guard_move
 import metadata_guard_parameter
@@ -54,6 +55,7 @@ import throw_only
 import scalar_truncation
 import sequential_null_guards
 import static_word_getter
+import static_scalar_setter
 import xmm_spill
 import xmm_ref_mutation
 import word_array
@@ -90,6 +92,7 @@ PROFILES = {
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 4},
     "static-word-getter": {"assembly": "StaticWordGetterFixture", "source": VALIDATION / "StaticWordGetterFixture", "methods": 2},
+    "static-scalar-setter": {"assembly": "StaticScalarSetterFixture", "source": VALIDATION / "StaticScalarSetterFixture", "methods": 1},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
     "sequential-null-guards": {"assembly": "SequentialNullGuardFixture", "source": VALIDATION / "SequentialNullGuardFixture", "methods": 3},
@@ -99,6 +102,7 @@ PROFILES = {
     "iterator-factory": {"assembly": "IteratorFactoryFixture", "source": VALIDATION / "IteratorFactoryFixture", "methods": 8},
     "iterator-factory-manual": {"assembly": "IteratorFactoryManualFixture", "source": VALIDATION / "IteratorFactoryManualFixture", "methods": 7},
     "iterator-factory-variant": {"assembly": "IteratorFactoryVariantFixture", "source": VALIDATION / "IteratorFactoryVariantFixture", "methods": 8},
+    "iterator-factory-direct-ctor": {"assembly": "IteratorFactoryDirectCtorFixture", "source": VALIDATION / "IteratorFactoryDirectCtorFixture", "methods": 8},
     "literal-concat": {"assembly": "LiteralConcatFixture", "source": VALIDATION / "LiteralConcatFixture", "methods": 7},
     "class-cast-lookup": {"assembly": "ClassCastLookupFixture", "source": VALIDATION / "ClassCastLookupFixture", "methods": 5},
     "runtime-cast-concat": {"assembly": "RuntimeCastConcatFixture", "source": VALIDATION / "RuntimeCastConcatFixture", "methods": 10},
@@ -205,6 +209,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return static_field_getter.verify(path, stage, VERSION)
     if profile == "static-word-getter":
         return static_word_getter.verify(path, stage, VERSION)
+    if profile == "static-scalar-setter":
+        return static_scalar_setter.verify(path, stage, VERSION)
     if profile == "reference-field":
         return reference_field.verify(path, stage, VERSION)
     if profile == "reference-null":
@@ -223,6 +229,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return iterator_factory_manual.verify(path, stage, VERSION)
     if profile == "iterator-factory-variant":
         return iterator_factory_variant.verify(path, stage, VERSION)
+    if profile == "iterator-factory-direct-ctor":
+        return iterator_factory_direct_ctor.verify(path, stage, VERSION)
     if profile == "literal-concat":
         return literal_concat.verify(path, stage, VERSION)
     if profile == "class-cast-lookup":
