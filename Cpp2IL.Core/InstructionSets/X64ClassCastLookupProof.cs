@@ -145,7 +145,8 @@ internal static class X64ClassCastLookupProof
                         NumMods: 0, Byref: 0, Pinned: 0 } ||
                 field.FieldType is not { Definition: { GenericContainer: null } } source ||
                 !PublicOrdinaryClass(source) ||
-                !ReferenceEquals(source.DeclaringAssembly, owner.DeclaringAssembly) ||
+                !SameOrDirectlyReferencedAssembly(owner.DeclaringAssembly,
+                    source.DeclaringAssembly) ||
                 !DerivesFrom(target, source) ||
                 !NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(
                     new FieldReference(field,
@@ -205,9 +206,66 @@ internal static class X64ClassCastLookupProof
             body[5].IPRelativeMemoryAddress, body[6].NearBranchTarget);
     }
 
-    private static bool PublicOrdinaryClass(TypeAnalysisContext type) =>
+    internal static bool PublicOrdinaryClass(TypeAnalysisContext type) =>
         X64MetadataStaticGetterProof.OrdinaryOwner(type) &&
         type.Visibility == TypeAttributes.Public && type.DeclaringType == null;
+
+    // A class initializer on an ancestor does not change the class hierarchy
+    // tested by this exact native isinst body. Keep the cast target and the
+    // field's declaring class on the stricter path: resolving target TypeInfo
+    // can surface a cached initialization failure before the field read.
+    internal static bool PublicCastAncestor(TypeAnalysisContext type)
+    {
+        if (PublicOrdinaryClass(type))
+            return true;
+
+        var constructors = type.Methods.Where(method => method.Name == ".cctor").ToArray();
+        if (constructors is not [var initializer] ||
+            type.IsValueType || type.IsInterface || type.IsGenericInstance ||
+            type.GenericParameters.Count != 0 ||
+            type.Definition is not
+                { HasCctor: true, PackingSizeIsDefault: true,
+                    ClassSizeIsDefault: true,
+                    RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                        NumMods: 0, Byref: 0, Pinned: 0 } } ||
+            type.Visibility != TypeAttributes.Public || type.DeclaringType != null ||
+            type.Name != type.DefaultName || type.OverrideNamespace != null ||
+            type.Attributes != type.DefaultAttributes ||
+            !ReferenceEquals(type.BaseType, type.DefaultBaseType) ||
+            (type.Attributes & TypeAttributes.LayoutMask) == TypeAttributes.ExplicitLayout ||
+            !ReferenceEquals(initializer.DeclaringType, type) ||
+            !initializer.IsStatic || !initializer.IsVoid ||
+            initializer.Parameters.Count != 0 || initializer.GenericParameters.Count != 0 ||
+            initializer.Name != initializer.DefaultName ||
+            initializer.Attributes != initializer.DefaultAttributes ||
+            initializer.ImplAttributes != initializer.DefaultImplAttributes)
+            return false;
+
+        return true;
+    }
+
+    internal static bool SameOrDirectlyReferencedAssembly(AssemblyAnalysisContext owner,
+        AssemblyAnalysisContext source)
+    {
+        if (ReferenceEquals(owner, source))
+            return true;
+        if (owner.Definition == null || source.Definition == null ||
+            owner.Name != owner.DefaultName || source.Name != source.DefaultName ||
+            owner.Version != owner.DefaultVersion || source.Version != source.DefaultVersion ||
+            owner.HashAlgorithm != owner.DefaultHashAlgorithm ||
+            source.HashAlgorithm != source.DefaultHashAlgorithm ||
+            owner.Flags != owner.DefaultFlags || source.Flags != source.DefaultFlags ||
+            (owner.Culture ?? "") != (owner.DefaultCulture ?? "") ||
+            (source.Culture ?? "") != (source.DefaultCulture ?? "") ||
+            !(owner.PublicKey ?? []).SequenceEqual(owner.DefaultPublicKey ?? []) ||
+            !(source.PublicKey ?? []).SequenceEqual(source.DefaultPublicKey ?? []) ||
+            !(owner.PublicKeyToken ?? []).SequenceEqual(owner.DefaultPublicKeyToken ?? []) ||
+            !(source.PublicKeyToken ?? []).SequenceEqual(source.DefaultPublicKeyToken ?? []))
+            return false;
+
+        return owner.Definition.ReferencedAssemblies.Count(reference =>
+            ReferenceEquals(reference, source.Definition)) == 1;
+    }
 
     private static bool DerivesFrom(TypeAnalysisContext target, TypeAnalysisContext source)
     {
@@ -217,7 +275,9 @@ internal static class X64ClassCastLookupProof
         {
             if (ReferenceEquals(type, target.AppContext.SystemTypes.SystemObjectType))
                 return foundSource;
-            if (!PublicOrdinaryClass(type))
+            if (!(ReferenceEquals(type, target) || ReferenceEquals(type, source)
+                    ? PublicOrdinaryClass(type)
+                    : PublicCastAncestor(type)))
                 return false;
             if (ReferenceEquals(type, source))
                 foundSource = true;

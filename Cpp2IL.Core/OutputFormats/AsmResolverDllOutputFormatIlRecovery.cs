@@ -216,6 +216,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64GuardedBaseConstructorRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Class-init guarded immediate base constructor call IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64MetadataStaticInt32AddRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,

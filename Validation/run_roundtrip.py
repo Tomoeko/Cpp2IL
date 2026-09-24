@@ -12,11 +12,12 @@ import sys
 
 from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process,
                          write_json, resolved_package_lock_sha256, embedded_reference_lock_sha256,
-                         profile_harness_directory, verify_external_reference_fixture)
+                         embedded_package_lock_sha256, profile_harness_directory,
+                         verify_external_reference_fixture, verify_virtual_string_call_dependency)
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
-    "catch-divide", "exception-regions", "array-access", "field-array", "narrow-array", "float-array", "word-array", "reference-array", "boolean-getter", "boolean-getter-metadata", "boolean-parameter-branch", "array-call",
+    "catch-divide", "exception-regions", "array-access", "field-array", "narrow-array", "float-array", "word-array", "reference-array", "boolean-getter", "boolean-getter-metadata", "virtual-string-call", "boolean-parameter-branch", "array-call",
     "enum-passthrough", "static-field-getter", "static-word-getter", "reference-field", "reference-null", "sequential-null-guards",
     "reference-store", "external-references", "numerics-reference", "byte-threshold", "field-guard",
     "zero-arg-field-call", "forwarded-argument", "struct-forward-call", "struct-static-forward-call", "scalar-truncation", "loop-calls", "word-fields",
@@ -163,6 +164,8 @@ def checked_baseline(directory, profile, expected_manifest_sha256=None):
             raise ValueError("Baseline player input changed since its build receipt")
     if profile == "external-references":
         verify_external_reference_fixture(directory / "project", directory, receipt.get("externalDependencies"))
+    if profile == "virtual-string-call":
+        verify_virtual_string_call_dependency(directory / "project", receipt.get("auxiliaryDependencies"))
     return receipt
 
 
@@ -196,8 +199,8 @@ def main():
         parser.error("--run-dir must be ignored by Git")
     if args.timeout <= 0 or not args.cpp2il.is_file():
         parser.error("Provide a positive timeout and an existing built Cpp2IL.dll")
-    if args.profile == "external-references" and args.external_reference_map is None:
-        parser.error("The external-references fixture requires an explicit reference map")
+    if args.profile in {"external-references", "virtual-string-call"} and args.external_reference_map is None:
+        parser.error("This fixture requires an explicit reference map")
     reference_map = args.external_reference_map.expanduser().resolve() if args.external_reference_map else None
     if reference_map is not None and (not reference_map.is_file() or
                                       not 0 < reference_map.stat().st_size <= 1024 * 1024):
@@ -242,6 +245,8 @@ def main():
     if args.profile == "external-references":
         recovery_inputs.append("synthetic managed dependency assemblies")
         recovery_inputs.append("exact-editor netstandard facade")
+    if args.profile == "virtual-string-call":
+        recovery_inputs.append("synthetic embedded-package managed assembly")
     receipt["recoveryInputs"] = "; ".join(recovery_inputs)
     # Snapshot the built tool and its adjacent managed dependencies so a concurrent repository
     # build cannot change the recovery implementation halfway through a validation run.
@@ -282,6 +287,10 @@ def main():
         dependency_lock_sha256 = None
         if args.profile == "external-references":
             dependency_lock_sha256 = embedded_reference_lock_sha256(baseline / "project")
+            receipt["embeddedPackageLockSha256"] = dependency_lock_sha256
+        if args.profile == "virtual-string-call":
+            dependency_lock_sha256 = embedded_package_lock_sha256(
+                baseline / "project", "com.example.cast-hierarchy")
             receipt["embeddedPackageLockSha256"] = dependency_lock_sha256
         baseline_lock_sha256 = (original["packageManifest"]["resolvedLockSha256"]
                                 if manifest_sha256 is not None else None)
@@ -328,6 +337,27 @@ def main():
                 receipt["externalAssemblies"].append({"name": name, "sha256": digest(target),
                                                       "provenance": ("exact-editor-facade" if name == "netstandard.dll"
                                                                      else "synthetic-explicit-fixture")})
+            references.append(str(extra))
+            il_references.append(str(extra))
+            comparison_references.append(str(extra))
+        if args.profile == "virtual-string-call":
+            dependency_name = "Neutral.CastHierarchy.dll"
+            for reference in references + il_references:
+                folder = Path(reference)
+                if folder.is_dir() and any(path.is_file() and
+                        path.name.casefold() == dependency_name.casefold()
+                        for path in folder.iterdir()):
+                    raise ValueError("Supplied reference directories must not shadow the verified synthetic hierarchy")
+            extra = directory / "auxiliary" / "external-assemblies"
+            extra.mkdir(parents=True)
+            source = baseline / "project/Library/ScriptAssemblies/Neutral.CastHierarchy.dll"
+            target = extra / source.name
+            shutil.copyfile(source, target)
+            expected_hash = original["auxiliaryDependencies"]["compiledAssemblySha256"]
+            if digest(target) != expected_hash:
+                raise ValueError("Synthetic cast hierarchy assembly changed since its original build")
+            receipt["externalAssemblies"] = [{"name": source.name, "sha256": expected_hash,
+                                               "provenance": "synthetic-explicit-package"}]
             references.append(str(extra))
             il_references.append(str(extra))
             comparison_references.append(str(extra))
@@ -378,6 +408,14 @@ def main():
                         definition.get("precompiledReferences") != ["Neutral.Plugin.dll"] or
                         definition.get("overrideReferences") is not True):
                     raise ValueError("Generated assembly definition does not preserve explicit reference kinds")
+            if args.profile == "virtual-string-call":
+                kinds = {item["Name"]: item["Kind"] for item in emission["Assemblies"][0]["ExternalReferenceKinds"]}
+                if kinds.get("Neutral.CastHierarchy") != "asmdef":
+                    raise ValueError("Source emission did not classify the synthetic hierarchy as an asmdef")
+                definition = json.loads((project / "Assets/Recovered/VirtualStringCallFixture/VirtualStringCallFixture.asmdef")
+                                        .read_text(encoding="utf-8"))
+                if definition.get("references") != ["Neutral.CastHierarchy"]:
+                    raise ValueError("Generated assembly definition lost its synthetic hierarchy reference")
         if manifest_sha256 is not None:
             if (emission.get("PackageManifestProvenance") != "explicit-auxiliary" or
                     digest(project / "Packages/manifest.json") != manifest_sha256):
@@ -457,10 +495,16 @@ def main():
                     resolved_package_lock_sha256(replacement / "project") != baseline_lock_sha256):
                 raise ValueError("Original and recovered projects resolved different package locks")
         if dependency_lock_sha256 is not None:
-            original_sources = verify_external_reference_fixture(
-                baseline / "project", baseline, original.get("externalDependencies"))
-            rebuilt_sources = verify_external_reference_fixture(
-                replacement / "project", replacement, rebuilt.get("externalDependencies"))
+            if args.profile == "external-references":
+                original_sources = verify_external_reference_fixture(
+                    baseline / "project", baseline, original.get("externalDependencies"))
+                rebuilt_sources = verify_external_reference_fixture(
+                    replacement / "project", replacement, rebuilt.get("externalDependencies"))
+            else:
+                original_sources = verify_virtual_string_call_dependency(
+                    baseline / "project", original.get("auxiliaryDependencies"))
+                rebuilt_sources = verify_virtual_string_call_dependency(
+                    replacement / "project", rebuilt.get("auxiliaryDependencies"))
             if original_sources != rebuilt_sources or rebuilt_sources["embeddedPackageLockSha256"] != dependency_lock_sha256:
                 raise ValueError("Original and recovered synthetic external sources, SDK or package resolution differ")
         settings = ("unityVersion", "target", "backend", "compilerConfiguration", "apiCompatibility", "stripping",
