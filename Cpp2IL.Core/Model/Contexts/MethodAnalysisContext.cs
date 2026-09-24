@@ -76,6 +76,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
     internal List<RuntimeNullGuardCoalescer.FieldAccessEvidence> NullCheckedFieldAccesses = [];
     internal List<RuntimeNullGuardCoalescer.NullArmFieldProbeEvidence> NullArmFieldProbes = [];
     internal List<X64InlinedBooleanSetterProof.Evidence> InlinedBooleanSetters = [];
+    internal X64ArrayGuardSiteProof.Evidence? GuardedArrayAccessEvidence;
 
     public static int MaxMethodSizeBytes = 30000; // 30KB
 
@@ -469,6 +470,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         ConvertedIsil = null;
         ControlFlowGraph = null;
         DominatorInfo = null;
+        GuardedArrayAccessEvidence = null;
     }
 
     public ConcreteGenericMethodAnalysisContext MakeGenericInstanceMethod(params IEnumerable<TypeAnalysisContext> methodGenericParameters)

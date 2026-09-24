@@ -57,6 +57,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
 
     public override List<ISIL.Instruction> GetIsilFromMethod(MethodAnalysisContext context)
     {
+        context.GuardedArrayAccessEvidence = null;
         if (X64ClosedSwitchDispatchRecovery.Find(context) is { } closedSwitch)
             return GetIsilFromClosedSwitch(context, closedSwitch);
 
@@ -99,6 +100,47 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return QualifyExceptionRegions(integerExtension);
         if (X86ScalarTruncationProof.TryLift(context, nativeInstructions) is { } scalarTruncation)
             return QualifyExceptionRegions(scalarTruncation);
+        // A proved array site replaces only its own explicit native checks. The
+        // ordinary lifter still owns every field load, element read, call and
+        // store, and IL emission revalidates the resulting typed accesses.
+        var guardedArray = nativeInstructions.Length is >= 16 and <= 512 &&
+                           nativeInstructions.Any(instruction => instruction.Code == Code.Call_rel32_64) &&
+                           nativeInstructions.Any(instruction => instruction.Mnemonic == Mnemonic.Jae) &&
+                           nativeInstructions.Any(instruction => instruction.Code == Code.Movsxd_r64_rm32)
+            ? X64ArrayGuardSiteProof.Find(context, nativeInstructions)
+            : null;
+        HashSet<ulong>? suppressedArrayGuards = null;
+        HashSet<ulong>? arrayIndexExtensions = null;
+        if (guardedArray != null)
+        {
+            // Raw managed-method spans can include aligned padding and the next
+            // native function. The proof binds this method's exact executable,
+            // handler-free extent; do not lift instructions past that boundary.
+            nativeInstructions = nativeInstructions
+                .TakeWhile(instruction => instruction.IP < guardedArray.NativeEndExclusiveIp)
+                .ToArray();
+            context.GuardedArrayAccessEvidence = guardedArray;
+            suppressedArrayGuards =
+            [
+                guardedArray.NullHelperCallIp,
+                guardedArray.NullTrapIp,
+                guardedArray.BoundsHelperCallIp,
+                guardedArray.BoundsTrapIp,
+            ];
+            arrayIndexExtensions = [];
+            noReturnCalls.Add(guardedArray.NullHelperCallIp);
+            noReturnCalls.Add(guardedArray.BoundsHelperCallIp);
+            foreach (var site in guardedArray.Sites)
+            {
+                suppressedArrayGuards.Add(site.OwnerNullTestIp);
+                suppressedArrayGuards.Add(site.OwnerNullBranchIp);
+                suppressedArrayGuards.Add(site.ArrayNullTestIp);
+                suppressedArrayGuards.Add(site.ArrayNullBranchIp);
+                suppressedArrayGuards.Add(site.BoundsCompareIp);
+                suppressedArrayGuards.Add(site.BoundsBranchIp);
+                arrayIndexExtensions.Add(site.IndexExtensionIp);
+            }
+        }
         var referenceNullReturn = X86ReferenceNullReturnProof.IsApplicable(context, nativeInstructions);
         var booleanReturnSelfTests = X86BooleanReturnSelfTestProof.Find(context, nativeInstructions);
         var nonvolatileXmmTraffic = X86NonvolatileXmmStackProof.Find(context, nativeInstructions);
@@ -116,6 +158,37 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         {
             if (metadataGuard?.RemovedAddresses.Contains(instruction.IP) == true)
                 continue;
+            if (suppressedArrayGuards?.Contains(instruction.IP) == true)
+                continue;
+            if (arrayIndexExtensions?.Contains(instruction.IP) == true)
+            {
+                // Its only proved consumers are managed Int32 indexing. Capture
+                // the original argument before an intervening call can reuse the
+                // volatile source register; the signed address bits are supplied
+                // by the eventual managed array access.
+                addresses.Add(instruction.IP);
+                instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.Move,
+                    ConvertOperand(instruction, 0), ConvertOperand(instruction, 1))
+                    { NativeAddress = instruction.IP });
+                continue;
+            }
+            if (guardedArray?.Comparison?.CompareIp == instruction.IP)
+            {
+                // The native proof binds both object references, the single
+                // indexed memory read, and SETE as the sole live flag user.
+                // Integer subtraction on reference values would be invalid IL.
+                var comparedElement = new ISIL.Register(null, "COMPARE_RIGHT");
+                addresses.Add(instruction.IP);
+                instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.Move,
+                    comparedElement, ConvertOperand(instruction, 1))
+                    { NativeAddress = instruction.IP });
+                addresses.Add(instruction.IP);
+                instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.CheckEqual,
+                    new ISIL.Register(null, "ZF"), ConvertOperand(instruction, 0),
+                    comparedElement)
+                    { NativeAddress = instruction.IP });
+                continue;
+            }
             var firstLiftedIndex = instructions.Count;
             if (referenceNullReturn && instruction.IP == context.UnderlyingPointer)
             {

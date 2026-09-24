@@ -79,6 +79,7 @@ public static partial class IlGenerator
     public static void GenerateIl(MethodAnalysisContext context, MethodDefinition definition)
     {
         ValidateCallSemantics(context);
+        ValidateGuardedArrayAccesses(context);
 
         // Diagnose retained lifting failures before local typing. An unsupported operation
         // often also leaves its result untyped; that secondary error must not hide the cause.
