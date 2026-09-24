@@ -67,6 +67,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return iteratorConstructor; // The factory proof authenticates the Object constructor and state field.
         if (X64IteratorFactoryProof.TryLift(context, nativeInstructions) is { } iteratorFactory)
             return iteratorFactory; // Allocation, constructor, captures, and helper exits are independently bound.
+        if (X64TerminalManagedThrowProof.TryLift(context, nativeInstructions) is { } terminalThrow)
+            return terminalThrow; // Allocation, constructor, metadata, and the nonreturning raise target are bound together.
         if (X64IteratorMoveNextProof.TryLift(context, nativeInstructions) is { } iteratorMoveNext)
             return iteratorMoveNext; // The complete generated state machine includes the pre-null state write.
         if (X64LiteralConcatProof.TryLift(context, nativeInstructions) is { } literalConcat)
