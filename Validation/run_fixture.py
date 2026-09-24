@@ -32,6 +32,7 @@ import byte_fields
 import boolean_getter
 import boolean_getter_metadata
 import byte_threshold
+import composed_array
 import dense_switch
 import float_array
 import float_comparison
@@ -133,6 +134,7 @@ PROFILES = {
     "boolean-parameter-branch": {"assembly": "BooleanParameterBranchFixture", "source": VALIDATION / "BooleanParameterBranchFixture", "methods": 3},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "dense-switch": {"assembly": "DenseSwitchFixture", "source": VALIDATION / "DenseSwitchFixture", "methods": 2},
+    "composed-array": {"assembly": "ComposedArrayFixture", "source": VALIDATION / "ComposedArrayFixture", "methods": 6},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
@@ -287,6 +289,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return byte_threshold.verify(path, stage, VERSION)
     if profile == "dense-switch":
         return dense_switch.verify(path, stage, VERSION)
+    if profile == "composed-array":
+        return composed_array.verify(path, stage, VERSION)
     if profile == "field-guard":
         return field_guard.verify(path, stage, VERSION)
     if profile == "zero-arg-field-call":
