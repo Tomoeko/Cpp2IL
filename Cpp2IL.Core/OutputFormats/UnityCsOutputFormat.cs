@@ -59,7 +59,8 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
         if (strict)
             report.EnsureComplete(selected);
 
-        var sourceReport = UnitySourceProjectEmitter.Emit(assemblies, selected, references, projectDirectory, packageManifest, externalReferenceMap);
+        var sourceReport = UnitySourceProjectEmitter.Emit(assemblies, selected, references, projectDirectory, packageManifest,
+            externalReferenceMap, context.MetadataVersion);
         sourceReport.RecoveryReportFile = "../source-recovery-report.json";
         if (report.Methods.Any(m => selected.Contains(m.AssemblyName, StringComparer.Ordinal) && m.IsUnresolved))
         {

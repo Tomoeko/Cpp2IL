@@ -258,6 +258,43 @@ public class UnitySourceEmitterTests
     }
 
     [Test]
+    public void ByReferenceReturnWithoutModifierCannotClaimCompleteSource()
+    {
+        var assembly = CreateAssembly("Synthetic.Application");
+        var module = assembly.ManifestModule!;
+        var type = module.TopLevelTypes.Single(t => t.Name == "Constants");
+        var field = new FieldDefinition("Storage", FieldAttributes.Private | FieldAttributes.Static, module.CorLibTypeFactory.Int32);
+        type.Fields.Add(field);
+        var method = new MethodDefinition("GetStorage", MethodAttributes.Public | MethodAttributes.Static,
+            MethodSignature.CreateStatic(module.CorLibTypeFactory.Int32.MakeByReferenceType()));
+        type.Methods.Add(method);
+        method.CilMethodBody = new CilMethodBody();
+        method.CilMethodBody.Instructions.Add(CilOpCodes.Ldsflda, field);
+        method.CilMethodBody.Instructions.Add(CilOpCodes.Ret);
+        var inAttribute = new TypeReference(module, module.AssemblyReferences.Single(), "System.Runtime.InteropServices", "InAttribute");
+        var readonlyMethod = new MethodDefinition("GetStorageReadonly", MethodAttributes.Public | MethodAttributes.Static,
+            MethodSignature.CreateStatic(module.CorLibTypeFactory.Int32.MakeByReferenceType().MakeModifierType(inAttribute, true)));
+        type.Methods.Add(readonlyMethod);
+        readonlyMethod.CilMethodBody = new CilMethodBody();
+        readonlyMethod.CilMethodBody.Instructions.Add(CilOpCodes.Ldsflda, field);
+        readonlyMethod.CilMethodBody.Instructions.Add(CilOpCodes.Ret);
+
+        var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], _directory, playerMetadataVersion: 29f);
+
+        Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+        Assert.That(report.Diagnostics.Count(diagnostic => diagnostic.StartsWith("SOURCE008:", StringComparison.Ordinal)), Is.EqualTo(1));
+        Assert.That(report.Diagnostics, Has.Some.Contains("GetStorage").And.Contains("ref readonly"));
+        Assert.That(report.Diagnostics, Has.None.Contains("GetStorageReadonly"));
+        Assert.That(File.ReadAllText(Path.Combine(_directory, "source-emission-report.json")), Does.Contain("SOURCE008"));
+
+        var authoredReport = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
+            [Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "authored-input"));
+        Assert.That(authoredReport.SourceGeneration, Is.EqualTo("generated"));
+        Assert.That(authoredReport.Diagnostics, Has.None.Contains("SOURCE008"));
+    }
+
+    [Test]
     public void ResolverRejectsReferenceIdentityMismatch()
     {
         using var resolver = new ExplicitAssemblyResolver([], [Path.GetDirectoryName(typeof(object).Assembly.Location)!]);

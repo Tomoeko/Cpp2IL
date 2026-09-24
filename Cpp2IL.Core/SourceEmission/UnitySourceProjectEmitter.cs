@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using AsmResolver;
 using AsmResolver.DotNet;
+using AsmResolver.DotNet.Signatures;
 using Cpp2IL.Core.Reporting;
 using Cpp2IL.Core.Utils.AsmResolver;
 using ICSharpCode.Decompiler;
@@ -39,9 +40,10 @@ public static class UnitySourceProjectEmitter
         RemoveDeadStores = false,
     };
 
+    /// <param name="playerMetadataVersion">The metadata version of player-derived assemblies. Leave unset for authored managed inputs.</param>
     public static UnitySourceEmissionReport Emit(IEnumerable<AssemblyDefinition> assemblies, IEnumerable<string> selectedAssemblyNames,
         IEnumerable<string> referenceDirectories, string outputDirectory, string? packageManifestPath = null,
-        string? externalReferenceMapPath = null)
+        string? externalReferenceMapPath = null, float? playerMetadataVersion = null)
     {
         var packageManifest = UnityPackageManifest.Load(packageManifestPath);
         var externalReferenceMap = UnityExternalReferenceMap.Load(externalReferenceMapPath);
@@ -89,8 +91,14 @@ public static class UnitySourceProjectEmitter
                     foreach (var field in type.Fields.Where(f => f.HasFieldMarshal && f.MarshalDescriptor == null))
                         report.Diagnostics.Add($"SOURCE004: {name}: {field.FullName}: Field marshaling metadata is unresolved; no MarshalAs value was invented.");
                     foreach (var method in type.Methods)
-                    foreach (var parameter in method.ParameterDefinitions.Where(p => p.HasFieldMarshal && p.MarshalDescriptor == null))
-                        report.Diagnostics.Add($"SOURCE004: {name}: {method.FullName}: Parameter {parameter.Sequence} marshaling metadata is unresolved; no MarshalAs value was invented.");
+                    {
+                        foreach (var parameter in method.ParameterDefinitions.Where(p => p.HasFieldMarshal && p.MarshalDescriptor == null))
+                            report.Diagnostics.Add($"SOURCE004: {name}: {method.FullName}: Parameter {parameter.Sequence} marshaling metadata is unresolved; no MarshalAs value was invented.");
+                        // V29 player metadata retains the byref type but not the return signature's
+                        // readonly modifier. A known managed modifier remains represented by a wrapper.
+                        if (playerMetadataVersion == 29f && method.Signature?.ReturnType is ByReferenceTypeSignature)
+                            report.Diagnostics.Add($"SOURCE008: {name}: {method.FullName}: Unity 2021.3 metadata does not distinguish ref from ref readonly returns; return mutability is unresolved.");
+                    }
                 }
                 var path = Path.Combine(managedDirectory, name + ".dll");
                 using (var stream = File.Create(path))
