@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -64,6 +65,50 @@ class HarnessBoundaries(unittest.TestCase):
             (source / name).write_text("synthetic test placeholder")
         manifest = run_fixture.copy_sources(source, self.root / "project")
         self.assertEqual({item["path"] for item in manifest}, {"Recovered.cs", "RecoveryFixture.asmdef", "csc.rsp"})
+
+    def test_managed_oracle_snapshots_survive_baseline_pruning(self):
+        baseline = self.root / "baseline"
+        assembly = "RecoveryFixture"
+        stripped = baseline / "player/RecoveryFixture_BackUpThisFolder_ButDontShipItWithYourGame/Managed" / (assembly + ".dll")
+        unstripped = baseline / "project/Library/ScriptAssemblies" / (assembly + ".dll")
+        for path, content in ((stripped, b"stripped declarations"),
+                              (unstripped, b"unstripped declarations")):
+            path.parent.mkdir(parents=True)
+            path.write_bytes(content)
+        roundtrip = self.root / "roundtrip"
+        roundtrip.mkdir()
+        references = self.root / "references"
+        references.mkdir()
+        if os.name != "nt":
+            linked_roundtrip = self.root / "linked-roundtrip"
+            linked_roundtrip.mkdir()
+            (linked_roundtrip / "validation-oracles").symlink_to(self.root / "missing-target")
+            with self.assertRaisesRegex(ValueError, "snapshot directory already exists"):
+                run_roundtrip.snapshot_managed_oracles(baseline, linked_roundtrip, assembly)
+
+        snapshots = run_roundtrip.snapshot_managed_oracles(
+            baseline, roundtrip, assembly, (references,))
+        self.assertEqual(set(snapshots), {"stripped", "unstripped"})
+        self.assertTrue(all(item["path"].startswith("validation-oracles/")
+                            for item in snapshots.values()))
+        shutil.rmtree(baseline / "project")
+        shutil.rmtree(baseline / "player")
+        paths = run_roundtrip.checked_managed_oracle_snapshots(roundtrip, assembly, snapshots)
+        self.assertEqual(paths["stripped"].read_bytes(), b"stripped declarations")
+        self.assertEqual(paths["unstripped"].read_bytes(), b"unstripped declarations")
+        if os.name != "nt":
+            outside = self.root / "outside-managed.dll"
+            outside.write_bytes(paths["stripped"].read_bytes())
+            paths["stripped"].unlink()
+            paths["stripped"].symlink_to(outside)
+            with self.assertRaisesRegex(ValueError, "oracle snapshot changed"):
+                run_roundtrip.checked_managed_oracle_snapshots(roundtrip, assembly, snapshots)
+            paths["stripped"].unlink()
+            paths["stripped"].write_bytes(b"stripped declarations")
+
+        paths["stripped"].write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "oracle snapshot changed"):
+            run_roundtrip.checked_managed_oracle_snapshots(roundtrip, assembly, snapshots)
 
     def test_player_copy_excludes_source_symbols_and_backup_assemblies(self):
         player = self.root / "player"

@@ -5,6 +5,7 @@ import argparse
 import alias_ambiguity
 import array_access
 import array_call
+import boolean_parameter_branch
 import enum_passthrough
 import external_references
 import numerics_reference
@@ -77,6 +78,7 @@ PROFILES = {
     "metadata-guard-move": {"assembly": "MetadataGuardMoveFixture", "source": VALIDATION / "MetadataGuardMoveFixture", "methods": 3},
     "metadata-guard-parameter": {"assembly": "MetadataGuardParameterFixture", "source": VALIDATION / "MetadataGuardParameterFixture", "methods": 1},
     "alias-ambiguity": {"assembly": "AliasAmbiguityFixture", "source": VALIDATION / "AliasAmbiguityFixture", "methods": 3},
+    "boolean-parameter-branch": {"assembly": "BooleanParameterBranchFixture", "source": VALIDATION / "BooleanParameterBranchFixture", "methods": 3},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
@@ -109,6 +111,8 @@ def int32(value):
 def verify_behavior(path, stage, profile="arithmetic"):
     if profile == "alias-ambiguity":
         return alias_ambiguity.verify(path, stage, VERSION)
+    if profile == "boolean-parameter-branch":
+        return boolean_parameter_branch.verify(path, stage, VERSION)
     if profile == "catch-divide":
         return catch_divide.verify(path, stage, VERSION)
     if profile == "exception-regions":

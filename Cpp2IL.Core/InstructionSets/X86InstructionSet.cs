@@ -71,6 +71,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return iteratorMoveNext; // The complete generated state machine includes the pre-null state write.
         if (X64LiteralConcatProof.TryLift(context, nativeInstructions) is { } literalConcat)
             return literalConcat; // The inherited field, literal, null arm, and tail call are bound together.
+        if (X64BooleanParameterTailBranchProof.TryLift(context, nativeInstructions) is { } booleanTailBranch)
+            return booleanTailBranch; // Complete frame-free Boolean branch with two uniquely bound tail targets.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
         if (X86ByteThresholdReturnProof.TryLift(context, nativeInstructions) is { } byteThreshold)

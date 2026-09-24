@@ -16,7 +16,7 @@ from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_proces
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
-    "catch-divide", "exception-regions", "array-access", "field-array", "narrow-array", "float-array", "word-array", "reference-array", "boolean-getter", "array-call",
+    "catch-divide", "exception-regions", "array-access", "field-array", "narrow-array", "float-array", "word-array", "reference-array", "boolean-getter", "boolean-parameter-branch", "array-call",
     "enum-passthrough", "static-field-getter", "static-word-getter", "reference-field", "reference-null",
     "reference-store", "external-references", "numerics-reference", "byte-threshold", "field-guard",
     "zero-arg-field-call", "scalar-truncation", "loop-calls", "word-fields",
@@ -40,6 +40,47 @@ def managed_oracle(run_directory, assembly):
     if not path.is_file():
         raise ValueError("The original or rebuilt native run did not retain its managed declaration oracle")
     return path
+
+
+def snapshot_managed_oracles(baseline, directory, assembly, reference_directories=()):
+    """Freeze validation-only managed oracles after player-only recovery and IL checks."""
+    oracle_root = directory / "validation-oracles"
+    if oracle_root.exists() or oracle_root.is_symlink():
+        raise ValueError("Managed oracle snapshot directory already exists")
+    for reference in reference_directories:
+        resolved = Path(reference).resolve()
+        if oracle_root.resolve().is_relative_to(resolved) or resolved.is_relative_to(oracle_root.resolve()):
+            raise ValueError("Managed oracle snapshots must remain outside reference directories")
+
+    sources = {
+        "stripped": managed_oracle(baseline, assembly),
+        "unstripped": baseline / "project/Library/ScriptAssemblies" / (assembly + ".dll"),
+    }
+    snapshots = {}
+    for kind, source in sources.items():
+        if not source.is_file() or source.is_symlink():
+            raise ValueError("Original " + kind + " managed oracle is missing or linked")
+        source_hash = digest(source)
+        target = oracle_root / kind / (assembly + ".dll")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        if digest(target) != source_hash:
+            raise ValueError("Original " + kind + " managed oracle changed during snapshot")
+        snapshots[kind] = {"path": str(target.relative_to(directory)), "sha256": source_hash}
+    return snapshots
+
+
+def checked_managed_oracle_snapshots(directory, assembly, snapshots):
+    paths = {}
+    for kind in ("stripped", "unstripped"):
+        path = directory / "validation-oracles" / kind / (assembly + ".dll")
+        record = snapshots.get(kind, {})
+        if (record.get("path") != str(path.relative_to(directory)) or not path.is_file() or
+                path.is_symlink() or
+                digest(path) != record.get("sha256")):
+            raise ValueError("Original " + kind + " managed oracle snapshot changed")
+        paths[kind] = path
+    return paths
 
 
 def current_source_files(directory):
@@ -354,6 +395,12 @@ def main():
         # Consult managed validation oracles only after player-only recovery has completed.
         # A zero-difference comparison validates this fixture, but does not fill the
         # return-row/attribute facts that are absent from the player-derived model.
+        # Snapshot both original assemblies now so baseline cleanup during the recovered
+        # Unity build cannot remove a declaration-comparison input.
+        oracle_snapshots = snapshot_managed_oracles(baseline, directory, assembly,
+                                                   references + il_references + comparison_references)
+        receipt["managedOracles"] = {"provenance": "original-baseline-validation-only",
+                                     "files": oracle_snapshots}
         # Snapshot the independent comparer too, since other local work may rebuild it.
         comparison_project = ROOT / "Validation/DeclarationComparer/DeclarationComparer.csproj"
         run("build-declaration-comparer", [args.dotnet, "build", str(comparison_project), "-c", "Release", "--nologo", "-v", "quiet"])
@@ -365,14 +412,12 @@ def main():
                 target = comparison_directory / path.name
                 shutil.copyfile(path, target)
                 receipt["comparisonToolFiles"].append({"path": path.name, "sha256": digest(target)})
-        original_managed = managed_oracle(baseline, assembly)
-        unstripped = baseline / "project/Library/ScriptAssemblies" / (assembly + ".dll")
-
         def compare_declarations(name, candidate):
+            oracles = checked_managed_oracle_snapshots(directory, assembly, oracle_snapshots)
             output = directory / name
             command = [args.dotnet, str(comparison_directory / "DeclarationComparer.dll"),
-                       "--oracle", str(original_managed), "--candidate", str(candidate),
-                       "--unstripped", str(unstripped), "--output", str(output)]
+                       "--oracle", str(oracles["stripped"]), "--candidate", str(candidate),
+                       "--unstripped", str(oracles["unstripped"]), "--output", str(output)]
             for reference in comparison_references:
                 command += ["--reference-dir", reference]
             run(name, command)
@@ -430,6 +475,7 @@ def main():
         for item in receipt["comparisonToolFiles"]:
             if digest(comparison_directory / item["path"]) != item["sha256"]:
                 raise ValueError("Declaration comparer snapshot changed during validation")
+        checked_managed_oracle_snapshots(directory, assembly, oracle_snapshots)
         if manifest_sha256 is not None and digest(manifest_snapshot) != manifest_sha256:
             raise ValueError("Explicit package manifest snapshot changed during validation")
         if reference_map_sha256 is not None and digest(reference_map_snapshot) != reference_map_sha256:
