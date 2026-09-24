@@ -26,6 +26,7 @@ import byte_threshold
 import float_comparison
 import integer_extensions
 import loop_calls
+import narrow_array
 import reference_null
 import reference_store
 import scalar_truncation
@@ -41,6 +42,7 @@ PROFILES = {
     "catch-divide": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "CatchDivideFixture", "methods": 1},
     "exception-regions": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "ExceptionRegionFixture", "methods": 2},
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
+    "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 8},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
     "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 3},
@@ -68,7 +70,6 @@ PROFILES = {
     "scalar-structs-negative": {"assembly": "ScalarStructNegativeFixture", "source": VALIDATION / "ScalarStructNegativeFixture", "methods": 3},
 }
 
-
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
@@ -84,6 +85,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return exception_regions.verify(path, stage, VERSION)
     if profile == "array-access":
         return array_access.verify(path, stage, VERSION)
+    if profile == "narrow-array":
+        return narrow_array.verify(path, stage, VERSION)
     if profile == "array-call":
         return array_call.verify(path, stage, VERSION)
     if profile == "enum-passthrough":
@@ -392,12 +395,17 @@ def copy_sources(source, destination):
     return copied
 
 
+def profile_harness_directory(profile):
+    source = PROFILES[profile]["source"]
+    if not source.name.endswith("Fixture"):
+        raise ValueError("Fixture source directory does not identify its harness")
+    return source.parent / (source.name[:-len("Fixture")] + "Harness")
+
+
 def copy_harness(profile, destination):
     if profile == "arithmetic":
         return copy_sources(VALIDATION / "Harness", destination)
-    harness = {"catch-divide": "CatchDivideHarness", "exception-regions": "ExceptionRegionHarness", "array-access": "ArrayAccessHarness", "array-call": "ArrayCallHarness", "enum-passthrough": "EnumPassthroughHarness", "static-field-getter": "StaticFieldGetterHarness", "reference-field": "ReferenceFieldHarness", "reference-null": "ReferenceNullHarness", "reference-store": "ReferenceStoreHarness", "external-references": "ExternalReferenceHarness", "byte-threshold": "ByteThresholdHarness", "field-guard": "FieldGuardHarness", "scalar-truncation": "ScalarTruncationHarness", "loop-calls": "LoopCallHarness", "word-fields": "WordFieldHarness", "integer-extensions": "IntegerExtensionHarness", "byte-fields": "ByteFieldHarness", "float-comparisons": "FloatComparisonHarness", "xmm-spill": "XmmSpillHarness", "components": "ComponentHarness", "metadata-literal": "MetadataLiteralHarness", "narrow-comparisons": "NarrowComparisonHarness", "division": "DivisionHarness", "shifts": "ShiftHarness", "integers": "IntegerHarness", "scalar-structs": "ScalarStructHarness",
-               "scalar-structs-negative": "ScalarStructNegativeHarness"}[profile]
-    copied = copy_sources(VALIDATION / harness, destination)
+    copied = copy_sources(profile_harness_directory(profile), destination)
     for item in copy_sources(VALIDATION / "Harness" / "Editor", destination / "Editor"):
         copied.append({**item, "path": "Editor/" + item["path"]})
     serializer = VALIDATION / "Harness" / "Runtime" / "ReportJson.cs"

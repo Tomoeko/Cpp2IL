@@ -12,11 +12,11 @@ import sys
 
 from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process,
                          write_json, resolved_package_lock_sha256, embedded_reference_lock_sha256,
-                         verify_external_reference_fixture)
+                         profile_harness_directory, verify_external_reference_fixture)
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
-    "catch-divide", "exception-regions", "array-access", "array-call", "enum-passthrough", "static-field-getter", "reference-field", "reference-null", "reference-store", "external-references", "byte-threshold", "field-guard", "scalar-truncation", "loop-calls", "word-fields", "integer-extensions", "byte-fields",
+    "catch-divide", "exception-regions", "array-access", "narrow-array", "array-call", "enum-passthrough", "static-field-getter", "reference-field", "reference-null", "reference-store", "external-references", "byte-threshold", "field-guard", "scalar-truncation", "loop-calls", "word-fields", "integer-extensions", "byte-fields",
     "float-comparisons", "xmm-spill", "components", "metadata-literal", "division", "arithmetic", "integers", "scalar-structs", "shifts",
 )}
 PLAYER_FILES = ("GameAssembly.dll", "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat")
@@ -52,10 +52,7 @@ def current_baseline_files(profile):
     sources = current_source_files(source)
     if profile == "arithmetic":
         return sources, current_source_files(source.parent / "Harness")
-    if not source.name.endswith("Fixture"):
-        raise ValueError("Fixture source directory does not identify its harness")
-    harness_directory = source.parent / (source.name[:-len("Fixture")] + "Harness")
-    harness = current_source_files(harness_directory)
+    harness = current_source_files(profile_harness_directory(profile))
     harness.update({"Editor/" + path: sha256 for path, sha256 in
                     current_source_files(source.parent / "Harness" / "Editor").items()})
     serializer = source.parent / "Harness" / "Runtime" / "ReportJson.cs"

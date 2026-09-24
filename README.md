@@ -36,12 +36,11 @@ Use the .NET SDK selected by `global.json` (10.0.107 with patch roll-forward). F
 ```sh
 dotnet restore
 dotnet build -c Release --no-restore
-dotnet Cpp2IL.Core.Tests/bin/Release/net10.0/Cpp2IL.Core.Tests.dll
-dotnet LibCpp2ILTests/bin/Release/net10.0/LibCpp2ILTests.dll
+dotnet test -c Release --no-build --no-restore
 ```
 
-The CLI is produced at `Cpp2IL/bin/Release/net10.0/Cpp2IL.dll`. The two test commands run the
-completed test assemblies without an extra compilation. Licensed Unity validation runs separately through the
+The CLI is produced at `Cpp2IL/bin/Release/net10.0/Cpp2IL.dll`. The test command reuses the
+completed solution build without an extra compilation. Licensed Unity validation runs separately through the
 [validation harness](Validation/README.md); a successful tool build does not validate recovered source.
 
 ### Development Branch Notes

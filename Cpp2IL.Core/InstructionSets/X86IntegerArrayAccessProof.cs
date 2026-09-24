@@ -12,9 +12,9 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Closed exact-profile 32/64-bit integer array access: prove both runtime exception exits and the only
+/// Closed exact-profile integer array access: prove both runtime exception exits and the only
 /// successful memory access before replacing the diamond with managed ldelem or stelem.
-/// This does not generalize to unchecked native array access or other element widths.
+/// This does not generalize to unchecked native array access or other element types.
 /// </summary>
 internal static class X86IntegerArrayAccessProof
 {
@@ -54,7 +54,9 @@ internal static class X86IntegerArrayAccessProof
             array.Attributes != array.DefaultAttributes || index.Attributes != index.DefaultAttributes ||
             array.OverrideParameterType != null || index.OverrideParameterType != null ||
             array.ParameterType is not SzArrayTypeAnalysisContext { ElementType: var element } ||
-            (!ReferenceEquals(element, app.SystemTypes.SystemInt32Type) &&
+            (!ReferenceEquals(element, app.SystemTypes.SystemByteType) &&
+             !ReferenceEquals(element, app.SystemTypes.SystemSByteType) &&
+             !ReferenceEquals(element, app.SystemTypes.SystemInt32Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemUInt32Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemInt64Type) &&
              !ReferenceEquals(element, app.SystemTypes.SystemUInt64Type)) ||
@@ -74,8 +76,11 @@ internal static class X86IntegerArrayAccessProof
             body.Count < 12 || body[0].IP != context.UnderlyingPointer)
             return null;
 
-        var elementSize = ReferenceEquals(element, app.SystemTypes.SystemInt64Type) ||
-                          ReferenceEquals(element, app.SystemTypes.SystemUInt64Type) ? 8 : 4;
+        var isByteElement = ReferenceEquals(element, app.SystemTypes.SystemByteType) ||
+                            ReferenceEquals(element, app.SystemTypes.SystemSByteType);
+        var isWideElement = ReferenceEquals(element, app.SystemTypes.SystemInt64Type) ||
+                            ReferenceEquals(element, app.SystemTypes.SystemUInt64Type);
+        var elementSize = isByteElement ? 1 : isWideElement ? 8 : 4;
         var nullCall = body[9];
         var boundsCall = body[11];
         if (!TryProveShape(body, isWrite, elementSize) ||
@@ -116,16 +121,22 @@ internal static class X86IntegerArrayAccessProof
     }
 
     private static Il2CppTypeEnum RawElementType(ApplicationAnalysisContext app, TypeAnalysisContext element)
-        => ReferenceEquals(element, app.SystemTypes.SystemUInt64Type)
-            ? Il2CppTypeEnum.IL2CPP_TYPE_U8
-            : ReferenceEquals(element, app.SystemTypes.SystemInt64Type)
-                ? Il2CppTypeEnum.IL2CPP_TYPE_I8
-                : ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)
-                    ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
+    {
+        if (ReferenceEquals(element, app.SystemTypes.SystemByteType))
+            return Il2CppTypeEnum.IL2CPP_TYPE_U1;
+        if (ReferenceEquals(element, app.SystemTypes.SystemSByteType))
+            return Il2CppTypeEnum.IL2CPP_TYPE_I1;
+        if (ReferenceEquals(element, app.SystemTypes.SystemUInt64Type))
+            return Il2CppTypeEnum.IL2CPP_TYPE_U8;
+        if (ReferenceEquals(element, app.SystemTypes.SystemInt64Type))
+            return Il2CppTypeEnum.IL2CPP_TYPE_I8;
+        return ReferenceEquals(element, app.SystemTypes.SystemUInt32Type)
+            ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_I4;
+    }
 
     internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4)
     {
-        if (body.Count < 12 || elementSize is not (4 or 8))
+        if (body.Count < 12 || elementSize is not (1 or 4 or 8))
             return false;
         for (var i = 0; i < 12; i++)
         {
@@ -151,14 +162,7 @@ internal static class X86IntegerArrayAccessProof
                boundsBranch.NearBranchTarget == body[11].IP &&
                body[5].Code == Code.Movsxd_r64_rm32 &&
                Registers(body[5], Mnemonic.Movsxd, Register.RAX, Register.EDX) &&
-               element.Mnemonic == Mnemonic.Mov && element.OpCount == 2 &&
-               (isWrite
-                   ? Memory(element, 0, Register.RCX, Register.RAX, elementSize, 0x20, elementSize) &&
-                     element.Op1Kind == OpKind.Register &&
-                     element.Op1Register == (elementSize == 8 ? Register.R8 : Register.R8D)
-                   : element.Op0Kind == OpKind.Register &&
-                     element.Op0Register == (elementSize == 8 ? Register.RAX : Register.EAX) &&
-                     Memory(element, 1, Register.RCX, Register.RAX, elementSize, 0x20, elementSize)) &&
+               SuccessfulElementAccess(element, isWrite, elementSize) &&
                Stack(body[7], Mnemonic.Add, 0x28) &&
                body[8].Code == Code.Retnq && body[8].OpCount == 0 &&
                Call(body[9]) && body[10].Code == Code.Int3 &&
@@ -177,6 +181,35 @@ internal static class X86IntegerArrayAccessProof
         => i.GetOpKind(operand) == OpKind.Memory && i.MemoryBase == @base &&
            i.MemoryIndex == index && i.MemoryIndexScale == scale &&
            i.MemoryDisplacement64 == displacement && i.MemorySize.GetSize() == size;
+    private static bool ElementMemory(Instruction instruction, int operand, int elementSize)
+        => elementSize == 1
+            // With scale one, the address is commutative, but require the exact
+            // encoding observed in the one-byte fixture's successful arm.
+            ? Memory(instruction, operand, Register.RAX, Register.RCX, 1, 0x20, 1)
+            : Memory(instruction, operand, Register.RCX, Register.RAX, elementSize, 0x20, elementSize);
+    private static bool SuccessfulElementAccess(Instruction instruction, bool isWrite, int elementSize)
+    {
+        if (instruction.OpCount != 2)
+            return false;
+        if (isWrite)
+        {
+            var valueRegister = elementSize == 8 ? Register.R8 :
+                elementSize == 1 ? Register.R8L : Register.R8D;
+            return instruction.Mnemonic == Mnemonic.Mov &&
+                   ElementMemory(instruction, 0, elementSize) &&
+                   instruction.Op1Kind == OpKind.Register && instruction.Op1Register == valueRegister;
+        }
+
+        // The exact player folds byte[] and sbyte[] reads into one MOVZX body.
+        // Only AL is part of the 8-bit native return value; callers extend it
+        // according to their managed signature. Typed ldelem preserves that.
+        var loadMatches = elementSize == 1
+            ? instruction.Code == Code.Movzx_r32_rm8
+            : instruction.Mnemonic == Mnemonic.Mov;
+        return loadMatches && instruction.Op0Kind == OpKind.Register &&
+               instruction.Op0Register == (elementSize == 8 ? Register.RAX : Register.EAX) &&
+               ElementMemory(instruction, 1, elementSize);
+    }
     private static bool Call(Instruction i)
         => i.Code == Code.Call_rel32_64 && i.Op0Kind == OpKind.NearBranch64 &&
            i.NearBranchTarget != 0;
