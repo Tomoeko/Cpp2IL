@@ -48,9 +48,11 @@ exact-target fixture player inputs inspected before this check had the proven
 iterator control retained that form but put its once flag in writable,
 file-backed zero data. The iterator proof now checks that byte and excludes
 loader relocation before accepting it. The eight-method round trip passed all
-declared gates above. The alternate `0x37` metadata helper in broader inputs
-remains unproved, and those inputs' original native build settings remain
-unverified.
+declared gates above. A fresh `OptimizeSpeed` regression round trip also passed
+8/8 strict recovery and all later gates with 13 matching observations in each
+stage; as a repeated control, it is excluded from the bounded total. The
+alternate `0x37` metadata helper in broader inputs remains unproved, and those
+inputs' original native build settings remain unverified.
 
 ## Milestone 0 — Reproducible baseline and honest reporting
 

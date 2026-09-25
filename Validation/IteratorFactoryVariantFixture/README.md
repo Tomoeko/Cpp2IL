@@ -35,6 +35,13 @@ editor, and matched all 13 observations in each original and recovered editor
 and player stage. The ignored passing receipt is under
 `Files/runs/iterator-factory-optimize-size-roundtrip-02/`.
 
+The original `OptimizeSpeed` path was rerun after the relocation check changed.
+It again passed 8/8 strict recovery, typed IL, both zero-difference declaration
+comparisons, exact Windows compilation and Release rebuild, and 13 matching
+observations in every editor/player stage. Its ignored receipt is under
+`Files/runs/iterator-factory-speed-regression-01/`. This repeated control is
+not added to the roadmap's bounded round-trip total.
+
 The metadata helper in this controlled build still has the proven `0x5d`
 first span. This run does not authenticate the alternate `0x37` helper seen in
 other inputs.
