@@ -255,7 +255,9 @@ internal static class X64LiteralConcatProof
         lookup.EnsureRawBytes();
         var proof = X64ClassCastLookupProof.Find(lookup, X86Utils.Iterate(lookup).ToArray());
         if (proof == null ||
-            !ReferenceEquals(proof.SourceField.DeclaringType, baseOwner) ||
+            !ReferenceEquals(proof.SourceField.DeclaringType, baseOwner) &&
+            (proof.SourceGetter == null ||
+             !Inherits(baseOwner, proof.SourceField.DeclaringType)) ||
             !ReferenceEquals(proof.TargetType, lookup.ReturnType))
             return false;
 
@@ -263,7 +265,7 @@ internal static class X64LiteralConcatProof
         return true;
     }
 
-    private static bool HasUnhiddenBaseMethod(TypeAnalysisContext owner,
+    internal static bool HasUnhiddenBaseMethod(TypeAnalysisContext owner,
         TypeAnalysisContext baseOwner, string name)
     {
         for (var type = owner; type != null; type = type.BaseType)
@@ -403,7 +405,7 @@ internal static class X64LiteralConcatProof
         return false;
     }
 
-    private static bool UniqueFieldAcrossChain(TypeAnalysisContext child,
+    internal static bool UniqueFieldAcrossChain(TypeAnalysisContext child,
         FieldAnalysisContext expected, ulong offset)
     {
         var seen = new HashSet<TypeAnalysisContext>();

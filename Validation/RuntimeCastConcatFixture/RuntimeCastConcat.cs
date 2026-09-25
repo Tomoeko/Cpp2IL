@@ -19,6 +19,38 @@ namespace RuntimeCastConcatFixture
         public int Extra;
     }
 
+    public interface INodeOwner
+    {
+        BaseNode Current { get; set; }
+    }
+
+    public class PropertyResolverBase : INodeOwner
+    {
+        public BaseNode Current { get; set; }
+        public int Neighbor;
+    }
+
+    public class PropertyResolverTwin : INodeOwner
+    {
+        public BaseNode Current { get; set; }
+        public int Neighbor;
+    }
+
+    public class PropertyResolver : PropertyResolverBase
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public DerivedNode Lookup()
+        {
+            return Current as DerivedNode;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public virtual string Compose()
+        {
+            return Lookup().Text + "|tag";
+        }
+    }
+
     public static class MetadataControls
     {
         [MethodImpl(MethodImplOptions.NoInlining)]

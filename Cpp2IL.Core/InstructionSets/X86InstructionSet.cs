@@ -88,6 +88,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return booleanTailBranch; // Complete frame-free Boolean branch with two uniquely bound tail targets.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
+        if (X64ReferencePropertySetterProof.TryLift(context, nativeInstructions) is { } propertyStore)
+            return propertyStore; // The complete folded setter tail binds its own field and GC marker.
         if (X64ComposedReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } composedReferenceStore)
             return composedReferenceStore; // Preserve the increment, source read, and null-guarded field write in native order.
         if (X86ByteThresholdReturnProof.TryLift(context, nativeInstructions) is { } byteThreshold)

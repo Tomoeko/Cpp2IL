@@ -89,6 +89,56 @@ namespace RecoveryValidation
                 { "sameDispatch", ReferenceEquals(dispatchOwner.Current, further) }
             });
 
+            var propertyPlain = new BaseNode { Text = "plain-property", Marker = 71 };
+            var propertyExact = new DerivedNode
+            {
+                Text = "owned", Marker = -73, Detail = 79
+            };
+            var propertyFurther = new FurtherNode
+            {
+                Text = "sub", Marker = 83, Detail = 89, Extra = 97
+            };
+            var propertyOwner = new PropertyResolver { Neighbor = 101 };
+            var propertyTwin = new PropertyResolverTwin
+            {
+                Current = propertyExact, Neighbor = 103
+            };
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "property-control" },
+                { "sameTwinCurrent", ReferenceEquals(propertyTwin.Current, propertyExact) },
+                { "twinNeighbor", propertyTwin.Neighbor }
+            });
+            ObservePropertyLookup(observations, "null-current", propertyOwner);
+            ObservePropertyCompose(observations, "null-current", propertyOwner);
+            propertyOwner.Current = propertyPlain;
+            ObservePropertyLookup(observations, "incompatible", propertyOwner);
+            ObservePropertyCompose(observations, "incompatible", propertyOwner);
+            propertyOwner.Current = propertyExact;
+            ObservePropertyLookup(observations, "exact", propertyOwner);
+            ObservePropertyCompose(observations, "exact", propertyOwner);
+            propertyExact.Text = null;
+            ObservePropertyCompose(observations, "null-text", propertyOwner);
+            propertyExact.Text = "owned";
+            propertyOwner.Current = propertyFurther;
+            ObservePropertyLookup(observations, "subclass", propertyOwner);
+            ObservePropertyCompose(observations, "subclass", propertyOwner);
+            ObservePropertyLookup(observations, "null-owner", null);
+            ObservePropertyCompose(observations, "null-owner", null);
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "property-neighbors" },
+                { "plainMarker", propertyPlain.Marker },
+                { "exactMarker", propertyExact.Marker },
+                { "exactDetail", propertyExact.Detail },
+                { "furtherMarker", propertyFurther.Marker },
+                { "furtherDetail", propertyFurther.Detail },
+                { "furtherExtra", propertyFurther.Extra },
+                { "ownerNeighbor", propertyOwner.Neighbor },
+                { "twinNeighbor", propertyTwin.Neighbor },
+                { "sameTwinCurrent", ReferenceEquals(propertyTwin.Current, propertyExact) }
+            });
+
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -160,6 +210,48 @@ namespace RecoveryValidation
                 { "markerAfter", after == null ? (int?)null : after.Marker },
                 { "detailAfter", derived == null ? (int?)null : derived.Detail },
                 { "extraAfter", further == null ? (int?)null : further.Extra },
+                { "neighborAfter", owner == null ? (int?)null : owner.Neighbor }
+            });
+        }
+
+        private static void ObservePropertyLookup(List<object> observations,
+            string label, PropertyResolver owner)
+        {
+            var before = owner == null ? null : owner.Current;
+            DerivedNode result = null;
+            var exception = "none";
+            try { result = owner.Lookup(); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            var after = owner == null ? null : owner.Current;
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "property-lookup:" + label },
+                { "resultType", result == null ? null : result.GetType().Name },
+                { "sameResultAsCurrent", result != null && ReferenceEquals(result, before) },
+                { "exception", exception },
+                { "sameCurrentAfter", owner != null && ReferenceEquals(before, after) },
+                { "currentType", after == null ? null : after.GetType().Name },
+                { "textAfter", after == null ? null : after.Text },
+                { "neighborAfter", owner == null ? (int?)null : owner.Neighbor }
+            });
+        }
+
+        private static void ObservePropertyCompose(List<object> observations,
+            string label, PropertyResolver owner)
+        {
+            var before = owner == null ? null : owner.Current;
+            string result = null;
+            var exception = "none";
+            try { result = owner.Compose(); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            var after = owner == null ? null : owner.Current;
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "property-compose:" + label }, { "result", result },
+                { "exception", exception },
+                { "sameCurrentAfter", owner != null && ReferenceEquals(before, after) },
+                { "currentType", after == null ? null : after.GetType().Name },
+                { "textAfter", after == null ? null : after.Text },
                 { "neighborAfter", owner == null ? (int?)null : owner.Neighbor }
             });
         }

@@ -27,7 +27,10 @@ internal static class X64ClassCastLookupRecovery
         };
         definition.CilMethodBody = il;
         il.Instructions.Add(CilOpCodes.Ldarg_0);
-        il.Instructions.Add(CilOpCodes.Ldfld, proof.SourceField.ToFieldDescriptor());
+        if (proof.SourceGetter is { } getter)
+            il.Instructions.Add(CilOpCodes.Call, getter.ToMethodDescriptor());
+        else
+            il.Instructions.Add(CilOpCodes.Ldfld, proof.SourceField.ToFieldDescriptor());
         il.Instructions.Add(CilOpCodes.Isinst,
             proof.TargetType.ToTypeSignature().ToTypeDefOrRef());
         il.Instructions.Add(CilOpCodes.Ret);

@@ -21,12 +21,12 @@ namespace Cpp2IL.Core.InstructionSets;
 /// parent-table lookup; no other native body is admitted. The result is either
 /// the original field reference or null, matching managed isinst.
 /// </summary>
-internal static class X64ClassCastLookupProof
+internal static partial class X64ClassCastLookupProof
 {
     private static readonly byte[] SavedRbxFrame = [0x06, 0x32, 0x02, 0x30];
 
     internal sealed record Evidence(FieldAnalysisContext SourceField,
-        TypeAnalysisContext TargetType);
+        TypeAnalysisContext TargetType, MethodAnalysisContext? SourceGetter = null);
 
     internal sealed record Shape(int FieldOffset, ulong Flag, ulong TypeInfoSlot,
         ulong Initializer);
@@ -137,9 +137,20 @@ internal static class X64ClassCastLookupProof
                 !ReferenceEquals(app.ResolveIl2CppType(usage.AsType()), target))
                 return null;
 
-            var fields = owner.Fields.Where(field => !field.IsStatic &&
-                field.Offset == shape.FieldOffset).ToArray();
-            if (fields is not [{ } field] || field.Name != field.DefaultName ||
+            var fields = owner.Fields.Where(candidate => !candidate.IsStatic &&
+                candidate.Offset == shape.FieldOffset).ToArray();
+            FieldAnalysisContext field;
+            MethodAnalysisContext? sourceGetter = null;
+            if (fields is [var direct])
+                field = direct;
+            else if (fields.Length == 0 && TryBindInheritedPropertyGetter(owner,
+                         shape.FieldOffset, pe, unwind, out field, out sourceGetter))
+            {
+                // A proved inherited getter reproduces an inlined private field read.
+            }
+            else
+                return null;
+            if (field.Name != field.DefaultName ||
                 field.BackingData?.Field.RawFieldType is not
                     { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
                         NumMods: 0, Byref: 0, Pinned: 0 } ||
@@ -151,10 +162,11 @@ internal static class X64ClassCastLookupProof
                 !NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(
                     new FieldReference(field,
                         new LocalVariable("proved-cast-owner",
-                            new ISIL.Register(null, "rcx"), owner), shape.FieldOffset)))
+                            new ISIL.Register(null, "rcx"),
+                            field.DeclaringType), shape.FieldOffset)))
                 return null;
 
-            return new Evidence(field, target);
+            return new Evidence(field, target, sourceGetter);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)

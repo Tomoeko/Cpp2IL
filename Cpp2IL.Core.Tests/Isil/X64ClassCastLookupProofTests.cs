@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using AssetRipper.Primitives;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Utils;
@@ -13,6 +14,139 @@ namespace Cpp2IL.Core.Tests.Isil;
 [NonParallelizable]
 public class X64ClassCastLookupProofTests
 {
+    [Test]
+    public void InheritedFinalPropertyGetterReplacesOnlyItsProvedFieldRead()
+    {
+        var directory = Environment.GetEnvironmentVariable(
+            "CPP2IL_RUNTIME_CAST_CONCAT_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_RUNTIME_CAST_CONCAT_FIXTURE_INPUT to the neutral exact player input.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data",
+            "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata,
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var types = app.GetAssemblyByName("RuntimeCastConcatFixture")!.Types;
+            var owner = types.Single(type => type.Name == "PropertyResolver");
+            var baseOwner = types.Single(type => type.Name == "PropertyResolverBase");
+            var twin = types.Single(type => type.Name == "PropertyResolverTwin");
+            var lookup = owner.Methods.Single(method => method.Name == "Lookup");
+            var compose = owner.Methods.Single(method => method.Name == "Compose");
+            var getter = baseOwner.Methods.Single(method => method.Name == "get_Current");
+            var twinGetter = twin.Methods.Single(method => method.Name == "get_Current");
+            var setter = baseOwner.Methods.Single(method => method.Name == "set_Current");
+            var twinSetter = twin.Methods.Single(method => method.Name == "set_Current");
+            lookup.EnsureRawBytes();
+            getter.EnsureRawBytes();
+            compose.EnsureRawBytes();
+            var native = X86Utils.Iterate(lookup).ToArray();
+            var shape = X64ClassCastLookupProof.TryProveShape(native);
+            var proof = X64ClassCastLookupProof.Find(lookup, native);
+            Assert.Multiple(() =>
+            {
+                Assert.That(native.Length, Is.EqualTo(37));
+                Assert.That(shape, Is.Not.Null);
+                Assert.That(proof, Is.Not.Null);
+                Assert.That(proof!.SourceField.DeclaringType, Is.SameAs(baseOwner));
+                Assert.That(proof.SourceField.Visibility, Is.EqualTo(FieldAttributes.Private));
+                Assert.That(proof.SourceGetter, Is.SameAs(getter));
+                Assert.That(getter.IsVirtual && getter.IsFinal, Is.True);
+                Assert.That(getter.UnderlyingPointer,
+                    Is.EqualTo(twinGetter.UnderlyingPointer));
+                Assert.That(app.MethodsByAddress[getter.UnderlyingPointer].Count,
+                    Is.GreaterThan(1));
+                Assert.That(X64LiteralConcatProof.Find(compose,
+                    X86Utils.Iterate(compose).ToArray())?.Lookup, Is.SameAs(lookup));
+            });
+
+            var setterBody = X86Utils.Iterate(setter).ToArray();
+            Assert.Multiple(() =>
+            {
+                Assert.That(setter.UnderlyingPointer,
+                    Is.EqualTo(twinSetter.UnderlyingPointer));
+                Assert.That(X64ReferencePropertySetterProof.Find(setter,
+                    setterBody)?.Field.DeclaringType, Is.SameAs(baseOwner));
+                Assert.That(X64ReferencePropertySetterProof.Find(twinSetter,
+                    X86Utils.Iterate(twinSetter).ToArray())?.Field.DeclaringType,
+                    Is.SameAs(twin));
+                Assert.That(X64ReferencePropertySetterProof.TryLift(setter,
+                    setterBody)?.Select(instruction => instruction.OpCode),
+                    Is.EqualTo(new[] { ISIL.OpCode.Move, ISIL.OpCode.Return }));
+            });
+            var changedSetterBody = setterBody.ToArray();
+            changedSetterBody[1].Op1Register = Register.RAX;
+            Assert.That(X64ReferencePropertySetterProof.Find(setter,
+                changedSetterBody), Is.Null);
+            changedSetterBody = setterBody.ToArray();
+            changedSetterBody[2].NearBranch64 = setterBody[0].IP;
+            Assert.That(X64ReferencePropertySetterProof.Find(setter,
+                changedSetterBody), Is.Null);
+            var setterField = baseOwner.Fields.Single(field =>
+                field.Name == "<Current>k__BackingField");
+            try
+            {
+                setterField.OverrideOffset = setterField.DefaultOffset + 8;
+                Assert.That(X64ReferencePropertySetterProof.Find(setter,
+                    setterBody), Is.Null);
+            }
+            finally { setterField.OverrideOffset = null; }
+
+            var neighbor = baseOwner.Fields.Single(field => field.Name == "Neighbor");
+            Assert.That(X64ClassCastLookupProof.BindProvedShape(lookup,
+                shape! with { FieldOffset = checked((int)neighbor.Offset) }), Is.Null);
+
+            var aliases = app.MethodsByAddress[getter.UnderlyingPointer];
+            aliases.Add(getter);
+            try
+            {
+                Assert.That(X64ClassCastLookupProof.Find(lookup, native), Is.Null,
+                    "two same-owner getter identities cannot select a folded target");
+            }
+            finally { aliases.RemoveAt(aliases.Count - 1); }
+
+            var flags = getter.Definition!.flags;
+            try
+            {
+                getter.Definition.flags = (ushort)(flags & ~(ushort)MethodAttributes.Final);
+                Assert.That(X64ClassCastLookupProof.Find(lookup, native), Is.Null,
+                    "an overridable property call need not equal the inlined field read");
+            }
+            finally { getter.Definition.flags = flags; }
+
+            var originalName = getter.OverrideName;
+            try
+            {
+                getter.OverrideName = "ChangedGetter";
+                Assert.That(X64ClassCastLookupProof.Find(lookup, native), Is.Null,
+                    "a renamed accessor no longer has the original property binding");
+            }
+            finally { getter.OverrideName = originalName; }
+
+            var bytes = File.ReadAllBytes(binary);
+            var offset = checked((int)((PE)app.Binary).MapVirtualAddressToRaw(
+                getter.UnderlyingPointer, false));
+            bytes[offset] ^= 1;
+            Cpp2IlApi.ResetInternalState();
+            Cpp2IlApi.InitializeLibCpp2Il(bytes, File.ReadAllBytes(metadata),
+                UnityVersion.Parse("2021.3.35f1"));
+            var changedLookup = Cpp2IlApi.CurrentAppContext!
+                .GetAssemblyByName("RuntimeCastConcatFixture")!.Types
+                .Single(type => type.Name == "PropertyResolver").Methods
+                .Single(method => method.Name == "Lookup");
+            Assert.That(X64ClassCastLookupProof.Find(changedLookup,
+                X86Utils.Iterate(changedLookup).ToArray()), Is.Null,
+                "the getter body must still match executable player bytes");
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
     [Test]
     public void ExactPlayerProvesClassCastAndRejectsCorruptedNativeBody()
     {

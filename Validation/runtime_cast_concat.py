@@ -20,6 +20,51 @@ def _compose(label, state, result=None, exception="none", owner=True):
             "exception": exception, "sameCurrentAfter": owner, **state}
 
 
+def _property_lookup(label, current_type, text, neighbor, result_type=None,
+                     identity=False, exception="none", owner=True):
+    return {"kind": "property-lookup:" + label, "resultType": result_type,
+            "sameResultAsCurrent": identity, "exception": exception,
+            "sameCurrentAfter": owner, "currentType": current_type,
+            "textAfter": text, "neighborAfter": neighbor}
+
+
+def _property_compose(label, current_type, text, neighbor, result=None,
+                      exception="none", owner=True):
+    return {"kind": "property-compose:" + label, "result": result,
+            "exception": exception, "sameCurrentAfter": owner,
+            "currentType": current_type, "textAfter": text,
+            "neighborAfter": neighbor}
+
+
+def _property_observations():
+    return [
+        {"kind": "property-control", "sameTwinCurrent": True,
+         "twinNeighbor": 103},
+        _property_lookup("null-current", None, None, 101),
+        _property_compose("null-current", None, None, 101,
+                          exception="System.NullReferenceException"),
+        _property_lookup("incompatible", "BaseNode", "plain-property", 101),
+        _property_compose("incompatible", "BaseNode", "plain-property", 101,
+                          exception="System.NullReferenceException"),
+        _property_lookup("exact", "DerivedNode", "owned", 101,
+                         "DerivedNode", True),
+        _property_compose("exact", "DerivedNode", "owned", 101, "owned|tag"),
+        _property_compose("null-text", "DerivedNode", None, 101, "|tag"),
+        _property_lookup("subclass", "FurtherNode", "sub", 101,
+                         "FurtherNode", True),
+        _property_compose("subclass", "FurtherNode", "sub", 101, "sub|tag"),
+        _property_lookup("null-owner", None, None, None,
+                         exception="System.NullReferenceException", owner=False),
+        _property_compose("null-owner", None, None, None,
+                          exception="System.NullReferenceException", owner=False),
+        {"kind": "property-neighbors", "plainMarker": 71,
+         "exactMarker": -73, "exactDetail": 79,
+         "furtherMarker": 83, "furtherDetail": 89, "furtherExtra": 97,
+         "ownerNeighbor": 101, "twinNeighbor": 103,
+         "sameTwinCurrent": True},
+    ]
+
+
 def observations():
     null = _state(None, None, None, None, None, 43)
     plain = _state("BaseNode", "plain", 11, None, None, 43)
@@ -65,7 +110,7 @@ def observations():
          "furtherExtra": 41, "resolverNeighbor": 43, "aliasNeighbor": -59,
          "dispatchNeighbor": 47, "dispatchExtra": 53,
          "sameAlias": True, "sameDispatch": True},
-    ]
+    ] + _property_observations()
 
 
 def verify(path, stage, version):
@@ -79,6 +124,6 @@ def verify(path, stage, version):
     expected = observations()
     if report.get("observations") != expected:
         raise ValueError("Runtime-cast behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 10,
+    return {"status": "passed", "observations": len(expected), "methods": 21,
             "platform": platform, "profile": "runtime-cast-concat",
-            "scope": "literal and TypeInfo loading, cast identity, null and incompatible references, aliases and neighbors"}
+            "scope": "literal and TypeInfo loading, inherited property getter, cast identity, null and incompatible references, aliases and neighbors"}
