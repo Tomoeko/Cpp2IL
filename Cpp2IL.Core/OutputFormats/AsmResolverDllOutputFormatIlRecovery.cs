@@ -177,7 +177,7 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             if (X64GuardedFieldCallRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
-                    "Guarded field-argument call IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                    "Guarded field-receiver call IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 

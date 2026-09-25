@@ -53,6 +53,22 @@ namespace RecoveryValidation
             };
             Record(observations, "null-owner", null, nullOwnerWitness, unaffectedOwner);
 
+            var twin = new CallReceiverTwin { Calls = int.MinValue, Neighbor = 59 };
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", "folded-target-control" },
+                { "result", twin.ReadCalls() },
+                { "callsAfter", twin.Calls },
+                { "neighborAfter", twin.Neighbor }
+            });
+            RecordRead(observations, "read-first", owner, receiver);
+            receiver.Calls = int.MinValue;
+            RecordRead(observations, "read-minimum", owner, receiver);
+            receiver.Calls = int.MaxValue;
+            RecordRead(observations, "read-maximum", owner, receiver);
+            RecordRead(observations, "read-null-receiver", missingReceiver, nullReceiverWitness);
+            RecordRead(observations, "read-null-owner", null, nullOwnerWitness);
+
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -87,6 +103,27 @@ namespace RecoveryValidation
                 { "aliasCountAfter", alias == null || alias.Receiver == null ? null : (object)alias.Receiver.Calls },
                 { "aliasPrefixAfter", alias == null ? null : (object)alias.Prefix },
                 { "aliasSuffixAfter", alias == null ? null : (object)alias.Suffix }
+            });
+        }
+
+        private static void RecordRead(List<object> observations, string kind,
+            CallOwner owner, CallReceiver witness)
+        {
+            var before = witness.Calls;
+            var result = 0;
+            var exception = "none";
+            try { result = owner.ForwardRead(); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", kind }, { "exception", exception },
+                { "result", exception == "none" ? (object)result : null },
+                { "callsBefore", before }, { "callsAfter", witness.Calls },
+                { "neighborAfter", witness.Neighbor },
+                { "prefixAfter", owner == null ? null : (object)owner.Prefix },
+                { "suffixAfter", owner == null ? null : (object)owner.Suffix },
+                { "receiverSameWitness", owner == null ? null :
+                    (object)ReferenceEquals(owner.Receiver, witness) }
             });
         }
 

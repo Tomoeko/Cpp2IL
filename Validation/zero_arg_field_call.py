@@ -21,6 +21,18 @@ def _call(kind, before, after, neighbor, prefix, suffix, *,
     }
 
 
+def _read(kind, value, neighbor, prefix, suffix, *, exception="none",
+          receiver_same=True):
+    return {
+        "kind": kind, "exception": exception,
+        "result": value if exception == "none" else None,
+        "callsBefore": value, "callsAfter": value,
+        "neighborAfter": neighbor,
+        "prefixAfter": prefix, "suffixAfter": suffix,
+        "receiverSameWitness": receiver_same,
+    }
+
+
 def observations():
     return [
         {"kind": "constructors", "ownerCreated": True, "receiverCreated": True,
@@ -41,6 +53,15 @@ def observations():
         _call("null-owner", 47, 47, 53, None, None,
               exception="System.NullReferenceException", owner_is_null=True,
               alias_count=47, alias_prefix=-37, alias_suffix=37),
+        {"kind": "folded-target-control", "result": -(1 << 31),
+         "callsAfter": -(1 << 31), "neighborAfter": 59},
+        _read("read-first", -(1 << 31), 37, -11, 13),
+        _read("read-minimum", -(1 << 31), 37, -11, 13),
+        _read("read-maximum", (1 << 31) - 1, 37, -11, 13),
+        _read("read-null-receiver", 41, 43, -31, 31,
+              exception="System.NullReferenceException", receiver_same=False),
+        _read("read-null-owner", 47, 53, None, None,
+              exception="System.NullReferenceException", receiver_same=None),
     ]
 
 
@@ -55,6 +76,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Zero-argument field-call behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 4,
+    return {"status": "passed", "observations": len(expected), "methods": 8,
             "platform": report["platform"], "profile": "zero-arg-field-call",
-            "scope": "zero-argument instance call through one reference field, repeated and aliased mutation, unchanged neighbors, and both null paths"}
+            "scope": "zero-argument instance calls through one reference field, folded getter target, repeated and aliased mutation, unchanged neighbors, Int32 returns, and both null paths"}

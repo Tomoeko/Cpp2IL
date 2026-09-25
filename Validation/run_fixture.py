@@ -140,7 +140,7 @@ PROFILES = {
     "composed-read": {"assembly": "ComposedReadFixture", "source": VALIDATION / "ComposedReadFixture", "methods": 4},
     "parameter-array": {"assembly": "ParameterArrayFixture", "source": VALIDATION / "ParameterArrayFixture", "methods": 3},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
-    "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 4},
+    "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 8},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
     "struct-forward-call": {"assembly": "StructForwardCallFixture", "source": VALIDATION / "StructForwardCallFixture", "methods": 5},
     "struct-static-forward-call": {"assembly": "StructStaticForwardCallFixture", "source": VALIDATION / "StructStaticForwardCallFixture", "methods": 6},

@@ -18,13 +18,16 @@ namespace Cpp2IL.Core.InstructionSets;
 /// Proves a closed x64 tail call whose receiver and up to two arguments are
 /// ordinary fields of the same instance, with an exclusive runtime null arm.
 /// </summary>
-internal static class X64GuardedFieldCallProof
+internal static partial class X64GuardedFieldCallProof
 {
     internal sealed record Evidence(MethodAnalysisContext Target, FieldAnalysisContext ReceiverField,
         IReadOnlyList<FieldAnalysisContext> ArgumentFields);
 
     internal static Evidence? Find(MethodAnalysisContext method)
     {
+        if (FindZeroArgumentInt32(method) is { } zeroArgument)
+            return zeroArgument;
+
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) || method.IsStatic ||
             method.Parameters.Count != 0 || method.GenericParameters.Count != 0 ||

@@ -12,6 +12,24 @@ namespace ZeroArgFieldCallFixture
         {
             Calls = unchecked(Calls + 1);
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int ReadCalls()
+        {
+            return Calls;
+        }
+    }
+
+    public class CallReceiverTwin
+    {
+        public int Calls;
+        public int Neighbor;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int ReadCalls()
+        {
+            return Calls;
+        }
     }
 
     public class CallOwner
@@ -24,6 +42,12 @@ namespace ZeroArgFieldCallFixture
         public void Forward()
         {
             Receiver.Touch();
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int ForwardRead()
+        {
+            return Receiver.ReadCalls();
         }
     }
 }
