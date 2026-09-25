@@ -15,6 +15,105 @@ public class X64MetadataInitializationHelperProofTests
 {
     [Test]
     [NonParallelizable]
+    public void AlternateExactPlayerAuthenticatesStringLiteralCacheAndAllocation()
+    {
+        var binary = Environment.GetEnvironmentVariable("CPP2IL_ALTERNATE_METADATA_BINARY");
+        var metadata = Environment.GetEnvironmentVariable("CPP2IL_ALTERNATE_METADATA_FILE");
+        if (string.IsNullOrEmpty(binary) || string.IsNullOrEmpty(metadata))
+            Assert.Ignore("Set both alternate metadata input paths to a local exact-target player.");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary!, metadata!,
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var pe = (PE)app.Binary;
+            var unwind = X64UnwindProof.ForApplication(app)!;
+            var initializer = app.GetOrCreateKeyFunctionAddresses()
+                .il2cpp_codegen_initialize_runtime_metadata;
+            Assert.That(X64MetadataInitializationHelperProof.TryIdentify(app, pe,
+                unwind, initializer), Is.False, "the existing core layout is distinct");
+            Assert.That(X64MetadataInitializationHelperProof.TryIdentifyMethodDefArm(app,
+                pe, unwind, initializer), Is.True, "alternate core identity");
+            Assert.That(X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app,
+                pe, unwind, initializer), Is.True, "alternate TypeInfo arm");
+            Assert.That(X64MetadataInitializationHelperProof.TryIdentifyStringLiteral(app,
+                pe, unwind, initializer), Is.True, "alternate string-literal arm");
+
+            var thunk = Decode(pe, initializer, 5, 0);
+            var wrapper = Decode(pe, thunk.NearBranchTarget, 7, 1);
+            var core = wrapper.NearBranchTarget;
+            var tableLoad = Decode(pe, core + 0x37, 0x3a, 12);
+            var tableEntryAddress = unwind.ImageBase + tableLoad.MemoryDisplacement64 + 16;
+            var tableEntry = checked((int)pe.MapVirtualAddressToRaw(
+                tableEntryAddress, false));
+            var image = File.ReadAllBytes(binary!);
+            var armRva = BinaryPrimitives.ReadInt32LittleEndian(
+                image.AsSpan(tableEntry, 4));
+            Assert.That(armRva, Is.GreaterThan(0));
+            var arm = unwind.ImageBase + (uint)armRva;
+            var exchange = Decode(pe, arm, 0x7f, 19);
+            Assert.That(exchange.Mnemonic, Is.EqualTo(Mnemonic.Cmpxchg));
+            Assert.That(exchange.HasLockPrefix, Is.True);
+            var exchangePrefix = checked((int)pe.MapVirtualAddressToRaw(exchange.IP, false));
+            Assert.That(image[exchangePrefix], Is.EqualTo(0xf0));
+
+            var mutations = new[]
+            {
+                (Name: "literal switch entry", Offset: tableEntry),
+                (Name: "cache compare-exchange", Offset: exchangePrefix),
+                (Name: "string allocation export", Offset: checked((int)
+                    pe.MapVirtualAddressToRaw(pe.GetVirtualAddressOfExportedFunctionByName(
+                        "il2cpp_string_new_len"), false))),
+                (Name: "write barrier export", Offset: checked((int)
+                    pe.MapVirtualAddressToRaw(pe.GetVirtualAddressOfExportedFunctionByName(
+                        "il2cpp_gc_wbarrier_set_field"), false))),
+            };
+            var metadataBytes = File.ReadAllBytes(metadata!);
+            foreach (var mutation in mutations)
+            {
+                var changed = (byte[])image.Clone();
+                changed[mutation.Offset] ^= 1;
+                Cpp2IlApi.ResetInternalState();
+                Cpp2IlApi.InitializeLibCpp2Il(changed, metadataBytes,
+                    UnityVersion.Parse("2021.3.35f1"));
+                var modified = Cpp2IlApi.CurrentAppContext!;
+                var changedPe = (PE)modified.Binary;
+                var changedUnwind = X64UnwindProof.ForApplication(modified)!;
+                var changedInitializer = modified.GetOrCreateKeyFunctionAddresses()
+                    .il2cpp_codegen_initialize_runtime_metadata;
+                Assert.That(X64MetadataInitializationHelperProof.TryIdentifyMethodDefArm(
+                    modified, changedPe, changedUnwind, changedInitializer), Is.True,
+                    $"alternate core after {mutation.Name} mutation");
+                Assert.That(X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(
+                    modified, changedPe, changedUnwind, changedInitializer), Is.True,
+                    $"TypeInfo arm after {mutation.Name} mutation");
+                Assert.That(X64MetadataInitializationHelperProof.TryIdentifyStringLiteral(
+                    modified, changedPe, changedUnwind, changedInitializer), Is.False,
+                    mutation.Name);
+            }
+
+            var wrongTypeArm = (byte[])image.Clone();
+            wrongTypeArm[tableEntry - 16] ^= 1;
+            Cpp2IlApi.ResetInternalState();
+            Cpp2IlApi.InitializeLibCpp2Il(wrongTypeArm, metadataBytes,
+                UnityVersion.Parse("2021.3.35f1"));
+            var wrongTypeApp = Cpp2IlApi.CurrentAppContext!;
+            Assert.That(X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(
+                wrongTypeApp, (PE)wrongTypeApp.Binary,
+                X64UnwindProof.ForApplication(wrongTypeApp)!, wrongTypeApp
+                    .GetOrCreateKeyFunctionAddresses()
+                    .il2cpp_codegen_initialize_runtime_metadata), Is.False,
+                "a retargeted TypeInfo switch entry cannot authenticate the cast route");
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    [NonParallelizable]
     public void ExactPlayerAuthenticatesStringLiteralUsageArm()
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_LITERAL_CONCAT_FIXTURE_INPUT");

@@ -128,7 +128,7 @@ internal static class X64ClassCastLookupProof
                 !X64PeOnceFlagProof.IsInitiallyZero(pe, unwind, shape.Flag) ||
                 shape.Initializer != app.GetOrCreateKeyFunctionAddresses()
                     .il2cpp_codegen_initialize_runtime_metadata ||
-                !X64MetadataInitializationHelperProof.TryIdentify(app, pe, unwind,
+                !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe, unwind,
                     shape.Initializer))
                 return null;
 

@@ -8,7 +8,12 @@ namespace Cpp2IL.Core.InstructionSets;
 
 internal static partial class X64MetadataInitializationHelperProof
 {
-    private static bool TryIdentifyAlternateMethodDefArm(ApplicationAnalysisContext app,
+    internal static bool TryIdentifyTypeInfo(ApplicationAnalysisContext app,
+        PE pe, X64UnwindProof.Index unwind, ulong target) =>
+        TryIdentify(app, pe, unwind, target) ||
+        TryIdentifyAlternateCore(app, pe, unwind, target);
+
+    private static bool TryIdentifyAlternateCore(ApplicationAnalysisContext app,
         PE pe, X64UnwindProof.Index unwind, ulong target)
     {
         try

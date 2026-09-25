@@ -17,13 +17,16 @@ internal static partial class X64MetadataInitializationHelperProof
     {
         try
         {
-            // Keep the TypeInfo proof as the common initializer identity check.
+            // Each core proof authenticates the initializer and TypeInfo arm.
             // The literal arm also proves its cache hit, miss, and race paths.
-            if (!TryIdentify(app, pe, unwind, target) ||
-                Read(pe, unwind, target, 1, 5) is not { } thunk ||
-                Read(pe, unwind, thunk[0].NearBranchTarget, 2, 7) is not { } wrapper)
-                return false;
-            return ProveStringLiteralArm(pe, unwind, wrapper[1].NearBranchTarget);
+            if (TryIdentify(app, pe, unwind, target) &&
+                Read(pe, unwind, target, 1, 5) is { } thunk &&
+                Read(pe, unwind, thunk[0].NearBranchTarget, 2, 7) is { } wrapper &&
+                ProveStringLiteralArm(pe, unwind, wrapper[1].NearBranchTarget))
+                return true;
+            return TryIdentifyAlternateCore(app, pe, unwind, target) &&
+                   TryFindCore(app, pe, unwind, target, out var alternateCore) &&
+                   ProveAlternateStringLiteralArm(pe, unwind, alternateCore);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)

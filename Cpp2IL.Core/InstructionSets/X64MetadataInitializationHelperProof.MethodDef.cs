@@ -20,7 +20,7 @@ internal static partial class X64MetadataInitializationHelperProof
         X64UnwindProof.Index unwind, ulong target)
     {
         if (!TryIdentify(app, pe, unwind, target))
-            return TryIdentifyAlternateMethodDefArm(app, pe, unwind, target);
+            return TryIdentifyAlternateCore(app, pe, unwind, target);
 
         try
         {
