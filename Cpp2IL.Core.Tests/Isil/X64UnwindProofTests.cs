@@ -100,6 +100,30 @@ public class X64UnwindProofTests
     }
 
     [Test]
+    public void FileBackedZeroProofExcludesLoaderRelocationsAndMalformedTables()
+    {
+        var image = Image();
+        Assert.That(X64UnwindProof.Parse(image)!.IsUnaffectedByBaseRelocationRva(0x2004), Is.True);
+
+        U32(image, 0x130, 0x3080); // Base relocation directory in file-backed data.
+        U32(image, 0x134, 12);
+        U32(image, 0x980, 0x2000);
+        U32(image, 0x984, 12);
+        U16(image, 0x988, 0xA004); // DIR64 covers 0x2004 through 0x200B.
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.That(index.IsUnaffectedByBaseRelocationRva(0x2003), Is.True);
+        Assert.That(index.IsUnaffectedByBaseRelocationRva(0x2004), Is.False);
+        Assert.That(index.IsUnaffectedByBaseRelocationRva(0x200B), Is.False);
+        Assert.That(index.IsUnaffectedByBaseRelocationRva(0x200C), Is.True);
+
+        U16(image, 0x988, 0x3004); // Unknown relocation semantics are not guessed.
+        Assert.That(X64UnwindProof.Parse(image)!.IsUnaffectedByBaseRelocationRva(0x200C), Is.False);
+        U16(image, 0x988, 0xA004);
+        U32(image, 0x984, 14); // Block extends beyond its directory.
+        Assert.That(X64UnwindProof.Parse(image)!.IsUnaffectedByBaseRelocationRva(0x200C), Is.False);
+    }
+
+    [Test]
     public void MissingRecordsAndInteriorEntriesRemainExplicitForTheCallerProof()
     {
         var image = Image();

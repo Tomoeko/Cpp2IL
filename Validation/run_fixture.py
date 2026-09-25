@@ -871,6 +871,8 @@ def main():
     parser.add_argument("--run-dir", type=Path, required=True, help="New directory under this repository's ignored Files/")
     parser.add_argument("--stage", choices=["compile", "build", "run"], default="compile",
                         help="run builds and executes; build also compiles; every invocation uses a fresh project")
+    parser.add_argument("--code-generation", choices=("OptimizeSpeed", "OptimizeSize"), default="OptimizeSpeed",
+                        help="IL2CPP code generation setting for a native build")
     parser.add_argument("--timeout", type=int, default=600, help="Per-process deadline in seconds")
     args = parser.parse_args()
     profile = PROFILES[args.profile]
@@ -899,6 +901,7 @@ def main():
     environment = os.environ.copy()
     # Do not accidentally inherit a previous run's discovery override.
     environment.pop("CPP2IL_VALIDATION_TOOLCHAIN", None)
+    environment["CPP2IL_VALIDATION_CODE_GENERATION"] = args.code_generation
     if args.wine:
         prefix = Path.home() / ".wine_unity"
         if not prefix.is_dir():
@@ -916,6 +919,7 @@ def main():
 
     run_dir.mkdir(parents=True)
     receipt = {"unityVersionRequired": VERSION, "requestedStage": args.stage,
+               "requestedCodeGeneration": args.code_generation,
                "profile": args.profile, "assembly": profile["assembly"],
                "sourceKind": "synthetic-baseline" if args.source_dir.resolve() == profile["source"].resolve() else "replacement-source",
                "status": "running", "stages": {
@@ -1004,7 +1008,8 @@ def main():
         if args.stage != "compile":
             build = json.loads((project / "Reports" / "build.json").read_text(encoding="utf-8"))
             expected = {"unityVersion": VERSION, "target": "StandaloneWindows64", "backend": "IL2CPP",
-                        "compilerConfiguration": "Release", "development": False, "result": "Succeeded", "errors": 0}
+                        "compilerConfiguration": "Release", "codeGeneration": args.code_generation,
+                        "development": False, "result": "Succeeded", "errors": 0}
             if any(build.get(key) != value for key, value in expected.items()):
                 raise ValueError("Native build receipt does not establish the required profile")
             receipt["stages"]["nativeBuild"] = {"status": "passed", **build}

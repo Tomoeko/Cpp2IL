@@ -21,3 +21,20 @@ other player inputs currently fails the separate runtime metadata initializer
 helper proof and reverses the state/owner native field-write order. It remains
 unsupported pending independent authentication of both differences. Those
 players' IL2CPP Release build configuration is also unverified.
+
+An independent exact-target experiment selected `OptimizeSize` while keeping
+the Windows x64 IL2CPP compiler configuration at `Release`. Its factory has a
+113-byte native unwind span. The first strict attempt rejected it because the
+generated once flag was a writable, file-backed zero byte rather than part of
+the virtual zero-initialized section. The proof now accepts this storage form
+only after checking the on-disk zero and that the PE loader cannot relocate the
+byte. A fresh player-only round trip strictly emitted all eight selected
+methods, passed typed IL verification and stripped-oracle declaration
+comparison with zero differences, compiled and rebuilt in the supplied Windows
+editor, and matched all 13 observations in each original and recovered editor
+and player stage. The ignored passing receipt is under
+`Files/runs/iterator-factory-optimize-size-roundtrip-02/`.
+
+The metadata helper in this controlled build still has the proven `0x5d`
+first span. This run does not authenticate the alternate `0x37` helper seen in
+other inputs.

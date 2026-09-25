@@ -45,7 +45,8 @@ class HarnessBoundaries(unittest.TestCase):
             "status": "passed", "sourceKind": "synthetic-baseline", "profile": "arithmetic",
             "stages": {"nativeBuild": {"unityVersion": run_fixture.VERSION,
                                        "target": "StandaloneWindows64", "backend": "IL2CPP",
-                                       "compilerConfiguration": "Release", "development": False,
+                                       "compilerConfiguration": "Release", "codeGeneration": "OptimizeSpeed",
+                                       "development": False,
                                        "errors": 0, "result": "Succeeded"},
                        "playerBehavior": {"status": "passed"}},
             "playerInputs": player_inputs,
@@ -159,6 +160,17 @@ class HarnessBoundaries(unittest.TestCase):
         receipt = self.baseline_receipt()
         self.write_baseline_receipt(receipt)
         self.assertEqual(run_roundtrip.checked_baseline(self.root, "arithmetic"), receipt)
+
+    def test_baseline_requires_requested_code_generation(self):
+        receipt = self.baseline_receipt()
+        self.write_baseline_receipt(receipt)
+        with self.assertRaisesRegex(ValueError, "required profile"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic",
+                                           expected_code_generation="OptimizeSize")
+        receipt["stages"]["nativeBuild"]["codeGeneration"] = "OptimizeSize"
+        self.write_baseline_receipt(receipt)
+        self.assertEqual(run_roundtrip.checked_baseline(
+            self.root, "arithmetic", expected_code_generation="OptimizeSize"), receipt)
 
     def test_baseline_rejects_changed_or_added_fixture_source(self):
         receipt = self.baseline_receipt()

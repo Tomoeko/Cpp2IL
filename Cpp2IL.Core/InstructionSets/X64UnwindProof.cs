@@ -32,6 +32,7 @@ internal static class X64UnwindProof
     }
 
     internal readonly record struct Section(uint Rva, uint VirtualSize, uint Raw, uint RawSize, uint Characteristics);
+    internal readonly record struct RelocationSpan(uint Start, uint End);
     internal sealed record Unwind(byte PrologSize, byte FrameRegister, byte[] Codes,
         byte Flags = 0, uint HandlerRva = 0, uint HandlerDataRva = 0,
         uint ChainStart = 0, uint ChainEnd = 0, uint ChainUnwindRva = 0);
@@ -49,9 +50,17 @@ internal static class X64UnwindProof
         private readonly uint _imageSize;
         private readonly Section[] _sections;
         private readonly Function[] _functions;
+        private readonly RelocationSpan[]? _baseRelocations;
 
-        internal Index(ulong imageBase, uint imageSize, Section[] sections, Function[] functions)
-        { _imageBase = imageBase; _imageSize = imageSize; _sections = sections; _functions = functions; }
+        internal Index(ulong imageBase, uint imageSize, Section[] sections, Function[] functions,
+            RelocationSpan[]? baseRelocations = null)
+        {
+            _imageBase = imageBase;
+            _imageSize = imageSize;
+            _sections = sections;
+            _functions = functions;
+            _baseRelocations = baseRelocations;
+        }
 
         internal ulong ImageBase => _imageBase;
 
@@ -93,6 +102,26 @@ internal static class X64UnwindProof
                     return (section.Characteristics & 0xE0000000) == 0xC0000000 &&
                            (ulong)rva - section.Rva >= section.RawSize;
             return false;
+        }
+
+        // File-backed zero bytes may be changed by the PE loader. Only an
+        // authenticated relocation directory can establish that a byte is
+        // unaffected at a nonpreferred load address.
+        internal bool IsUnaffectedByBaseRelocationRva(uint rva)
+        {
+            if (rva >= _imageSize || _baseRelocations == null)
+                return false;
+            var low = 0;
+            var high = _baseRelocations.Length;
+            while (low < high)
+            {
+                var middle = low + (high - low) / 2;
+                if (_baseRelocations[middle].Start <= rva)
+                    low = middle + 1;
+                else
+                    high = middle;
+            }
+            return low == 0 || rva >= _baseRelocations[low - 1].End;
         }
 
         // A PE section's virtual tail after its file-backed bytes is zero-initialized.
@@ -338,7 +367,61 @@ internal static class X64UnwindProof
                 else
                     records[index] = record with { RootStart = root.Start };
             }
-            return new Index(imageBase, _imageSize, _sections, records);
+            return new Index(imageBase, _imageSize, _sections, records,
+                ReadBaseRelocations(optional, optionalSize));
+        }
+
+        private RelocationSpan[]? ReadBaseRelocations(int optional, ushort optionalSize)
+        {
+            // IMAGE_DIRECTORY_ENTRY_BASERELOC is the sixth PE32+ data directory.
+            if (optionalSize < 160 || U32(optional + 108) < 6)
+                return null;
+            var tableRva = U32(optional + 152);
+            var tableSize = U32(optional + 156);
+            if (tableRva == 0 && tableSize == 0)
+                return [];
+            if (tableRva == 0 || tableSize < 8 || tableSize > int.MaxValue)
+                return null;
+            var table = Map(_sections, tableRva, tableSize, false);
+            if (table < 0)
+                return null;
+
+            var spans = new List<RelocationSpan>();
+            var offset = 0U;
+            while (offset < tableSize)
+            {
+                if (tableSize - offset < 8)
+                    return null;
+                var page = U32(checked(table + (int)offset));
+                var blockSize = U32(checked(table + (int)offset + 4));
+                if (page % 0x1000 != 0 || blockSize < 8 || blockSize % 2 != 0 ||
+                    blockSize > tableSize - offset)
+                    return null;
+                for (var entry = 8U; entry < blockSize; entry += 2)
+                {
+                    var encoded = U16(checked(table + (int)(offset + entry)));
+                    var kind = encoded >> 12;
+                    if (kind == 0) // IMAGE_REL_BASED_ABSOLUTE padding
+                        continue;
+                    if (kind != 10) // x64 IMAGE_REL_BASED_DIR64
+                        return null;
+                    var start = (ulong)page + (uint)(encoded & 0x0fff);
+                    if (start + 8 > _imageSize)
+                        return null;
+                    spans.Add(new((uint)start, (uint)(start + 8)));
+                }
+                offset += blockSize;
+            }
+            spans.Sort((left, right) => left.Start.CompareTo(right.Start));
+            var merged = new List<RelocationSpan>(spans.Count);
+            foreach (var span in spans)
+            {
+                if (merged.Count != 0 && span.Start <= merged[^1].End)
+                    merged[^1] = merged[^1] with { End = Math.Max(merged[^1].End, span.End) };
+                else
+                    merged.Add(span);
+            }
+            return merged.ToArray();
         }
 
         private Unwind? ReadUnwind(uint rva)

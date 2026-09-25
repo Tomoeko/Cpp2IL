@@ -136,7 +136,8 @@ def verify_recorded_files(recorded, expected, label):
         raise ValueError("Baseline " + label + " hashes differ from current sources")
 
 
-def checked_baseline(directory, profile, expected_manifest_sha256=None):
+def checked_baseline(directory, profile, expected_manifest_sha256=None,
+                     expected_code_generation="OptimizeSpeed"):
     receipt = json.loads((directory / "receipt.json").read_text(encoding="utf-8"))
     if receipt.get("status") != "passed" or receipt.get("sourceKind") != "synthetic-baseline":
         raise ValueError("Baseline must be a successful original synthetic fixture run")
@@ -144,7 +145,8 @@ def checked_baseline(directory, profile, expected_manifest_sha256=None):
         raise ValueError("Baseline fixture profile does not match the requested round trip")
     build = receipt["stages"]["nativeBuild"]
     expected = {"unityVersion": VERSION, "target": "StandaloneWindows64", "backend": "IL2CPP",
-                "compilerConfiguration": "Release", "development": False, "errors": 0,
+                "compilerConfiguration": "Release", "codeGeneration": expected_code_generation,
+                "development": False, "errors": 0,
                 "result": "Succeeded"}
     if any(build.get(key) != value for key, value in expected.items()):
         raise ValueError("Baseline native build does not match the required profile")
@@ -194,6 +196,7 @@ def main():
     parser.add_argument("--install-ilverify", action="store_true")
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=600, help="Per child-stage deadline in seconds")
+    parser.add_argument("--code-generation", choices=("OptimizeSpeed", "OptimizeSize"), default="OptimizeSpeed")
     parser.add_argument("--profile", choices=sorted(PROFILES), default="arithmetic")
     args = parser.parse_args()
     profile = PROFILES[args.profile]
@@ -281,7 +284,7 @@ def main():
 
     fixture_command = [sys.executable, str(ROOT / "Validation/run_fixture.py"),
                        "--editor", str(args.editor.expanduser().resolve()), "--stage", "run", "--timeout", str(args.timeout),
-                       "--profile", args.profile]
+                       "--profile", args.profile, "--code-generation", args.code_generation]
     if args.wine:
         fixture_command += ["--wine", args.wine]
     if args.toolchain_root:
@@ -291,7 +294,7 @@ def main():
         if not args.baseline_run:
             baseline_manifest = ["--package-manifest", str(manifest_snapshot)] if manifest_snapshot else []
             run("baseline", fixture_command + baseline_manifest + ["--run-dir", str(baseline)], args.timeout * 2 + 30)
-        original = checked_baseline(baseline, args.profile, manifest_sha256)
+        original = checked_baseline(baseline, args.profile, manifest_sha256, args.code_generation)
         dependency_lock_sha256 = None
         if args.profile == "external-references":
             dependency_lock_sha256 = embedded_reference_lock_sha256(baseline / "project")
@@ -551,7 +554,7 @@ def main():
             if digest(directory / "auxiliary" / "external-assemblies" / item["name"]) != item["sha256"]:
                 raise ValueError("Explicit synthetic external assembly changed during validation")
         if args.profile == "external-references":
-            checked_baseline(baseline, args.profile, manifest_sha256)
+            checked_baseline(baseline, args.profile, manifest_sha256, args.code_generation)
             verify_external_reference_fixture(replacement / "project", replacement, rebuilt.get("externalDependencies"))
         if baseline_lock_sha256 is not None and resolved_package_lock_sha256(baseline / "project") != baseline_lock_sha256:
             raise ValueError("Baseline resolved package lock changed during validation")

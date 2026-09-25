@@ -55,7 +55,13 @@ namespace RecoveryValidation
                 EditorUserBuildSettings.development = false;
                 EditorUserBuildSettings.allowDebugging = false;
                 EditorUserBuildSettings.connectProfiler = false;
-                EditorUserBuildSettings.il2CppCodeGeneration = UnityEditor.Build.Il2CppCodeGeneration.OptimizeSpeed;
+                var codeGeneration = Environment.GetEnvironmentVariable("CPP2IL_VALIDATION_CODE_GENERATION");
+                if (string.IsNullOrEmpty(codeGeneration) || codeGeneration == "OptimizeSpeed")
+                    EditorUserBuildSettings.il2CppCodeGeneration = UnityEditor.Build.Il2CppCodeGeneration.OptimizeSpeed;
+                else if (codeGeneration == "OptimizeSize")
+                    EditorUserBuildSettings.il2CppCodeGeneration = UnityEditor.Build.Il2CppCodeGeneration.OptimizeSize;
+                else
+                    throw new InvalidOperationException("Unsupported IL2CPP code generation setting: " + codeGeneration);
                 var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
                 if (!EditorSceneManager.SaveScene(scene, "Assets/Validation.unity"))
                     throw new InvalidOperationException("Failed to save the validation scene.");

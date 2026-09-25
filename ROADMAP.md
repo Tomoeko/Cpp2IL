@@ -28,7 +28,7 @@ A `dotnet build -c Release` validates this tool, not recovered Unity source. A z
 
 ## Current evidence
 
-The latest recorded bounded total is **353 selected methods across 70 exact-target fixture round trips**. This total includes distinct controls of some shapes and explicitly disclosed auxiliary-assisted cases; it is not a unique-method count or a broad recovery percentage. At least one selected interface method correctly has no managed body. The expanded ten-method array-call control is the latest complete player-only round trip: 10/10 strict emission, pinned typed IL verification, zero declaration-projection differences against its stripped oracle before and after rebuilding, Windows editor compilation, Windows x64 Release IL2CPP rebuild, and 30 matching observations in each original/recovered editor/player stage. Its new call-result read proves a direct instance call, a separate returned `int[]`, ordered receiver and returned-array null failures, unsigned bounds failure, and a caller-visible counter effect. It does not establish arbitrary call-result array access. The prior parameter-array comparison control separately established two distinct parameter-origin reads with an intervening observable call and 112 matching observations in each stage.
+The latest recorded bounded total is **361 selected methods across 71 exact-target fixture round trips**. This total includes distinct controls of some shapes and explicitly disclosed auxiliary-assisted cases; it is not a unique-method count or a broad recovery percentage. At least one selected interface method correctly has no managed body. The latest complete player-only round trip uses an eight-method iterator control with Win64 `Release` IL2CPP `OptimizeSize`: 8/8 strict emission, typed IL verification, zero declaration-projection differences against its stripped oracle before and after rebuilding, Windows editor compilation, native rebuild, and 13 matching observations in each original/recovered editor/player stage. The earlier ten-method array-call control established a direct instance call, a separate returned `int[]`, ordered receiver and returned-array null failures, unsigned bounds failure, and a caller-visible counter effect with 30 matching observations in each stage. Neither fixture establishes arbitrary iterator or call-result array recovery. The parameter-array comparison control separately established two distinct parameter-origin reads with an intervening observable call and 112 matching observations in each stage.
 
 The current paired player-only audit preserves every ordered full-input and selected managed identity. The committed call-result array proof produced zero disposition and first-reason transitions in either scope:
 
@@ -39,7 +39,18 @@ The current paired player-only audit preserves every ordered full-input and sele
 
 Both broad strict commands exit 1. These are analysis dispositions, not verified 1:1 behaviors. Neither selected application has whole-scope typed IL, Unity source compilation, native rebuild or behavioral equivalence. Their original native `Release` configuration is unverified. A separate independent original-project diagnostic produced Unity integration errors and is not a clean acceptance baseline.
 
-The latest recorded Release solution build with .NET SDK 10.0.107 had zero errors and four NuGet packaging warnings (NU5104). Its offline test run discovered 1,644 cases: 1,516 passed, 128 optional-input checks skipped and none failed. Skips are not passing fixture evidence. Raw receipts remain local and ignored. The reviewed array-call run and original baselines have had generated projects and players pruned; a future baseline reuse needs a fresh original build.
+The latest recorded Release solution build with .NET SDK 10.0.107 had zero errors and four NuGet packaging warnings (NU5104). Its offline test run discovered 1,645 cases: 1,517 passed, 128 optional-input checks skipped and none failed. Skips are not passing fixture evidence. Raw receipts remain local and ignored. The reviewed earlier runs and original baselines have had generated projects and players pruned; a future baseline reuse needs a fresh original build.
+
+A controlled code-generation check now records `OptimizeSpeed` or `OptimizeSize`
+explicitly and rejects a baseline with a different setting. All 28 retained
+exact-target fixture player inputs inspected before this check had the proven
+`0x5d` metadata-helper first span. A fresh Win64 `Release` IL2CPP `OptimizeSize`
+iterator control retained that form but put its once flag in writable,
+file-backed zero data. The iterator proof now checks that byte and excludes
+loader relocation before accepting it. The eight-method round trip passed all
+declared gates above. The alternate `0x37` metadata helper in broader inputs
+remains unproved, and those inputs' original native build settings remain
+unverified.
 
 ## Milestone 0 — Reproducible baseline and honest reporting
 
@@ -68,6 +79,13 @@ Known gaps include authored `StructLayout.Size` when omitted and explicit natura
 The six-method composed control authenticates a reference-field store after an observable marker increment and source read; it preserves that order and the destination null failure. The newer parameter-array control authenticates two distinct object-array parameters, a shared index offset, separate null and bounds guards, an intervening direct call, reference equality, and five final managed operations in emitted block order. Binary Ninja inspection corroborated the native read and call sequence in the neutral player; the binary was closed without saving analysis changes. These controls do not establish arbitrary field stores, array sequences or concurrent behavior. Native optimization may erase original managed call boundaries and source ordering even when observed behavior matches.
 
 The array-call extension authenticates a direct nonvirtual call whose result is an `int[]`, with a separate argument array, a preserved signed index, a receiver null guard, a returned-array null guard, an unsigned bounds check, and nonreturning helper exits. The complete file-backed unwind region and unique managed callee bind the shape before emitting a managed call followed by `ldelem.i4`. Binary Ninja inspection corroborated the native sequence; the binary was closed without saving analysis changes.
+
+The `OptimizeSize` iterator control authenticates an alternate once-flag
+storage location. Its PE relocation-directory proof rejects any file-backed
+zero byte that the loader might alter, and rejects malformed or unsupported
+relocation records for this inference. The accepted result remains a bounded
+factory shape; other iterator layouts and the alternate metadata helper fail
+strictly.
 
 **Exit criterion:** each admitted shape has a reproducible exact-target source/native pair, meaningful positive and negative evidence, valid emitted IL, and matching bounded behavior. Generalize shared ABI, helper and type rules only when the broader evidence supports them; keep all other shapes strict failures.
 
@@ -115,6 +133,10 @@ WINEPREFIX="$HOME/.wine_unity" python3 Validation/run_roundtrip.py \
   --reference-dir "$UNITY_REFERENCE_DIR" \
   --run-dir Files/runs/composed-array-check --timeout 900
 ```
+
+The fixture and round-trip runners also accept `--code-generation OptimizeSize`
+for an explicit Release variant; the default is `OptimizeSpeed`. Baseline reuse
+requires the same recorded choice.
 
 Use a fresh run directory. `--baseline-run` is valid only while its verified original project and player remain available; rebuild a pruned original. Review the receipt, BuildReport, typed-IL result and behavior counts before claiming acceptance. Use the same exact target for new fixtures; macOS checks must be labeled separately.
 

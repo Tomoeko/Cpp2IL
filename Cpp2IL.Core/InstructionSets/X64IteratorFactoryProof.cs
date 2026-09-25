@@ -92,7 +92,7 @@ internal static class X64IteratorFactoryProof
         var flag = body[3].IPRelativeMemoryAddress;
         if (slot <= flag && flag - slot < 8 ||
             !WritableFileBacked(pe, unwind, slot, 8) ||
-            !ZeroInitialized(unwind, flag) ||
+            !InitiallyZeroGuardFlag(pe, unwind, flag) ||
             app.LibCpp2IlContext.GetRawTypeGlobalByAddress(slot) is not
                 { Type: MetadataUsageType.TypeInfo, IsValid: true } usage ||
             app.ResolveIl2CppType(usage.AsType()) is not { } iterator ||
@@ -427,9 +427,21 @@ internal static class X64IteratorFactoryProof
         return true;
     }
 
-    private static bool ZeroInitialized(X64UnwindProof.Index unwind, ulong address) =>
-        address >= unwind.ImageBase && address - unwind.ImageBase <= uint.MaxValue &&
-        unwind.IsWritableZeroInitializedRva((uint)(address - unwind.ImageBase));
+    private static bool InitiallyZeroGuardFlag(PE pe, X64UnwindProof.Index unwind, ulong address)
+    {
+        if (address < unwind.ImageBase || address - unwind.ImageBase > uint.MaxValue)
+            return false;
+        var rva = (uint)(address - unwind.ImageBase);
+        if (!unwind.IsUnaffectedByBaseRelocationRva(rva))
+            return false;
+        if (unwind.IsWritableZeroInitializedRva(rva))
+            return true;
+        // OptimizeSize can place generated once flags in file-backed writable
+        // data. The on-disk zero is evidence only when the loader cannot
+        // relocate that byte before the first guard check.
+        return WritableFileBacked(pe, unwind, address, 1) &&
+               pe.GetRawBinaryContent()[(int)pe.MapVirtualAddressToRaw(address, false)] == 0;
+    }
 
     private static bool Move(NativeInstruction instruction, NativeRegister destination, NativeRegister source) =>
         instruction.Op0Kind == OpKind.Register && instruction.Op0Register == destination &&
