@@ -860,7 +860,7 @@ internal static class X64ArrayGuardSiteProof
         return new Origin(field.FieldType, field, writer);
     }
 
-    private static bool TryCompleteFileBackedRegion(MethodAnalysisContext method,
+    internal static bool TryCompleteFileBackedRegion(MethodAnalysisContext method,
         IReadOnlyList<Instruction> decoded, PE pe, X64UnwindProof.Index unwind,
         out IReadOnlyList<Instruction> complete)
     {

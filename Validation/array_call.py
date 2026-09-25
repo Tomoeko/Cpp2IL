@@ -1,6 +1,12 @@
-"""Independent oracle for an array-returning call and a null receiver."""
+"""Independent oracle for array-returning calls and a call-result array read."""
 
 import json
+
+
+MINIMUM = -(1 << 31)
+MAXIMUM = (1 << 31) - 1
+NULL_EXCEPTION = "System.NullReferenceException"
+BOUNDS_EXCEPTION = "System.IndexOutOfRangeException"
 
 
 def observations():
@@ -33,6 +39,34 @@ def observations():
         expected.append({"kind": kind, "result": result, "sameReference": same_reference,
                          "exception": exception, "callsAfter": calls_after})
     expected.append({"kind": "field-null-owner", "exception": "System.NullReferenceException"})
+    for kind, index, argument, returned, result, exception, calls_before, calls_after in (
+        ("indexed-distinct-first", 0, [7, 8, 9], [MINIMUM, 0, MAXIMUM],
+         MINIMUM, "none", 0, 1),
+        ("indexed-distinct-last", 2, [17, 19, 23], [MINIMUM, 0, MAXIMUM],
+         MAXIMUM, "none", 0, 1),
+        ("indexed-null-return", 0, [11, 13], None, None, NULL_EXCEPTION, 0, 1),
+        ("indexed-null-argument", 1, None, [-17, 19], 19, "none", 0, 1),
+        ("indexed-empty-return", 0, [11], [], None, BOUNDS_EXCEPTION, 0, 1),
+        ("indexed-empty-argument", 0, [], [42], 42, "none", 0, 1),
+        ("indexed-negative", -1, [1, 2], [3, 5], None, BOUNDS_EXCEPTION, 0, 1),
+        ("indexed-upper", 2, [1, 2, 3], [4, 5], None, BOUNDS_EXCEPTION, 0, 1),
+        ("indexed-minimum", MINIMUM, [-17, 19], [3, 5],
+         None, BOUNDS_EXCEPTION, 0, 1),
+        ("indexed-maximum", MAXIMUM, [-17, 19], [3, 5],
+         None, BOUNDS_EXCEPTION, 0, 1),
+        ("indexed-overflow-value", 1, [0, 1], [MINIMUM, MAXIMUM],
+         MAXIMUM, "none", MAXIMUM, MINIMUM),
+        ("indexed-overflow-bounds", 2, [1, 2, 3], [MINIMUM, MAXIMUM],
+         None, BOUNDS_EXCEPTION, MAXIMUM, MINIMUM),
+        ("indexed-null-receiver", 0, [17, 19], None,
+         None, NULL_EXCEPTION, None, None),
+        ("indexed-null-receiver-null-argument", 0, None, None,
+         None, NULL_EXCEPTION, None, None),
+    ):
+        expected.append({"kind": kind, "index": index, "result": result,
+                         "exception": exception, "callsBefore": calls_before,
+                         "callsAfter": calls_after, "argumentAfter": argument,
+                         "returnedAfter": returned})
     return expected
 
 
@@ -45,6 +79,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Array-call behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 8,
+    return {"status": "passed", "observations": len(expected), "methods": 10,
             "platform": report["platform"], "profile": "array-call",
-            "scope": "array identity, base and derived calls, guarded field arguments, ordered effects and null receivers; not whole-program equivalence"}
+            "scope": "array identity, base and derived calls, guarded field arguments, call-result indexing, ordered effects, null and bounds failures; not whole-program equivalence"}

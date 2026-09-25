@@ -5,12 +5,20 @@ namespace ArrayCallFixture
     public class ArrayEcho
     {
         public int Calls;
+        public int[] ReturnedValues;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public int[] Echo(int[] values)
         {
             Calls = unchecked(Calls + 1);
             return values;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int[] ReturnConfigured(int[] values)
+        {
+            Calls = unchecked(Calls + 1);
+            return ReturnedValues;
         }
     }
 
@@ -50,6 +58,13 @@ namespace ArrayCallFixture
         {
             first.Echo(values);
             return second.Echo(values);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static int ReadFromEcho(ArrayEcho echo, int[] values, int index)
+        {
+            int[] returned = echo.ReturnConfigured(values);
+            return returned[index];
         }
     }
 }

@@ -33,6 +33,36 @@ namespace RecoveryValidation
             RecordFields(observations, "field-null-values", new ArrayEcho(), null);
             RecordFields(observations, "field-null-receiver", null, new[] { -17, 19 });
             RecordNullOwner(observations);
+            RecordIndexed(observations, "indexed-distinct-first", new ArrayEcho(),
+                new[] { 7, 8, 9 }, new[] { int.MinValue, 0, int.MaxValue }, 0);
+            RecordIndexed(observations, "indexed-distinct-last", new ArrayEcho(),
+                new[] { 17, 19, 23 }, new[] { int.MinValue, 0, int.MaxValue }, 2);
+            RecordIndexed(observations, "indexed-null-return", new ArrayEcho(),
+                new[] { 11, 13 }, null, 0);
+            RecordIndexed(observations, "indexed-null-argument", new ArrayEcho(),
+                null, new[] { -17, 19 }, 1);
+            RecordIndexed(observations, "indexed-empty-return", new ArrayEcho(),
+                new[] { 11 }, new int[0], 0);
+            RecordIndexed(observations, "indexed-empty-argument", new ArrayEcho(),
+                new int[0], new[] { 42 }, 0);
+            RecordIndexed(observations, "indexed-negative", new ArrayEcho(),
+                new[] { 1, 2 }, new[] { 3, 5 }, -1);
+            RecordIndexed(observations, "indexed-upper", new ArrayEcho(),
+                new[] { 1, 2, 3 }, new[] { 4, 5 }, 2);
+            RecordIndexed(observations, "indexed-minimum", new ArrayEcho(),
+                new[] { -17, 19 }, new[] { 3, 5 }, int.MinValue);
+            RecordIndexed(observations, "indexed-maximum", new ArrayEcho(),
+                new[] { -17, 19 }, new[] { 3, 5 }, int.MaxValue);
+            RecordIndexed(observations, "indexed-overflow-value",
+                new ArrayEcho { Calls = int.MaxValue }, new[] { 0, 1 },
+                new[] { int.MinValue, int.MaxValue }, 1);
+            RecordIndexed(observations, "indexed-overflow-bounds",
+                new ArrayEcho { Calls = int.MaxValue }, new[] { 1, 2, 3 },
+                new[] { int.MinValue, int.MaxValue }, 2);
+            RecordIndexed(observations, "indexed-null-receiver", null,
+                new[] { 17, 19 }, null, 0);
+            RecordIndexed(observations, "indexed-null-receiver-null-argument", null,
+                null, null, 0);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>
             {
@@ -134,6 +164,26 @@ namespace RecoveryValidation
             observations.Add(new Dictionary<string, object>
             {
                 { "kind", "field-null-owner" }, { "exception", exception }
+            });
+        }
+
+        private static void RecordIndexed(List<object> observations, string kind,
+            ArrayEcho echo, int[] values, int[] returnedValues, int index)
+        {
+            if (echo != null)
+                echo.ReturnedValues = returnedValues;
+            object result = null;
+            var exception = "none";
+            object callsBefore = echo == null ? null : (object)echo.Calls;
+            try { result = ArrayCalls.ReadFromEcho(echo, values, index); }
+            catch (Exception error) { exception = error.GetType().FullName; }
+            observations.Add(new Dictionary<string, object>
+            {
+                { "kind", kind }, { "index", index }, { "result", result },
+                { "exception", exception }, { "callsBefore", callsBefore },
+                { "callsAfter", echo == null ? null : (object)echo.Calls },
+                { "argumentAfter", values },
+                { "returnedAfter", echo == null ? null : echo.ReturnedValues }
             });
         }
 
