@@ -165,6 +165,50 @@ public class X64UnwindProofTests
             Is.EqualTo(ImageBase + 0x1000));
     }
 
+    [Test]
+    public void NestedHandlerFreeChainsReachTheirPrimary()
+    {
+        var image = NestedChainImage();
+        var index = X64UnwindProof.Parse(image)!;
+        var middle = index.ClassifySpan(ImageBase + 0x1100, ImageBase + 0x1101);
+        var final = index.ClassifySpan(ImageBase + 0x1300, ImageBase + 0x1301);
+        Assert.Multiple(() =>
+        {
+            Assert.That(middle.Kind, Is.EqualTo(X64UnwindProof.SpanKind.HandlerFree));
+            Assert.That(final.Kind, Is.EqualTo(X64UnwindProof.SpanKind.HandlerFree));
+            Assert.That(middle.RootStart, Is.EqualTo(ImageBase + 0x1000));
+            Assert.That(final.RootStart, Is.EqualTo(ImageBase + 0x1000));
+            Assert.That(final.Start, Is.EqualTo(ImageBase + 0x1300));
+        });
+    }
+
+    [TestCase("wrong-middle-end")]
+    [TestCase("wrong-middle-unwind")]
+    [TestCase("cycle")]
+    [TestCase("handler-middle")]
+    [TestCase("frame-mismatch")]
+    public void NestedChainsRejectBrokenLinks(string defect)
+    {
+        var image = NestedChainImage();
+        switch (defect)
+        {
+            case "wrong-middle-end": U32(image, 0x928, 0x111F); break;
+            case "wrong-middle-unwind": U32(image, 0x92C, 0x3010); break;
+            case "cycle":
+                U32(image, 0x910, 0x1300);
+                U32(image, 0x914, 0x1320);
+                U32(image, 0x918, 0x3020);
+                break;
+            case "handler-middle":
+                image[0x908] = 1 | 1 << 3;
+                U32(image, 0x910, 0x1400);
+                break;
+            case "frame-mismatch": image[0x923] = 5; break;
+        }
+        Assert.That(Classify(image, 0x1300, 0x1301).Kind,
+            Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+    }
+
     [TestCase("wrong-root-start")]
     [TestCase("wrong-root-end")]
     [TestCase("wrong-root-unwind")]
@@ -338,6 +382,20 @@ public class X64UnwindProofTests
         U32(image, 0x910, 0x1000);
         U32(image, 0x914, 0x1010);
         U32(image, 0x918, 0x3000);
+        return image;
+    }
+
+    private static byte[] NestedChainImage()
+    {
+        var image = ChainImage();
+        U32(image, 0x820, 0x3020);
+        image[0x920] = 1 | 4 << 3;
+        image[0x921] = 0;
+        image[0x922] = 0;
+        image[0x923] = 0;
+        U32(image, 0x924, 0x1100);
+        U32(image, 0x928, 0x1120);
+        U32(image, 0x92C, 0x3008);
         return image;
     }
 

@@ -348,24 +348,32 @@ internal static class X64UnwindProof
                     info = null;
                 records[index] = new(start, end, info, unwindRva, start);
             }
-            // A chain is evidence for the primary function only when its tuple names an
-            // exact handler-free .pdata record. Do not follow arbitrary or nested chains.
+            // A chain is evidence for the primary function only when every tuple names
+            // an exact .pdata record and the chain terminates at a handler-free root.
+            // Resolve through the original records so a malformed intermediate record
+            // cannot inherit an apparently valid root from an earlier resolution.
             var byStart = new Dictionary<uint, Function>();
             foreach (var record in records)
                 byStart.Add(record.Start, record);
             for (var index = 0; index < records.Length; index++)
             {
                 var record = records[index];
-                if (record.Info is not { Flags: 4 } chain)
+                if (record.Info is not { Flags: 4 })
                     continue;
-                if (!byStart.TryGetValue(chain.ChainStart, out var root) ||
-                    root.Start == record.Start || root.End != chain.ChainEnd ||
-                    root.UnwindRva != chain.ChainUnwindRva ||
-                    root.Info is not { Flags: 0 } primary ||
-                    primary.FrameRegister != chain.FrameRegister)
+                var seen = new HashSet<uint> { record.Start };
+                var current = record;
+                // A malformed image may contain cycles or an excessive chain depth.
+                while (seen.Count < 16 && current.Info is { Flags: 4 } chain &&
+                       byStart.TryGetValue(chain.ChainStart, out var parent) &&
+                       seen.Add(parent.Start) && parent.End == chain.ChainEnd &&
+                       parent.UnwindRva == chain.ChainUnwindRva &&
+                       parent.Info is { Flags: 0 or 4 } parentInfo &&
+                       parentInfo.FrameRegister == chain.FrameRegister)
+                    current = parent;
+                if (current.Info is not { Flags: 0 })
                     records[index] = record with { Info = null };
                 else
-                    records[index] = record with { RootStart = root.Start };
+                    records[index] = record with { RootStart = current.Start };
             }
             return new Index(imageBase, _imageSize, _sections, records,
                 ReadBaseRelocations(optional, optionalSize));
