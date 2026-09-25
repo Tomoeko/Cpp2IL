@@ -23,7 +23,7 @@ namespace Cpp2IL.Core.InstructionSets;
 internal static class X64NestedBooleanLiteralStoreProof
 {
     internal sealed record Evidence(FieldAnalysisContext ReceiverField, FieldAnalysisContext ValueField,
-        bool Value);
+        bool Value, MethodAnalysisContext? ValueSetter = null);
 
     internal static Evidence? Find(MethodAnalysisContext method)
     {
@@ -102,17 +102,27 @@ internal static class X64NestedBooleanLiteralStoreProof
             field.BackingData?.Field.RawFieldType is { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
                 NumMods: 0, Byref: 0, Pinned: 0 }).ToArray();
         if (values is not [{ } valueField] || valueField.Name != valueField.DefaultName ||
-            (valueField.Attributes & FieldAttributes.InitOnly) != 0 ||
-            !ReferenceEquals(box, owner) &&
-            (valueField.Visibility != FieldAttributes.Public || box.DeclaringType != null ||
-                box.Visibility != TypeAttributes.Public))
+            (valueField.Attributes & FieldAttributes.InitOnly) != 0)
             return null;
         var boxLocal = new LocalVariable("proved-receiver", new ManagedRegister(null, "proved-receiver"), box);
         if (!NarrowFieldEqualityProof.HasUnchangedFieldLayout(
                 new FieldReference(valueField, boxLocal, (int)valueOffset), 8))
             return null;
 
-        return new Evidence(receiverField, valueField, value);
+        MethodAnalysisContext? valueSetter = null;
+        if (!ReferenceEquals(box, owner) &&
+            (box.DeclaringType != null || box.Visibility != TypeAttributes.Public ||
+             valueField.Visibility != FieldAttributes.Public))
+        {
+            if (box.DeclaringType != null || box.Visibility != TypeAttributes.Public ||
+                valueField.Visibility != FieldAttributes.Private ||
+                X64InlinedBooleanSetterProof.TryBindExactAutoPropertySetter(
+                    valueField, box, pe, unwind) is not { } setter)
+                return null;
+            valueSetter = setter;
+        }
+
+        return new Evidence(receiverField, valueField, value, valueSetter);
     }
 
     private static bool HasSupportedParameters(MethodAnalysisContext method,

@@ -2,6 +2,7 @@ using AsmResolver.DotNet;
 using AsmResolver.DotNet.Code.Cil;
 using AsmResolver.PE.DotNet.Cil;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Utils;
 using Cpp2IL.Core.Utils.AsmResolver;
 
 namespace Cpp2IL.Core.InstructionSets;
@@ -24,7 +25,10 @@ internal static class X64NestedBooleanLiteralStoreRecovery
         instructions.Add(CilOpCodes.Ldarg_0);
         instructions.Add(CilOpCodes.Ldfld, evidence.ReceiverField.ToFieldDescriptor());
         instructions.Add(evidence.Value ? CilOpCodes.Ldc_I4_1 : CilOpCodes.Ldc_I4_0);
-        instructions.Add(CilOpCodes.Stfld, evidence.ValueField.ToFieldDescriptor());
+        if (evidence.ValueSetter is { } setter)
+            instructions.Add(CilOpCodes.Call, setter.ToMethodDescriptor());
+        else
+            instructions.Add(CilOpCodes.Stfld, evidence.ValueField.ToFieldDescriptor());
         instructions.Add(CilOpCodes.Ret);
         return true;
     }

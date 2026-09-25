@@ -12,8 +12,8 @@ namespace RecoveryValidation
         {
             var observations = new List<object>
             {
-                Observe("true", CreateOwner(new BooleanTarget { Flag = true, Neighbor = 53 }, -71)),
-                Observe("false", CreateOwner(new BooleanTarget { Flag = false, Neighbor = -53 }, 71)),
+                Observe("true", CreateOwner(new BooleanTarget { Flag = true, State = true, Neighbor = 53 }, -71)),
+                Observe("false", CreateOwner(new BooleanTarget { Flag = false, State = false, Neighbor = -53 }, 71)),
                 Observe("target-null", CreateOwner(null, -71)),
                 Observe("owner-null", null)
             };
@@ -51,18 +51,25 @@ namespace RecoveryValidation
         {
             var alias = owner == null ? null : owner.Target;
             object flagBefore = alias == null ? null : (object)alias.Flag;
+            object stateBefore = alias == null ? null : (object)alias.State;
             object targetNeighborBefore = alias == null ? null : (object)alias.Neighbor;
             object ownerNeighborBefore = owner == null ? null : (object)owner.Neighbor;
             object paddingBefore = owner == null ? null : (object)PaddingSum(owner);
             var exception = "none";
             try { owner.ClearFlag(); }
             catch (Exception error) { exception = error.GetType().FullName; }
+            var stateException = "none";
+            try { owner.ClearState(); }
+            catch (Exception error) { stateException = error.GetType().FullName; }
 
             return new Dictionary<string, object>
             {
                 { "kind", kind },
                 { "flagBefore", flagBefore },
                 { "flagAfter", alias == null ? null : (object)alias.Flag },
+                { "stateBefore", stateBefore },
+                { "stateAfter", alias == null ? null : (object)alias.State },
+                { "stateException", stateException },
                 { "exception", exception },
                 { "sameTargetReference", owner == null ? null : (object)ReferenceEquals(alias, owner.Target) },
                 { "targetNeighborBefore", targetNeighborBefore },

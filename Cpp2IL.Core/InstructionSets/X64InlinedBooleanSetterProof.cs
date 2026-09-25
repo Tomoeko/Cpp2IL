@@ -142,6 +142,26 @@ internal static class X64InlinedBooleanSetterProof
                 access, value))
             return null;
 
+        return TryBindExactAutoPropertySetter(field, access.Local.Type!, pe, unwind);
+    }
+
+    internal static MethodAnalysisContext? TryBindExactAutoPropertySetter(
+        FieldAnalysisContext field, TypeAnalysisContext receiverType,
+        PE pe, X64UnwindProof.Index unwind)
+    {
+        var owner = field.DeclaringType;
+        var app = owner.AppContext;
+        if (field.IsStatic || field.Offset < 16 ||
+            field.Offset != field.DefaultOffset ||
+            field.Attributes != field.DefaultAttributes ||
+            field.Visibility != FieldAttributes.Private ||
+            !ReferenceEquals(field.FieldType,
+                app.SystemTypes.SystemBooleanType) ||
+            field.BackingData?.Field.RawFieldType is not
+                { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
+                    NumMods: 0, Byref: 0, Pinned: 0 })
+            return null;
+
         var propertyName = field.Name;
         if (!propertyName.StartsWith("<", StringComparison.Ordinal) ||
             !propertyName.EndsWith(">k__BackingField",
@@ -162,8 +182,8 @@ internal static class X64InlinedBooleanSetterProof
         if (properties is not [{ Setter: { } setter } property] ||
             !ReferenceEquals(property.DeclaringType, owner) ||
             !ValidSetterMetadata(setter, property, owner,
-                access.Local.Type!) ||
-            !HasExactSetterBody(setter, pe, unwind, access.Offset))
+                receiverType) ||
+            !HasExactSetterBody(setter, pe, unwind, (int)field.Offset))
             return null;
         return setter;
     }

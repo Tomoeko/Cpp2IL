@@ -6,6 +6,7 @@ namespace NestedBooleanStoreFixture
     {
         public long Neighbor;
         public bool Flag;
+        public bool State { get; set; }
     }
 
     public sealed class BooleanOwner
@@ -22,6 +23,12 @@ namespace NestedBooleanStoreFixture
         public void ClearFlag()
         {
             Target.Flag = false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public void ClearState()
+        {
+            Target.State = false;
         }
     }
 }
