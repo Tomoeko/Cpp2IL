@@ -36,6 +36,14 @@ public class X86BooleanFieldReadProofTests
         Assert.That(X86BooleanFieldReadProof.TryProveShape(body), Is.Null);
     }
 
+    [Test]
+    public void TrailingNativeWorkIsNotAcceptedAsPartOfTheGetter()
+    {
+        var body = Body(Register.RDX);
+        body.Add(Decode("90", body[^1].NextIP));
+        Assert.That(X86BooleanFieldReadProof.TryProveShape(body), Is.Null);
+    }
+
     [TestCase("wrong-test")]
     [TestCase("wrong-branch")]
     [TestCase("wrong-register")]
@@ -85,5 +93,11 @@ public class X86BooleanFieldReadProofTests
         while (decoder.IP < address + (ulong)bytes.Length)
             body.Add(decoder.Decode());
         return body;
+    }
+
+    private static Instruction Decode(string hex, ulong address)
+    {
+        var decoder = Decoder.Create(64, new ByteArrayCodeReader(Convert.FromHexString(hex)), address);
+        return decoder.Decode();
     }
 }

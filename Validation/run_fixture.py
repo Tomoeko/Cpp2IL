@@ -97,7 +97,7 @@ PROFILES = {
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
     "reference-array": {"assembly": "ReferenceArrayFixture", "source": VALIDATION / "ReferenceArrayFixture", "methods": 3},
-    "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 4},
+    "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 5},
     "boolean-getter-metadata": {"assembly": "BooleanGetterMetadataFixture", "source": VALIDATION / "BooleanGetterMetadataFixture", "methods": 11},
     "virtual-string-call": {"assembly": "VirtualStringCallFixture", "source": VALIDATION / "VirtualStringCallFixture", "methods": 5},
     "generic-dispatch": {"assembly": "GenericDispatchFixture", "source": VALIDATION / "GenericDispatchFixture", "methods": 4,

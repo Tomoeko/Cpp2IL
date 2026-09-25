@@ -7,7 +7,8 @@ def observations():
     expected = []
     for neighbor in (0, -(1 << 31), (1 << 31) - 1):
         for value in (False, True):
-            for owner, before in (("first", value), ("second", not value)):
+            for owner, before in (("first", value), ("given", value),
+                                  ("second", not value)):
                 expected.append({
                     "kind": "read", "owner": owner,
                     "valueBefore": before, "neighborBefore": neighbor,
@@ -17,7 +18,7 @@ def observations():
     expected.extend({
         "kind": "null", "owner": owner,
         "exception": "System.NullReferenceException",
-    } for owner in ("first", "second"))
+    } for owner in ("first", "given", "second"))
     return expected
 
 
@@ -31,6 +32,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Boolean getter behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 4,
+    return {"status": "passed", "observations": len(expected), "methods": 5,
             "platform": report["platform"], "profile": "boolean-getter",
             "scope": "field identity, unchanged neighbors and null receivers"}

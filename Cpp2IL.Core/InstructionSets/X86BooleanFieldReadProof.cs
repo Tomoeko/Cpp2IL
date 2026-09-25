@@ -42,11 +42,11 @@ internal static class X86BooleanFieldReadProof
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
-            method.GenericParameters.Count != 0 || method.Parameters.Count != 1 ||
-            definition.parameterCount != 1 || definition.InternalParameterData?.Length != 1 ||
+            method.GenericParameters.Count != 0 || method.Parameters.Count == 0 ||
+            definition.parameterCount != method.Parameters.Count ||
+            definition.InternalParameterData?.Length != method.Parameters.Count ||
             method.UnderlyingPointer == 0 || body[0].IP != method.UnderlyingPointer ||
-            !app.MethodsByAddress.TryGetValue(method.UnderlyingPointer, out var binding) ||
-            binding.Count != 1 || !ReferenceEquals(binding[0], method))
+            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method))
             return null;
 
         var parameter = method.Parameters[0];
@@ -88,7 +88,8 @@ internal static class X86BooleanFieldReadProof
 
     internal static Shape? TryProveShape(IReadOnlyList<Instruction> body)
     {
-        if (body.Count < 7)
+        if (body.Count < 7 || body.Skip(7).Any(instruction =>
+                instruction.Code != Code.Int3 || instruction.OpCount != 0))
             return null;
         for (var index = 0; index < 7; index++)
         {

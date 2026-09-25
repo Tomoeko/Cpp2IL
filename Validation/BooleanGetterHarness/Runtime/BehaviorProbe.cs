@@ -20,6 +20,8 @@ namespace RecoveryValidation
                 var second = new SecondState { Value = !value, Neighbor = neighbor };
                 observations.Add(Row("first", value, neighbor, first.ReadValue(),
                     first.Value, first.Neighbor));
+                observations.Add(Row("given", value, neighbor, first.ReadGiven(first, ~neighbor),
+                    first.Value, first.Neighbor));
                 observations.Add(Row("second", !value, neighbor, second.ReadValue(),
                     second.Value, second.Neighbor));
             }
@@ -27,6 +29,7 @@ namespace RecoveryValidation
             FirstState missingFirst = null;
             SecondState missingSecond = null;
             RecordNull(observations, "first", () => missingFirst.ReadValue());
+            RecordNull(observations, "given", () => new FirstState().ReadGiven(null, 17));
             RecordNull(observations, "second", () => missingSecond.ReadValue());
 
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));

@@ -12,6 +12,12 @@ namespace BooleanGetterFixture
         {
             return Value;
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public bool ReadGiven(FirstState state, int unused)
+        {
+            return state.Value;
+        }
     }
 
     public sealed class SecondState
