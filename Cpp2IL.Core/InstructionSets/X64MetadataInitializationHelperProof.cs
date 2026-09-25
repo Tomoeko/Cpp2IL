@@ -20,31 +20,39 @@ internal static partial class X64MetadataInitializationHelperProof
     {
         try
         {
-            if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
-                !ReferenceEquals(app.Binary, pe) ||
-                !ReferenceEquals(X64UnwindProof.ForApplication(app), unwind) ||
-                target == 0 ||
-                app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata != target ||
-                Read(pe, unwind, target, 1, 5) is not { } thunk ||
-                !Jump(thunk[0]) || !IsSimpleEntry(unwind, target, thunk[0].NextIP) ||
-                !X64NativePaddingProof.HasInt3Padding(pe, thunk[0].NextIP, target + 16))
-                return false;
-
-            var wrapperAddress = thunk[0].NearBranchTarget;
-            if (Read(pe, unwind, wrapperAddress, 2, 7) is not { } wrapper ||
-                !MoveOneToDl(wrapper[0]) || !Jump(wrapper[1]) ||
-                !IsSimpleEntry(unwind, wrapperAddress, wrapper[1].NextIP) ||
-                !X64NativePaddingProof.HasInt3Padding(pe, wrapper[1].NextIP,
-                    wrapperAddress + 16))
-                return false;
-
-            return ProveCore(pe, unwind, wrapper[1].NearBranchTarget);
+            return TryFindCore(app, pe, unwind, target, out var core) &&
+                   ProveCore(pe, unwind, core);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
         {
             return false;
         }
+    }
+
+    private static bool TryFindCore(ApplicationAnalysisContext app, PE pe,
+        X64UnwindProof.Index unwind, ulong target, out ulong core)
+    {
+        core = 0;
+        if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
+            !ReferenceEquals(app.Binary, pe) ||
+            !ReferenceEquals(X64UnwindProof.ForApplication(app), unwind) ||
+            target == 0 ||
+            app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata != target ||
+            Read(pe, unwind, target, 1, 5) is not { } thunk ||
+            !Jump(thunk[0]) || !IsSimpleEntry(unwind, target, thunk[0].NextIP) ||
+            !X64NativePaddingProof.HasInt3Padding(pe, thunk[0].NextIP, target + 16))
+            return false;
+
+        var wrapperAddress = thunk[0].NearBranchTarget;
+        if (Read(pe, unwind, wrapperAddress, 2, 7) is not { } wrapper ||
+            !MoveOneToDl(wrapper[0]) || !Jump(wrapper[1]) ||
+            !IsSimpleEntry(unwind, wrapperAddress, wrapper[1].NextIP) ||
+            !X64NativePaddingProof.HasInt3Padding(pe, wrapper[1].NextIP,
+                wrapperAddress + 16))
+            return false;
+        core = wrapper[1].NearBranchTarget;
+        return true;
     }
 
     private static bool ProveCore(PE pe, X64UnwindProof.Index unwind, ulong address)
@@ -242,23 +250,21 @@ internal static partial class X64MetadataInitializationHelperProof
         // initialization exception through independently anchored exports.
         var throwing = code[7].NearBranchTarget;
         var directSpan = unwind.ClassifySpan(throwing, throwing + 1);
+        var combinedComparison = directSpan.End - throwing == 0x36;
         if (directSpan.Kind != X64UnwindProof.SpanKind.HandlerFree ||
             directSpan.Start != throwing || directSpan.RootStart != throwing ||
-            directSpan.End - throwing != 0x31 ||
-            Read(pe, unwind, throwing, 15, 0x30) is not { } direct ||
-            direct[^1].NextIP != throwing + 0x30 ||
+            directSpan.End - throwing != (combinedComparison ? 0x36UL : 0x31UL) ||
+            Read(pe, unwind, throwing, 15, combinedComparison ? 0x35 : 0x30) is not { } direct ||
+            direct[^1].NextIP != throwing + (combinedComparison ? 0x35UL : 0x30UL) ||
             !X64NativePaddingProof.HasInt3Padding(pe, direct[^1].NextIP,
                 directSpan.End) ||
             !Push(direct[0], Register.RBX) || !Stack(direct[1], Mnemonic.Sub, 0x20) ||
             !Move(direct[2], Register.RBX, Register.RCX) ||
             !DirectCall(direct[3]) ||
             direct[3].NearBranchTarget != code[8].NearBranchTarget ||
-            !Load(direct[4], Register.ECX, Register.RBX, 0xd8) ||
-            !SameRegisterTest(direct[5], Register.ECX) ||
-            !Branch(direct[6], Mnemonic.Jne, direct[11].IP) ||
-            !Move(direct[7], Register.RAX, Register.RBX) ||
-            !Stack(direct[8], Mnemonic.Add, 0x20) ||
-            !Pop(direct[9], Register.RBX) || !Return(direct[10]) ||
+            !(combinedComparison ?
+                CombinedExceptionComparison(direct) :
+                SeparateExceptionComparison(direct)) ||
             !DirectCall(direct[11]) ||
             !Move(direct[12], Register.RCX, Register.RAX) ||
             !ZeroRegister(direct[13], Register.EDX) ||
@@ -270,6 +276,25 @@ internal static partial class X64MetadataInitializationHelperProof
             return false;
         return true;
     }
+
+    private static bool SeparateExceptionComparison(IReadOnlyList<Instruction> code) =>
+        Load(code[4], Register.ECX, Register.RBX, 0xd8) &&
+        SameRegisterTest(code[5], Register.ECX) &&
+        Branch(code[6], Mnemonic.Jne, code[11].IP) &&
+        Move(code[7], Register.RAX, Register.RBX) &&
+        Stack(code[8], Mnemonic.Add, 0x20) &&
+        Pop(code[9], Register.RBX) && Return(code[10]);
+
+    private static bool CombinedExceptionComparison(IReadOnlyList<Instruction> code) =>
+        code[4].Mnemonic == Mnemonic.Cmp &&
+        Memory(code[4], 0, Register.RBX, Register.None, 1, 0xd8, 4) &&
+        code[4].Op1Kind is OpKind.Immediate8to32 or OpKind.Immediate32 &&
+        code[4].GetImmediate(1) == 0 &&
+        Branch(code[5], Mnemonic.Jne, code[10].IP) &&
+        Move(code[6], Register.RAX, Register.RBX) &&
+        Stack(code[7], Mnemonic.Add, 0x20) &&
+        Pop(code[8], Register.RBX) && Return(code[9]) &&
+        Load(code[10], Register.ECX, Register.RBX, 0xd8);
 
     private static bool ProveClassInitFromObjectNewExport(PE pe,
         X64UnwindProof.Index unwind, ulong target)
@@ -305,7 +330,8 @@ internal static partial class X64MetadataInitializationHelperProof
                Read(pe, unwind, objectNew, 5, 18) is { } entry &&
                entry[^1].NextIP <= span.End &&
                SameRoot(unwind, objectNew, objectNew, entry[^1].NextIP) &&
-               Store(entry[0], Register.RSP, 0x10, Register.RBX) &&
+               (Store(entry[0], Register.RSP, 8, Register.RBX) ||
+                Store(entry[0], Register.RSP, 0x10, Register.RBX)) &&
                Push(entry[1], Register.RDI) &&
                Stack(entry[2], Mnemonic.Sub, 0x20) &&
                Move(entry[3], Register.RBX, Register.RCX) &&
