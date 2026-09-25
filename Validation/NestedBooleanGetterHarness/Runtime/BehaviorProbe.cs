@@ -13,38 +13,47 @@ namespace RecoveryValidation
             var before = new object();
             var firstAfter = new object();
             var secondAfter = new object();
-            var first = new FlagCell { Before = -17, Flag = false, After = firstAfter };
-            var second = new FlagCell { Before = 29, Flag = false, After = secondAfter };
+            var first = new FlagCell { Before = -17, Flag = false, After = firstAfter, Count = -5 };
+            var second = new FlagCell { Before = 29, Flag = false, After = secondAfter, Count = 101 };
             var holder = new FlagHolder { Before = before, Child = first, After = 37 };
             var observations = new List<object>
             {
                 Row("first-false", "result", !holder.NestedFlag),
+                Row("first-false", "count", holder.ReadCount() == -5),
                 Row("first-false", "identity", ReferenceEquals(holder.Child, first)),
                 Row("first-false", "neighbors", NeighborsUnchanged(holder, before, first, firstAfter, -17))
             };
 
             first.Flag = true;
+            first.Count = int.MinValue;
             observations.Add(Row("first-true", "result", holder.NestedFlag));
+            observations.Add(Row("first-true", "count", holder.ReadCount() == int.MinValue));
             observations.Add(Row("first-true", "repeat", holder.NestedFlag));
             observations.Add(Row("first-true", "neighbors", NeighborsUnchanged(holder, before, first, firstAfter, -17)));
 
             holder.Child = second;
             observations.Add(Row("second-false", "result", !holder.NestedFlag));
+            observations.Add(Row("second-false", "count", holder.ReadCount() == 101));
             observations.Add(Row("second-false", "identity", ReferenceEquals(holder.Child, second)));
             observations.Add(Row("second-false", "neighbors", NeighborsUnchanged(holder, before, second, secondAfter, 29)));
             second.Flag = true;
+            second.Count = int.MaxValue;
             observations.Add(Row("second-true", "result", holder.NestedFlag));
+            observations.Add(Row("second-true", "count", holder.ReadCount() == int.MaxValue));
             observations.Add(Row("second-true", "first-unchanged", first.Flag && ReferenceEquals(first.After, firstAfter)));
 
             holder.Child = null;
             observations.Add(ExceptionRow("null-child", () => { var value = holder.NestedFlag; }));
+            observations.Add(ExceptionRow("null-child-count", () => { var value = holder.ReadCount(); }));
             observations.Add(Row("null-child", "owner-unchanged", holder.Child == null &&
                 ReferenceEquals(holder.Before, before) && holder.After == 37));
 
             FlagHolder missing = null;
             observations.Add(ExceptionRow("null-owner", () => { var value = missing.NestedFlag; }));
+            observations.Add(ExceptionRow("null-owner-count", () => { var value = missing.ReadCount(); }));
             observations.Add(Row("final", "children-unchanged", first.Flag && second.Flag &&
                 first.Before == -17 && second.Before == 29 &&
+                first.Count == int.MinValue && second.Count == int.MaxValue &&
                 ReferenceEquals(first.After, firstAfter) && ReferenceEquals(second.After, secondAfter)));
 
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));

@@ -16,11 +16,11 @@ using ManagedRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Proves an instance Boolean getter that reads through one reference field.
+/// Proves an instance Boolean or Int32 read through one reference field.
 /// Its complete native body has a terminal, proved runtime null throw for a
 /// missing child; the managed second field read retains that exception.
 /// </summary>
-internal static class X64NestedBooleanFieldGetterProof
+internal static class X64NestedScalarFieldReadProof
 {
     internal sealed record Evidence(FieldAnalysisContext ReceiverField,
         FieldAnalysisContext ValueField);
@@ -31,7 +31,6 @@ internal static class X64NestedBooleanFieldGetterProof
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
             method.IsStatic || method.IsVirtual || method.IsVoid ||
             method.Name is ".ctor" or ".cctor" || method.Name != method.DefaultName ||
-            !method.Name.StartsWith("get_", StringComparison.Ordinal) ||
             method.OverrideReturnType != null || method.Parameters.Count != 0 ||
             method.GenericParameters.Count != 0 ||
             method.DeclaringType is not { Definition: { GenericContainer: null,
@@ -39,14 +38,16 @@ internal static class X64NestedBooleanFieldGetterProof
                     NumMods: 0, Byref: 0, Pinned: 0 } } } owner ||
             !NullCheckedCall.IsReferenceClass(owner) ||
             method.Definition is not { GenericContainer: null, parameterCount: 0,
-                RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
-                    NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
+                RawReturnType: { NumMods: 0, Byref: 0, Pinned: 0 } rawReturn } definition ||
+            rawReturn.Type is not (Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN or
+                Il2CppTypeEnum.IL2CPP_TYPE_I4) ||
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
-            !ReferenceEquals(method.ReturnType, app.SystemTypes.SystemBooleanType) ||
+            !ReferenceEquals(method.ReturnType,
+                rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
+                    ? app.SystemTypes.SystemBooleanType : app.SystemTypes.SystemInt32Type) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
-            (method.Attributes & MethodAttributes.SpecialName) == 0 ||
             (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
             (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                                       MethodImplAttributes.ManagedMask |
@@ -61,16 +62,21 @@ internal static class X64NestedBooleanFieldGetterProof
 
         var properties = owner.Properties.Where(property =>
             ReferenceEquals(property.Getter, method)).ToArray();
-        if (properties is not [{ } property] || property.Setter != null ||
-            property.Definition is not { } rawProperty ||
-            !ReferenceEquals(rawProperty.Getter, definition) ||
-            property.Name != property.DefaultName ||
-            method.Name != "get_" + property.Name ||
-            property.Attributes != property.DefaultAttributes ||
-            property.OverridePropertyType != null || property.IsStatic ||
-            !ReferenceEquals(property.PropertyType, app.SystemTypes.SystemBooleanType) ||
-            rawProperty.RawPropertyType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
-                NumMods: 0, Byref: 0, Pinned: 0 })
+        if ((method.Attributes & MethodAttributes.SpecialName) != 0)
+        {
+            if (properties is not [{ } property] || property.Setter != null ||
+                property.Definition is not { } rawProperty ||
+                !ReferenceEquals(rawProperty.Getter, definition) ||
+                property.Name != property.DefaultName ||
+                method.Name != "get_" + property.Name ||
+                property.Attributes != property.DefaultAttributes ||
+                property.OverridePropertyType != null || property.IsStatic ||
+                !ReferenceEquals(property.PropertyType, method.ReturnType) ||
+                rawProperty.RawPropertyType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawPropertyType ||
+                rawPropertyType.Type != rawReturn.Type)
+                return null;
+        }
+        else if (properties.Length != 0)
             return null;
 
         method.EnsureRawBytes();
@@ -96,7 +102,7 @@ internal static class X64NestedBooleanFieldGetterProof
             !Test(body[2], NativeRegister.RAX) ||
             body[3].Mnemonic != Mnemonic.Je || body[3].Op0Kind != OpKind.NearBranch64 ||
             body[3].NearBranchTarget != body[7].IP ||
-            !BooleanLoad(body[4], out var valueOffset) ||
+            !ScalarLoad(body[4], rawReturn.Type, out var valueOffset) ||
             !Stack(body[5], Mnemonic.Add) ||
             body[6].Code != Code.Retnq || body[6].OpCount != 0 ||
             body[7].Code != Code.Call_rel32_64 || body[7].Op0Kind != OpKind.NearBranch64 ||
@@ -123,10 +129,10 @@ internal static class X64NestedBooleanFieldGetterProof
 
         var values = child.Fields.Where(field => !field.IsStatic &&
             field.Offset == (long)valueOffset &&
-            ReferenceEquals(field.FieldType, app.SystemTypes.SystemBooleanType) &&
+            ReferenceEquals(field.FieldType, method.ReturnType) &&
             field.BackingData?.Field.RawFieldType is
-                { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
-                    NumMods: 0, Byref: 0, Pinned: 0 }).ToArray();
+                { NumMods: 0, Byref: 0, Pinned: 0 } rawField &&
+            rawField.Type == rawReturn.Type).ToArray();
         if (values is not [{ } valueField] || valueField.Name != valueField.DefaultName ||
             !ReferenceEquals(child, owner) &&
             (valueField.Visibility != FieldAttributes.Public || child.DeclaringType != null ||
@@ -135,7 +141,8 @@ internal static class X64NestedBooleanFieldGetterProof
         var childLocal = new LocalVariable("proved-child",
             new ManagedRegister(null, "proved-child"), child);
         if (!NarrowFieldEqualityProof.HasUnchangedFieldLayout(
-                new FieldReference(valueField, childLocal, (int)valueOffset), 8))
+                new FieldReference(valueField, childLocal, (int)valueOffset),
+                rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32))
             return null;
 
         return new Evidence(receiverField, valueField);
@@ -190,15 +197,19 @@ internal static class X64NestedBooleanFieldGetterProof
         instruction.Op0Register == register && instruction.Op1Kind == OpKind.Register &&
         instruction.Op1Register == register;
 
-    private static bool BooleanLoad(NativeInstruction instruction, out ulong offset)
+    private static bool ScalarLoad(NativeInstruction instruction, Il2CppTypeEnum type,
+        out ulong offset)
     {
         offset = instruction.MemoryDisplacement64;
-        return instruction.Code == Code.Movzx_r32_rm8 &&
+        return instruction.Code == (type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
+                   ? Code.Movzx_r32_rm8 : Code.Mov_r32_rm32) &&
                instruction.Op0Kind == OpKind.Register &&
                instruction.Op0Register == NativeRegister.EAX &&
                instruction.Op1Kind == OpKind.Memory &&
                instruction.MemoryBase == NativeRegister.RAX &&
                instruction.MemoryIndex == NativeRegister.None &&
-               instruction.MemorySize.GetSize() == 1 && offset <= int.MaxValue;
+               instruction.MemorySize.GetSize() ==
+                   (type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 1 : 4) &&
+               offset <= int.MaxValue;
     }
 }

@@ -92,7 +92,7 @@ PROFILES = {
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 3},
-    "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 3},
+    "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 4},
     "unused-reference-nested-store": {"assembly": "NestedFlagSetterFixture", "source": VALIDATION / "NestedFlagSetterFixture", "methods": 4},
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},

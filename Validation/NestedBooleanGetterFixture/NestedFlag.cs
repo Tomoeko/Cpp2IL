@@ -7,6 +7,7 @@ namespace NestedBooleanGetterFixture
         public int Before;
         public bool Flag;
         public object After;
+        public int Count;
     }
 
     public sealed class FlagHolder
@@ -19,6 +20,12 @@ namespace NestedBooleanGetterFixture
         {
             [MethodImpl(MethodImplOptions.NoInlining)]
             get { return Child.Flag; }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int ReadCount()
+        {
+            return Child.Count;
         }
     }
 }

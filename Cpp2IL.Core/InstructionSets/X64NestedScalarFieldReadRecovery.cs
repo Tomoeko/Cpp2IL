@@ -6,12 +6,12 @@ using Cpp2IL.Core.Utils.AsmResolver;
 
 namespace Cpp2IL.Core.InstructionSets;
 
-/// <summary>Emits only nested Boolean field getters accepted by the complete proof.</summary>
-internal static class X64NestedBooleanFieldGetterRecovery
+/// <summary>Emits nested scalar field reads accepted by the complete proof.</summary>
+internal static class X64NestedScalarFieldReadRecovery
 {
     internal static bool TryGenerate(MethodAnalysisContext method, MethodDefinition definition)
     {
-        if (X64NestedBooleanFieldGetterProof.Find(method) is not { } evidence)
+        if (X64NestedScalarFieldReadProof.Find(method) is not { } evidence)
             return false;
 
         var il = new CilMethodBody

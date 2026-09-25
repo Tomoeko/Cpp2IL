@@ -14,12 +14,14 @@ using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core.Tests;
 
-/// <summary>Optional exact-player control for a nested Boolean field read.</summary>
+/// <summary>Optional exact-player control for nested scalar field reads.</summary>
 [NonParallelizable]
-public class X64NestedBooleanFieldGetterFixtureTests
+public class X64NestedScalarFieldReadFixtureTests
 {
-    [Test]
-    public void RecoveredGetterLoadsTheReceiverBeforeTheBooleanField()
+    [TestCase("get_NestedFlag", "Flag")]
+    [TestCase("ReadCount", "Count")]
+    public void RecoveredReadLoadsTheReceiverBeforeTheScalarField(
+        string methodName, string fieldName)
     {
         var assembly = Environment.GetEnvironmentVariable(
             "CPP2IL_NESTED_BOOLEAN_GETTER_RECOVERED_ASSEMBLY");
@@ -34,9 +36,9 @@ public class X64NestedBooleanFieldGetterFixtureTests
             reader.GetString(reader.GetTypeDefinition(handle).Name) == "FlagHolder"));
         var child = reader.GetTypeDefinition(reader.TypeDefinitions.Single(handle =>
             reader.GetString(reader.GetTypeDefinition(handle).Name) == "FlagCell"));
-        var getter = reader.GetMethodDefinition(owner.GetMethods().Single(handle =>
-            reader.GetString(reader.GetMethodDefinition(handle).Name) == "get_NestedFlag"));
-        var il = pe.GetMethodBody(getter.RelativeVirtualAddress).GetILBytes()!;
+        var method = reader.GetMethodDefinition(owner.GetMethods().Single(handle =>
+            reader.GetString(reader.GetMethodDefinition(handle).Name) == methodName));
+        var il = pe.GetMethodBody(method.RelativeVirtualAddress).GetILBytes()!;
         Assert.That(il, Has.Length.EqualTo(12));
         Assert.Multiple(() =>
         {
@@ -60,7 +62,7 @@ public class X64NestedBooleanFieldGetterFixtureTests
             Assert.That(reader.GetString(reader.GetFieldDefinition(receiverField).Name),
                 Is.EqualTo("Child"));
             Assert.That(reader.GetString(reader.GetFieldDefinition(valueField).Name),
-                Is.EqualTo("Flag"));
+                Is.EqualTo(fieldName));
         });
     }
 
@@ -86,16 +88,29 @@ public class X64NestedBooleanFieldGetterFixtureTests
             var assembly = app.GetAssemblyByName("NestedBooleanGetterFixture")!;
             var owner = assembly.Types.Single(type => type.Name == "FlagHolder");
             var method = owner.Methods.Single(candidate => candidate.Name == "get_NestedFlag");
-            var evidence = X64NestedBooleanFieldGetterProof.Find(method);
+            var evidence = X64NestedScalarFieldReadProof.Find(method);
             Assert.That(evidence, Is.Not.Null);
             Assert.That(evidence!.ReceiverField.Name, Is.EqualTo("Child"));
             Assert.That(evidence.ValueField.Name, Is.EqualTo("Flag"));
+
+            var integerMethod = owner.Methods.Single(candidate => candidate.Name == "ReadCount");
+            var integerEvidence = X64NestedScalarFieldReadProof.Find(integerMethod);
+            Assert.That(integerEvidence, Is.Not.Null);
+            Assert.That(integerEvidence!.ReceiverField.Name, Is.EqualTo("Child"));
+            Assert.That(integerEvidence.ValueField.Name, Is.EqualTo("Count"));
+            try
+            {
+                integerEvidence.ValueField.OverrideFieldType = app.SystemTypes.SystemBooleanType;
+                Assert.That(X64NestedScalarFieldReadProof.Find(integerMethod), Is.Null,
+                    "an Int32 native load cannot be retagged as Boolean");
+            }
+            finally { integerEvidence.ValueField.OverrideFieldType = null; }
 
             var receiver = evidence.ReceiverField;
             try
             {
                 receiver.OverrideOffset = receiver.DefaultOffset + 8;
-                Assert.That(X64NestedBooleanFieldGetterProof.Find(method), Is.Null,
+                Assert.That(X64NestedScalarFieldReadProof.Find(method), Is.Null,
                     "a different receiver field offset is not proved");
             }
             finally { receiver.OverrideOffset = null; }
@@ -104,7 +119,7 @@ public class X64NestedBooleanFieldGetterFixtureTests
             try
             {
                 value.OverrideFieldType = app.SystemTypes.SystemInt32Type;
-                Assert.That(X64NestedBooleanFieldGetterProof.Find(method), Is.Null,
+                Assert.That(X64NestedScalarFieldReadProof.Find(method), Is.Null,
                     "a non-Boolean child field is not proved");
             }
             finally { value.OverrideFieldType = null; }
@@ -112,7 +127,7 @@ public class X64NestedBooleanFieldGetterFixtureTests
             {
                 value.OverrideAttributes = (value.DefaultAttributes &
                     ~FieldAttributes.FieldAccessMask) | FieldAttributes.Private;
-                Assert.That(X64NestedBooleanFieldGetterProof.Find(method), Is.Null,
+                Assert.That(X64NestedScalarFieldReadProof.Find(method), Is.Null,
                     "the generated owner cannot read a private child field");
             }
             finally { value.OverrideAttributes = null; }
@@ -122,11 +137,11 @@ public class X64NestedBooleanFieldGetterFixtureTests
             aliases.Add(constructor);
             try
             {
-                Assert.That(X64NestedBooleanFieldGetterProof.Find(method), Is.Null,
+                Assert.That(X64NestedScalarFieldReadProof.Find(method), Is.Null,
                     "a shared native entry cannot identify the getter's fields");
             }
             finally { aliases.Remove(constructor); }
-            Assert.That(X64NestedBooleanFieldGetterProof.Find(method), Is.Not.Null);
+            Assert.That(X64NestedScalarFieldReadProof.Find(method), Is.Not.Null);
 
             method.EnsureRawBytes();
             var native = X86Utils.Iterate(method).ToArray();
@@ -146,7 +161,7 @@ public class X64NestedBooleanFieldGetterFixtureTests
                 .GetAssemblyByName("NestedBooleanGetterFixture")!.Types
                 .Single(type => type.Name == "FlagHolder").Methods
                 .Single(candidate => candidate.Name == "get_NestedFlag");
-            Assert.That(X64NestedBooleanFieldGetterProof.Find(changedMethod), Is.Null,
+            Assert.That(X64NestedScalarFieldReadProof.Find(changedMethod), Is.Null,
                 "a retargeted native null branch is not proved");
         }
         finally { Cpp2IlApi.ResetInternalState(); }
