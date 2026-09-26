@@ -4,7 +4,9 @@ using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Utils;
 using LibCpp2IL;
 
 namespace Cpp2IL.Core.Tests.Analysis;
@@ -356,6 +358,107 @@ public class MetadataCallProvenanceTests
         Assert.That(MetadataResolver.ResolveAmbiguousCalls(caller), Is.EqualTo(resolved));
         Assert.That(call.Operands[0], resolved
             ? Is.SameAs(immediateBaseConstructor) : Is.TypeOf<Immediate>());
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SharedCallRetainsBothArgumentStreamsAndSelectsTheProvedReturn(bool reverseAliases)
+    {
+        const ulong target = 0x7f00_1234_5678_9010;
+        var owner = _app.SystemTypes.SystemObjectType;
+        var attributes = MethodAttributes.Public | MethodAttributes.Static;
+        var floating = new InjectedMethodAnalysisContext(owner, "Floating", _app.SystemTypes.SystemSingleType,
+            attributes, [_app.SystemTypes.SystemSingleType]);
+        var integer = new InjectedMethodAnalysisContext(owner, "Integer", _app.SystemTypes.SystemInt32Type,
+            attributes, [_app.SystemTypes.SystemInt32Type]);
+        BindMethods(target, reverseAliases ? [integer, floating] : [floating, integer]);
+        var caller = CreateMethod();
+        var native = Iced.Intel.Instruction.CreateBranch(Iced.Intel.Code.Call_rel32_64, target);
+        native.IP = target - 16;
+        var lifted = new X86InstructionSet().GetIsilFromInstruction(native, caller);
+        var call = lifted.Single(instruction => instruction.IsCall);
+        Assert.That(call.OpCode, Is.EqualTo(OpCode.CallVoid));
+        Assert.That(call.Operands.Skip(1).Select(operand => operand.ToString()), Is.EqualTo(
+            new[] { "rcx", "rdx", "r8", "r9", "xmm0", "xmm1", "xmm2", "xmm3" }));
+        Assert.That(call.DeferredCallReturns, Has.Length.EqualTo(2));
+        var result = new LocalVariable("floatingResult", new Register(1, "xmm0"));
+        call.DeferredCallReturns![1].SetOperand(0, result);
+        var info = new RuntimeMethodInfoAnalysisContext(floating, owner.DeclaringAssembly);
+        call.SetOperand(2, info); // static float argument in XMM0, hidden MethodInfo in RDX
+        caller.ControlFlowGraph = new ISILControlFlowGraph(lifted);
+
+        Assert.That(MetadataResolver.ResolveCallsViaMethodInfo(caller), Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(call.Operands[0], Is.SameAs(floating));
+            Assert.That(call.OpCode, Is.EqualTo(OpCode.Call));
+            Assert.That(call.Operands[1], Is.SameAs(result));
+            Assert.That(call.Operands[2].ToString(), Is.EqualTo("xmm0"));
+            Assert.That(call.Operands[3], Is.SameAs(info));
+            Assert.That(lifted[2].OpCode, Is.EqualTo(OpCode.Nop));
+            Assert.That(lifted[1].OpCode, Is.EqualTo(OpCode.UnresolvedValue),
+                "The other register remains a clobber, not a guessed managed value.");
+        });
+    }
+
+    [Test]
+    public void MethodInfoInAnOrdinaryArgumentCannotSelectAnAlias()
+    {
+        const ulong target = 0x7f00_1234_5678_9011;
+        var owner = _app.SystemTypes.SystemObjectType;
+        var attributes = MethodAttributes.Public | MethodAttributes.Static;
+        var first = new InjectedMethodAnalysisContext(owner, "First", owner, attributes, [owner]);
+        var second = new InjectedMethodAnalysisContext(owner, "Second", owner, attributes, [owner]);
+        BindMethods(target, [first, second]);
+        var caller = CreateMethod();
+        var call = new Instruction(0, OpCode.Call, Imm(target), new LocalVariable("result", new Register(1, "rax")),
+            new RuntimeMethodInfoAnalysisContext(second, owner.DeclaringAssembly), Imm(0));
+        caller.ControlFlowGraph = new ISILControlFlowGraph([call]);
+        Assert.That(MetadataResolver.ResolveCallsViaMethodInfo(caller), Is.False);
+        Assert.That(call.Operands[0], Is.TypeOf<Immediate>());
+    }
+
+    [Test]
+    public void ReturnBufferCandidatesCannotUseTheFirstRegisterAsAnUnprovedReceiver()
+    {
+        const ulong target = 0x7f00_1234_5678_9012;
+        var owner = _app.SystemTypes.SystemStringType;
+        var aggregate = _app.GetAssemblyByName("mscorlib")!.GetTypeByFullName("System.Decimal")!;
+        var buffered = new InjectedMethodAnalysisContext(owner, "Buffered", aggregate,
+            MethodAttributes.Public, []);
+        var scalar = new InjectedMethodAnalysisContext(_app.SystemTypes.SystemObjectType, "Scalar", owner,
+            MethodAttributes.Public, []);
+        BindMethods(target, [buffered, scalar]);
+        var caller = CreateMethod();
+        var convention = new X64CallingConventionResolver();
+        Assert.That(convention.ReturnsViaHiddenBuffer(buffered), Is.True);
+        var call = new Instruction(0, OpCode.CallVoid, Imm(target));
+        call.AddOperands(convention.ResolveForUnmanaged(_app, target));
+        call.SetOperand(1, new LocalVariable("possibleBuffer", new Register(1, "rcx"), owner));
+        call.RawCallStackArgumentCount = 0;
+        call.DeferredCallReturns = [];
+        caller.ControlFlowGraph = new ISILControlFlowGraph([call]);
+        Assert.That(MetadataResolver.ResolveAmbiguousCalls(caller), Is.False);
+        Assert.That(call.Operands[0], Is.TypeOf<Immediate>());
+
+        call.SetOperand(3, new RuntimeMethodInfoAnalysisContext(buffered, owner.DeclaringAssembly));
+        Assert.That(MetadataResolver.ResolveCallsViaMethodInfo(caller), Is.True,
+            "The hidden MethodInfo in R8 identifies the buffer-returning instance target.");
+        Assert.That(call.OpCode, Is.EqualTo(OpCode.NotImplemented),
+            "Identity does not establish transfer of a hidden return-buffer result.");
+    }
+
+    [Test]
+    public void WindowsStackArgumentsFollowShadowSpaceAndIncomingReturnAddress()
+    {
+        var type = _app.SystemTypes.SystemInt32Type;
+        var method = new InjectedMethodAnalysisContext(_app.SystemTypes.SystemObjectType, "SixArguments", type,
+            MethodAttributes.Public | MethodAttributes.Static, Enumerable.Repeat(type, 6).ToArray());
+        var convention = new X64CallingConventionResolver();
+        Assert.That(convention.ResolveForManaged(method).OfType<StackOffset>().Select(slot => slot.Offset),
+            Is.EqualTo(new[] { 0x20, 0x28, 0x30 }));
+        Assert.That(convention.ResolveForParameters(method).OfType<StackOffset>().Select(slot => slot.Offset),
+            Is.EqualTo(new[] { 0x28, 0x30, 0x38 }));
     }
 
     private InjectedMethodAnalysisContext CreateMethod() => new(_app.SystemTypes.SystemObjectType,

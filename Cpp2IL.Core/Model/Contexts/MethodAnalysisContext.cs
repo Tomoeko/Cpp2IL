@@ -433,6 +433,13 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
 
         RuntimeNullGuardCoalescer.Run(this);
 
+        // Raw call slots retain every candidate ABI until resolution. Remove
+        // unused slots before checking whether an incoming value is a real
+        // parameter, and before SSA destruction can merge its provenance.
+        CallArgumentTrimmer.Run(this);
+        DeadCodeEliminator.Run(this);
+        NativeEntryValueValidator.Record(this);
+
         SsaForm.Remove(this);
 
         // Phi removal leaves a copy per merged version, most of which can share one local

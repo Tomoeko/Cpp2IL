@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
 using LibCpp2IL.PE;
@@ -17,6 +18,7 @@ public class X64CallingConventionResolver : BaseCallingConventionResolver
     // This *will* break everything on x32.
 
     const int ptrSize = 8;
+    private const int ShadowSpace = 4 * ptrSize;
 
     private static bool IsXMM(ParameterAnalysisContext par) => IsFloatingPoint(par.ParameterType);
 
@@ -174,7 +176,9 @@ public class X64CallingConventionResolver : BaseCallingConventionResolver
                 }
                 else
                 {
-                    args.Add(new StackOffset((i - 4) * ptrSize));
+                    // Four register arguments still reserve 32 bytes of shadow
+                    // space. The first outgoing stack argument follows it.
+                    args.Add(new StackOffset(ShadowSpace + (i - 4) * ptrSize));
                 }
 
                 i++;
@@ -267,6 +271,30 @@ public class X64CallingConventionResolver : BaseCallingConventionResolver
         // else throw new NotSupportedException($"Resolution of 64-bit calling conventions is not supported for this binary type.");
 
         return args.ToArray();
+    }
+
+    public IOperand[] ResolveForParameters(MethodAnalysisContext ctx)
+    {
+        var operands = ResolveForManaged(ctx);
+        if (ctx.AppContext.Binary is PE)
+            for (var index = 0; index < operands.Length; index++)
+                if (operands[index] is StackOffset stack)
+                    operands[index] = new StackOffset(stack.Offset + ptrSize);
+        return operands;
+    }
+
+    internal IOperand[] ResolveForShared(ApplicationAnalysisContext app,
+        IReadOnlyCollection<MethodAnalysisContext> candidates, bool tail, out int stackArgumentCount)
+    {
+        if (app.Binary is not PE { PointerSizeBytes: ptrSize })
+            throw new ArgumentException("Shared raw argument capture requires the Windows x64 ABI", nameof(app));
+        stackArgumentCount = candidates.SelectMany(ResolveForManaged).OfType<StackOffset>()
+            .Select(slot => (slot.Offset - ShadowSpace) / ptrSize + 1).DefaultIfEmpty(0).Max();
+        var operands = ResolveForUnmanaged(app, 0).ToList();
+        var stackBase = ShadowSpace + (tail ? ptrSize : 0);
+        for (var slot = 0; slot < stackArgumentCount; slot++)
+            operands.Add(new StackOffset(stackBase + slot * ptrSize));
+        return operands.ToArray();
     }
 
     private static IOperand ToOperand(MicrosoftNormalRegister Reg) => Reg switch

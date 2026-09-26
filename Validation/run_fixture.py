@@ -82,6 +82,7 @@ import virtual_string_call
 import generic_dispatch
 import guarded_sink
 import folded_state_constructor
+import shared_abi
 import constructor_thunk_chain
 
 
@@ -101,6 +102,7 @@ PROFILES = {
     "float-forward-store": {"assembly": "FloatForwardStoreFixture", "source": VALIDATION / "FloatForwardStoreFixture", "methods": 5},
     "nested-single-getter": {"assembly": "NestedSingleGetterFixture", "source": VALIDATION / "NestedSingleGetterFixture", "methods": 3},
     "fixed-reference-array": {"assembly": "FixedReferenceArrayFixture", "source": VALIDATION / "FixedReferenceArrayFixture", "methods": 5},
+    "shared-abi": {"assembly": "SharedAbiFixture", "source": VALIDATION / "SharedAbiFixture", "methods": 15},
     "array-element-store": {"assembly": "ArrayElementStoreFixture", "source": VALIDATION / "ArrayElementStoreFixture", "methods": 4},
     "unused-reference-nested-store": {"assembly": "NestedFlagSetterFixture", "source": VALIDATION / "NestedFlagSetterFixture", "methods": 4},
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
@@ -263,6 +265,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return instance_reference_setter.verify(path, stage, VERSION)
     if profile == "reference-field":
         return reference_field.verify(path, stage, VERSION)
+    if profile == "shared-abi":
+        return shared_abi.verify(path, stage, VERSION)
     if profile == "float-forward-store":
         return float_forward_store.verify(path, stage, VERSION)
     if profile == "nested-single-getter":

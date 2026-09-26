@@ -107,6 +107,10 @@ public static partial class IlGenerator
             throw new DecompilerException("Call target is unresolved");
         }
 
+        if (context.GetExtraData<NativeEntryValueValidator.Result>(NativeEntryValueValidator.EvidenceKey)
+            is { UnprovedValueCount: > 0 } entryValues)
+            throw new DecompilerException($"Managed values use {entryValues.UnprovedValueCount} unproved native entry register or stack slot value(s); zero-initialized IL locals cannot supply them");
+
         NarrowFieldEqualityProof.Validate(context);
 
         // Native return registers can remain live even when metadata identifies a void callee.

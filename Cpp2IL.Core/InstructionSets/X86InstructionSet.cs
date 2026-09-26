@@ -353,9 +353,14 @@ public class X86InstructionSet : Cpp2IlInstructionSet
     private static ISIL.Register? ReturnRegisterClobberedBy(MethodAnalysisContext callee)
         => callee.IsVoid ? CallingConventions.ReturnRegister(callee) : null;
 
+    private static IEnumerable<ISIL.IOperand> CallArguments(MethodAnalysisContext callee, bool tail)
+        => tail && callee.AppContext.Binary is LibCpp2IL.PE.PE
+            ? CallingConventions.ResolveForParameters(callee)
+            : CallingConventions.ResolveForManaged(callee);
+
     public override List<ISIL.IOperand> GetParameterOperandsFromMethod(MethodAnalysisContext context)
     {
-        return CallingConventions.ResolveForManaged(context).ToList();
+        return CallingConventions.ResolveForParameters(context).ToList();
     }
 
     public override ulong GetThunkTarget(ApplicationAnalysisContext context, ulong thunkAddress)
@@ -977,38 +982,53 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                         else
                             call = Add(instruction.IP, ISIL.OpCode.Call, Imm(target), CallingConventions.ReturnRegister(possibleMethods[0]));
 
-                        call.AddOperands(CallingConventions.ResolveForManaged(possibleMethods[0]));
+                        call.AddOperands(CallArguments(possibleMethods[0], callNoReturn));
                         call.ImplicitDefinition = ReturnRegisterClobberedBy(possibleMethods[0]);
                     }
                     else
                     {
-                        MethodAnalysisContext ctx = null!;
-                        var lpars = -1;
-
-                        // Very naive approach, folds with structs in parameters if GCC is used:
-                        foreach (var method in possibleMethods)
+                        if (context.AppContext.Binary is LibCpp2IL.PE.PE { PointerSizeBytes: 8 })
                         {
-                            var pars = method.Parameters.Count;
-                            if (method.IsStatic) pars++;
-                            if (pars > lpars)
-                            {
-                                lpars = pars;
-                                ctx = method;
-                            }
+                            var call = Add(instruction.IP, ISIL.OpCode.CallVoid, Imm(target));
+                            call.AddOperands(CallingConventions.ResolveForShared(context.AppContext,
+                                possibleMethods, callNoReturn, out var stackArguments));
+                            call.RawCallStackArgumentCount = stackArguments;
+                            call.DeferredCallReturns = new[] { "rax", "xmm0" }.Select(register =>
+                                Add(instruction.IP, ISIL.OpCode.UnresolvedValue,
+                                    new ISIL.Register(null, register),
+                                    new ISIL.StringLiteral("Shared native call return requires a proved managed target")))
+                                .ToArray();
                         }
-
-                        // On post-analysis, you can discard methods according to the registers used, see CallingConventions.
-                        // This is less effective on GCC because MSVC doesn't overlap registers.
-
-                        ISIL.Instruction call;
-
-                        if (ctx.IsVoid)
-                            call = Add(instruction.IP, ISIL.OpCode.CallVoid, Imm(target));
                         else
-                            call = Add(instruction.IP, ISIL.OpCode.Call, Imm(target), CallingConventions.ReturnRegister(ctx));
+                        {
+                            MethodAnalysisContext ctx = null!;
+                            var lpars = -1;
 
-                        call.AddOperands(CallingConventions.ResolveForManaged(ctx));
-                        call.ImplicitDefinition = ReturnRegisterClobberedBy(ctx);
+                            // Very naive approach, folds with structs in parameters if GCC is used:
+                            foreach (var method in possibleMethods)
+                            {
+                                var pars = method.Parameters.Count;
+                                if (method.IsStatic) pars++;
+                                if (pars > lpars)
+                                {
+                                    lpars = pars;
+                                    ctx = method;
+                                }
+                            }
+
+                            // On post-analysis, you can discard methods according to the registers used, see CallingConventions.
+                            // This is less effective on GCC because MSVC doesn't overlap registers.
+
+                            ISIL.Instruction call;
+
+                            if (ctx.IsVoid)
+                                call = Add(instruction.IP, ISIL.OpCode.CallVoid, Imm(target));
+                            else
+                                call = Add(instruction.IP, ISIL.OpCode.Call, Imm(target), CallingConventions.ReturnRegister(ctx));
+
+                            call.AddOperands(CallingConventions.ResolveForManaged(ctx));
+                            call.ImplicitDefinition = ReturnRegisterClobberedBy(ctx);
+                        }
                     }
                 }
                 else

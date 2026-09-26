@@ -231,6 +231,13 @@ public static class MetadataResolver
             if (!method.AppContext.MethodsByAddress.TryGetValue(target.UnsignedValue, out var candidates) || candidates.Count < 2)
                 continue;
 
+            // A hidden return buffer changes the receiver's native argument
+            // slot. RCX alone cannot select between those candidate ABIs.
+            if (instruction.DeferredCallReturns != null &&
+                method.AppContext.InstructionSet.CallingConventionResolver is { } convention &&
+                candidates.Any(convention.ReturnsViaHiddenBuffer))
+                continue;
+
             // A shared native body and matching signatures still do not identify the
             // source member. MethodInfo evidence is handled before this receiver pass.
             if (GetReceiver(instruction) is not { Type: { } receiverType } receiver)
@@ -453,15 +460,6 @@ public static class MetadataResolver
                 if (ReferenceEquals(representedMethod, method))
                     continue;
 
-                var firstArg = instruction.OpCode == OpCode.CallVoid ? 1 : 2;
-                var hiddenParamIndex = firstArg
-                    + (representedMethod.AppContext.InstructionSet.CallingConventionResolver?.ReturnsViaHiddenBuffer(representedMethod) == true ? 1 : 0)
-                    + (representedMethod.IsStatic ? 0 : 1) + representedMethod.Parameters.Count;
-
-                if (hiddenParamIndex >= instruction.Operands.Count
-                    || AsMethodInfo(instruction.Operands[hiddenParamIndex]) == null)
-                    continue;
-
                 instruction.SetOperand(0, representedMethod);
                 representedMethod.AppContext.InstructionSet.CallingConventionResolver?.RemapRawArguments(instruction, representedMethod);
                 changed = true;
@@ -580,16 +578,22 @@ public static class MetadataResolver
     {
         var firstArg = call.OpCode == OpCode.CallVoid ? 1 : 2;
 
-        for (var i = call.Operands.Count - 1; i >= firstArg; i--)
+        RuntimeMethodInfoAnalysisContext? match = null;
+        for (var i = firstArg; i < call.Operands.Count; i++)
         {
-            if (AsMethodInfo(call.Operands[i]) is { } methodInfo)
-                return methodInfo;
+            if (AsMethodInfo(call.Operands[i]) is not { RepresentedMethod: { } represented } methodInfo ||
+                represented.AppContext.InstructionSet.CallingConventionResolver is not { } convention ||
+                AsMethodInfo(convention.HiddenMethodInfoArgument(call, represented)) is not { } hidden ||
+                !ReferenceEquals(hidden.RepresentedMethod, represented))
+                continue;
+            if (match != null && !ReferenceEquals(match.RepresentedMethod, represented))
+                return null; // Two plausible hidden slots do not identify one signature.
+            match = methodInfo;
         }
-
-        return null;
+        return match;
     }
 
-    private static RuntimeMethodInfoAnalysisContext? AsMethodInfo(IOperand operand) =>
+    private static RuntimeMethodInfoAnalysisContext? AsMethodInfo(IOperand? operand) =>
         operand switch
         {
             RuntimeMethodInfoAnalysisContext methodInfo => methodInfo,

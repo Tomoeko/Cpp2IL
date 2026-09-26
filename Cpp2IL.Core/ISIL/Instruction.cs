@@ -51,6 +51,11 @@ public class Instruction : IOperand
     // Exists to clear the return register after a CallVoid, basically.
     public Register? ImplicitDefinition;
 
+    // Shared x64 bodies do not establish a managed signature. Retain the raw
+    // ABI slots and both possible return definitions until call resolution.
+    internal int RawCallStackArgumentCount { get; set; } = -1;
+    internal Instruction[]? DeferredCallReturns { get; set; }
+
     public bool IsFallThrough =>
         OpCode switch
         {

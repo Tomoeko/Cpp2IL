@@ -71,7 +71,9 @@ public class X86IsilTests
         Add(11, OpCode.Move, r9, 0);
         Add(12, OpCode.Move, rcx, rax);
         Add(13, OpCode.Move, r8, 0);
-        Add(14, OpCode.CallVoid, (ulong)0x180267A70, rcx, rdx, r8, r9);
+        Add(14, OpCode.CallVoid, (ulong)0x180267A70, rcx, rdx, r8, r9,
+            new Register(null, "xmm0"), new Register(null, "xmm1"),
+            new Register(null, "xmm2"), new Register(null, "xmm3"));
         Add(15, OpCode.Return);
         Add(16, OpCode.Return);
         Add(17, OpCode.Invalid, new StringLiteral("Decoded native body has an unproved fallthrough at its boundary"));

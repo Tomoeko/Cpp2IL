@@ -1,0 +1,7 @@
+{
+  "name": "RecoveryValidation.Runtime",
+  "references": [
+    "SharedAbiFixture"
+  ],
+  "autoReferenced": true
+}

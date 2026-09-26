@@ -41,6 +41,10 @@ public abstract class BaseCallingConventionResolver
         var (integerRegisters, floatRegisters) = RawRegisters(app);
         var argBase = ArgBase(call);
 
+        if (call.RawCallStackArgumentCount >= 0)
+            return UsesShadowedArgumentSlots(app) && call.Operands.Count ==
+                argBase + integerRegisters.Length + floatRegisters.Length + call.RawCallStackArgumentCount;
+
         if (call.Operands.Count != argBase + integerRegisters.Length + floatRegisters.Length)
             return false;
 
@@ -55,7 +59,6 @@ public abstract class BaseCallingConventionResolver
         return true;
     }
 
-    // TODO Fix handling of params on the stack here
     public void RemapRawArguments(Instruction call, MethodAnalysisContext resolved)
     {
         var app = resolved.AppContext;
@@ -81,9 +84,16 @@ public abstract class BaseCallingConventionResolver
 
         if (UsesShadowedArgumentSlots(app))
         {
-            for (var slot = 0; slot < slots.Count && slot < integerRegisters.Length; slot++)
+            for (var slot = 0; slot < slots.Count; slot++)
                 if (slots[slot].Emit)
-                    operands.Add(call.Operands[argBase + (slots[slot].IsFloat ? integerRegisters.Length + slot : slot)]);
+                {
+                    var offset = slot < integerRegisters.Length
+                        ? (slots[slot].IsFloat ? integerRegisters.Length + slot : slot)
+                        : floatRegisters.Length + slot;
+                    if (argBase + offset >= call.Operands.Count)
+                        break; // Missing stack evidence remains a missing argument.
+                    operands.Add(call.Operands[argBase + offset]);
+                }
         }
         else
         {
@@ -102,6 +112,55 @@ public abstract class BaseCallingConventionResolver
         }
 
         call.SetOperands(operands);
+        call.RawCallStackArgumentCount = -1;
+        ResolveDeferredReturn(call, resolved);
+    }
+
+    internal IOperand? HiddenMethodInfoArgument(Instruction call, MethodAnalysisContext method)
+    {
+        var argBase = ArgBase(call);
+        var offset = (method.IsStatic ? 0 : 1) + method.Parameters.Count;
+        if (HasRawArgumentLayout(call, method.AppContext))
+        {
+            if (ReturnsViaHiddenBuffer(method) && HiddenBufferConsumesArgumentSlot)
+                offset++;
+            var (integerRegisters, floatRegisters) = RawRegisters(method.AppContext);
+            if (!UsesShadowedArgumentSlots(method.AppContext))
+                offset -= method.Parameters.Count(IsFloatingPoint);
+            else if (offset >= integerRegisters.Length)
+                offset += floatRegisters.Length;
+        }
+        return argBase + offset < call.Operands.Count ? call.Operands[argBase + offset] : null;
+    }
+
+    private void ResolveDeferredReturn(Instruction call, MethodAnalysisContext resolved)
+    {
+        if (call.DeferredCallReturns is not { } captures)
+            return;
+        call.DeferredCallReturns = null;
+        if (resolved.IsVoid)
+            return;
+        // Identifying the callee does not transfer its buffer result into the
+        // caller's managed storage. Dropping that result can fabricate default
+        // field values when later native instructions read the supplied buffer.
+        if (ReturnsViaHiddenBuffer(resolved))
+        {
+            call.OpCode = OpCode.NotImplemented;
+            call.SetOperands(new StringLiteral("Shared native call return buffer requires proved managed storage and result transfer"));
+            return;
+        }
+        var register = ReturnRegister(resolved).Name;
+        var capture = captures.SingleOrDefault(instruction => instruction is
+            { OpCode: OpCode.UnresolvedValue, Operands: [LocalVariable result, ..] }
+            && result.Register.Name == register);
+        if (capture == null)
+            return; // An unused native return was already removed as dead code.
+        var operands = call.Operands.ToList();
+        operands.Insert(1, capture.Operands[0]);
+        call.OpCode = OpCode.Call;
+        call.SetOperands(operands);
+        capture.OpCode = OpCode.Nop;
+        capture.SetOperands();
     }
 
     protected static int ArgBase(Instruction call) => call.OpCode is OpCode.CallVoid ? 1 : 2;
