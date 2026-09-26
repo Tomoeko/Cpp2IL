@@ -103,8 +103,13 @@ internal static class NarrowFieldEqualityProof
     internal static bool HasUnchangedFieldLayout(FieldReference reference, int width)
         => HasUnchangedFieldLayout(reference, width, false);
 
+    internal static bool HasUnchangedSingleFieldLayout(FieldReference reference)
+        => reference.Field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4 &&
+           HasUnchangedFieldLayout(reference, 32, false, false, true);
+
     private static bool HasUnchangedFieldLayout(FieldReference reference, int width,
-        bool referenceField, bool allowFieldlessConstructedBase = false)
+        bool referenceField, bool allowFieldlessConstructedBase = false,
+        bool singleField = false)
     {
         var field = reference.Field;
         var owner = field.DeclaringType;
@@ -114,7 +119,9 @@ internal static class NarrowFieldEqualityProof
             // Resolving a metadata array type can create a new wrapper each time. The
             // override records an actual change; object identity does not.
             field.OverrideFieldType != null ||
-            !(referenceField || HasExactStorageWidth(field.FieldType, width) ||
+            !(referenceField ||
+              (singleField && field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4) ||
+              HasExactStorageWidth(field.FieldType, width) ||
               width == owner.AppContext.Binary.PointerSizeBytes * 8 &&
               field.FieldType.Type is (Il2CppTypeEnum.IL2CPP_TYPE_I or
                   Il2CppTypeEnum.IL2CPP_TYPE_U)) ||
