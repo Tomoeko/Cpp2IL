@@ -14,6 +14,7 @@ import static_field_getter
 import catch_divide
 import class_cast_lookup
 import reference_field
+import native_int_field
 import reference_array
 import exception_regions
 import field_array
@@ -113,6 +114,7 @@ PROFILES = {
     "instance-reference-property": {"assembly": "InstanceReferencePropertyFixture", "source": VALIDATION / "InstanceReferencePropertyFixture", "methods": 5},
     "instance-reference-setter": {"assembly": "InstanceReferenceSetterFixture", "source": VALIDATION / "InstanceReferenceSetterFixture", "methods": 4},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
+    "native-int-field": {"assembly": "NativeIntFieldFixture", "source": VALIDATION / "NativeIntFieldFixture", "methods": 3},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
     "sequential-null-guards": {"assembly": "SequentialNullGuardFixture", "source": VALIDATION / "SequentialNullGuardFixture", "methods": 3},
     "call-result-null-guards": {"assembly": "CallResultNullGuardFixture", "source": VALIDATION / "CallResultNullGuardFixture", "methods": 13},
@@ -253,6 +255,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return instance_reference_setter.verify(path, stage, VERSION)
     if profile == "reference-field":
         return reference_field.verify(path, stage, VERSION)
+    if profile == "native-int-field":
+        return native_int_field.verify(path, stage, VERSION)
     if profile == "reference-null":
         return reference_null.verify(path, stage, VERSION)
     if profile == "sequential-null-guards":

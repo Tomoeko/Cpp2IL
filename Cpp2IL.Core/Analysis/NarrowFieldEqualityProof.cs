@@ -114,7 +114,10 @@ internal static class NarrowFieldEqualityProof
             // Resolving a metadata array type can create a new wrapper each time. The
             // override records an actual change; object identity does not.
             field.OverrideFieldType != null ||
-            !(referenceField || HasExactStorageWidth(field.FieldType, width)) ||
+            !(referenceField || HasExactStorageWidth(field.FieldType, width) ||
+              width == owner.AppContext.Binary.PointerSizeBytes * 8 &&
+              field.FieldType.Type is (Il2CppTypeEnum.IL2CPP_TYPE_I or
+                  Il2CppTypeEnum.IL2CPP_TYPE_U)) ||
             field.Offset < 2 * owner.AppContext.Binary.PointerSizeBytes || field.Offset != field.DefaultOffset || reference.Offset != field.Offset ||
             !ReferenceEquals(reference.Local.Type, owner) || owner.IsValueType || owner.IsEnumType ||
             owner is GenericInstanceTypeAnalysisContext || owner.GenericParameters.Count != 0 ||

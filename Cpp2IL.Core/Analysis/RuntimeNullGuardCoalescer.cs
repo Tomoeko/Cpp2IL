@@ -52,10 +52,10 @@ internal static class RuntimeNullGuardCoalescer
                 Field.Attributes != Attributes || Field.IsStatic || Access.Offset != Offset || Field.Offset != Offset ||
                 RequireNativeBinding && !HasUnchangedNativeField(method, Access))
                 return false;
-            if (IsBoundedReferenceFieldReadType(ValueType))
+            if (IsProved64BitFieldReadType(ValueType))
                 return StoredValue == null &&
-                       ProvedNativeReferenceFieldRead(method, Access) is { } referenceRead &&
-                       ValidFieldReceiver(method, referenceRead.ReceiverField);
+                       ProvedNative64BitFieldRead(method, Access) is { } fieldRead &&
+                       ValidFieldReceiver(method, fieldRead.ReceiverField);
             return UnchangedParameter(method, Receiver, Owner);
         }
 
@@ -675,30 +675,34 @@ internal static class RuntimeNullGuardCoalescer
         var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) ? 32 :
             ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 :
             ReferenceEquals(field.FieldType, types.SystemBooleanType) ? 8 : 0;
-        var referenceRead = IsBoundedReferenceFieldReadType(field.FieldType);
+        var proved64BitRead = IsProved64BitFieldReadType(field.FieldType);
+        var nativeInt = X64Guarded64BitFieldReadProof.IsSupportedNativeIntType(field.FieldType);
         if (width == 8 && !HasProvedNativeZeroStore(method, access) &&
             !HasProvedNativeBooleanFieldRead(method, access))
             return false;
         return field.Name == field.DefaultName &&
                owner.Fields.Contains(field) && NullCheckedCall.IsReferenceClass(owner) &&
-               (referenceRead
-                   ? NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access) &&
-                     ProvedNativeReferenceFieldRead(method, access) != null
+               (proved64BitRead
+                   ? (nativeInt
+                       ? NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, 64)
+                       : NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access)) &&
+                     ProvedNative64BitFieldRead(method, access) != null
                    : width != 0 && NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, width));
     }
 
-    private static X86ReferenceFieldReadProof.Proof? ProvedNativeReferenceFieldRead(
+    private static X64Guarded64BitFieldReadProof.Proof? ProvedNative64BitFieldRead(
         MethodAnalysisContext method, FieldReference access)
     {
-        var proof = X86ReferenceFieldReadProof.Find(method, X86Utils.Iterate(method).ToArray());
+        var proof = X64Guarded64BitFieldReadProof.Find(method, X86Utils.Iterate(method).ToArray());
         return ReferenceEquals(proof?.Field, access.Field) ? proof : null;
     }
 
-    private static bool IsBoundedReferenceFieldReadType(TypeAnalysisContext type) =>
+    private static bool IsProved64BitFieldReadType(TypeAnalysisContext type) =>
         ReferenceEquals(type, type.AppContext.SystemTypes.SystemStringType) ||
         ReferenceEquals(type, type.AppContext.SystemTypes.SystemObjectType) ||
         type.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS && NullCheckedCall.IsReferenceClass(type) ||
-        X86ReferenceFieldReadProof.IsSupportedArrayType(type);
+        X64Guarded64BitFieldReadProof.IsSupportedArrayType(type) ||
+        X64Guarded64BitFieldReadProof.IsSupportedNativeIntType(type);
 
     private static bool HasProvedNativeZeroStore(MethodAnalysisContext method, FieldReference access)
     {

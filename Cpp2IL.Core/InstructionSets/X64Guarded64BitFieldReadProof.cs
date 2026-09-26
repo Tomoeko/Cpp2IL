@@ -14,10 +14,10 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Binds an exact x64 null diamond to an ordinary class or bounded array field load. One preceding
-/// reference-field load is allowed, but no intervening effects or alternative exits are.
+/// Binds an exact x64 null diamond to a 64-bit reference or native-sized integer field load.
+/// One preceding reference-field load is allowed, but no intervening effects or alternative exits are.
 /// </summary>
-internal static class X86ReferenceFieldReadProof
+internal static class X64Guarded64BitFieldReadProof
 {
     internal sealed record Proof(FieldAnalysisContext Field, FieldAnalysisContext? ReceiverField,
         ulong LoadIp);
@@ -44,7 +44,11 @@ internal static class X86ReferenceFieldReadProof
               rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS &&
               ISIL.NullCheckedCall.IsReferenceClass(method.ReturnType) ||
               rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY &&
-              IsSupportedArrayType(method.ReturnType)) ||
+              IsSupportedArrayType(method.ReturnType) ||
+              rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_I &&
+              ReferenceEquals(method.ReturnType, app.SystemTypes.SystemIntPtrType) ||
+              rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_U &&
+              ReferenceEquals(method.ReturnType, app.SystemTypes.SystemUIntPtrType)) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             method.GenericParameters.Count != 0 ||
@@ -118,7 +122,9 @@ internal static class X86ReferenceFieldReadProof
         var receiver = new IsilLocalVariable("native-receiver", new IsilRegister(null,
             shape.ReceiverOffset is null ? "rcx" : "rax"), box);
         var access = new IsilFieldReference(referenceField, receiver, (int)referenceField.Offset);
-        if (!NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access))
+        if (!(IsSupportedNativeIntType(method.ReturnType)
+                ? NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, 64)
+                : NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access)))
             return null;
 
         var call = body[shape.CallIndex];
@@ -180,6 +186,10 @@ internal static class X86ReferenceFieldReadProof
         (ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemInt32Type) ||
          ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemStringType) ||
          ReferenceEquals(array.ElementType, type.AppContext.SystemTypes.SystemObjectType));
+
+    internal static bool IsSupportedNativeIntType(TypeAnalysisContext type) =>
+        ReferenceEquals(type, type.AppContext.SystemTypes.SystemIntPtrType) ||
+        ReferenceEquals(type, type.AppContext.SystemTypes.SystemUIntPtrType);
 
     private static bool Stack(Instruction instruction, Mnemonic mnemonic) =>
         instruction.Mnemonic == mnemonic && instruction.Op0Kind == OpKind.Register &&
