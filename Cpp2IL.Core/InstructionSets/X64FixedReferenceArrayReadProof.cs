@@ -30,7 +30,6 @@ internal static class X64FixedReferenceArrayReadProof
             var app = method.AppContext;
             if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
                 app.Binary is not PE pe ||
-                X64UnwindProof.ForApplication(app) is not { } unwind ||
                 method.DeclaringType is not { Definition: { GenericContainer: null,
                     RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
                         NumMods: 0, Byref: 0, Pinned: 0 } } } owner ||
@@ -48,28 +47,7 @@ internal static class X64FixedReferenceArrayReadProof
                 bindings is not [var bound] || !ReferenceEquals(bound, method))
                 return null;
 
-            method.EnsureRawBytes();
-            var start = method.UnderlyingPointer;
-            var region = unwind.ClassifySpan(start, start + 1);
-            if (region.Kind != X64UnwindProof.SpanKind.HandlerFree ||
-                region.Start != start || region.RootStart != start ||
-                region.End <= start || region.End - start > 80)
-                return null;
-            var native = X86Utils.Iterate(method)
-                .TakeWhile(instruction => instruction.IP < region.End).ToArray();
-            var body = native.Take(12).ToArray();
-            if (native.Length is < 12 or > 44 || body[0].IP != start ||
-                body[^1].NextIP > region.End ||
-                native.Skip(12).Any(instruction => instruction.Code != Code.Int3) ||
-                body.Any(instruction => instruction.IsInvalid ||
-                    instruction.CodeSize != CodeSize.Code64 ||
-                    instruction.HasLockPrefix || instruction.HasRepPrefix ||
-                    instruction.HasRepnePrefix ||
-                    instruction.SegmentPrefix != NativeRegister.None) ||
-                native.Where((instruction, index) => index > 0 &&
-                    instruction.IP != native[index - 1].NextIP).Any() ||
-                !FileBackedRegion(method, body, pe, unwind, region) ||
-                !Stack(body[0], Mnemonic.Sub) || body[0].Length != 4 ||
+            if (X64Stack28BodyProof.Read(method, 12, 80) is not { } body ||
                 !ArrayLoad(body[1], out var fieldOffset) ||
                 !Test(body[2]) ||
                 body[3].Code != Code.Je_rel8_64 ||
@@ -78,7 +56,7 @@ internal static class X64FixedReferenceArrayReadProof
                 body[5].Code != Code.Jbe_rel8_64 ||
                 body[5].NearBranchTarget != body[11].IP ||
                 !ElementLoad(body[6], index, pe) ||
-                !Stack(body[7], Mnemonic.Add) ||
+                !X64Stack28BodyProof.Stack(body[7], Mnemonic.Add) ||
                 body[8].Code != Code.Retnq || body[8].OpCount != 0 ||
                 body[9].Code != Code.Call_rel32_64 ||
                 body[10].Code != Code.Int3 ||
@@ -167,46 +145,6 @@ internal static class X64FixedReferenceArrayReadProof
                    { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
                        NumMods: 0, Byref: 0, Pinned: 0 };
     }
-
-    private static bool FileBackedRegion(MethodAnalysisContext method,
-        IReadOnlyList<NativeInstruction> body, PE pe, X64UnwindProof.Index unwind,
-        X64UnwindProof.SpanClassification region)
-    {
-        var start = method.UnderlyingPointer;
-        var bodyEnd = body[^1].NextIP;
-        if (region.End < bodyEnd || region.End - bodyEnd > 32 ||
-            method.RawBytes.Length < (long)(bodyEnd - start) ||
-            !unwind.MatchesUnwind(start, region.End, 4, 0,
-                new byte[] { 4, 0x42 }) ||
-            !X64AncestorConstructorThunkProof.FileBackedExecutable(pe, unwind,
-                method.RawBytes.AsSpan().Slice(0,
-                    checked((int)(bodyEnd - start))), start) ||
-            method.AppContext.MethodsByAddress.Keys.Any(address =>
-                address > start && address < region.End))
-            return false;
-
-        var first = pe.MapVirtualAddressToRaw(start, false);
-        var last = pe.MapVirtualAddressToRaw(region.End - 1, false);
-        var image = pe.GetRawBinaryContent();
-        var length = checked((int)(region.End - start));
-        if (first < 0 || first > image.Length - length ||
-            last - first != length - 1)
-            return false;
-        for (var address = start; address < region.End; address++)
-            if (!unwind.IsExecutableRva(checked((uint)(address - unwind.ImageBase))) ||
-                pe.MapVirtualAddressToRaw(address, false) !=
-                    first + (long)(address - start) ||
-                (address >= bodyEnd &&
-                 image[(int)(first + (long)(address - start))] != 0xCC))
-                return false;
-        return true;
-    }
-
-    private static bool Stack(NativeInstruction instruction, Mnemonic mnemonic) =>
-        instruction.Mnemonic == mnemonic && instruction.Op0Kind == OpKind.Register &&
-        instruction.Op0Register == NativeRegister.RSP &&
-        instruction.Op1Kind is OpKind.Immediate8to64 or OpKind.Immediate32to64 &&
-        instruction.GetImmediate(1) == 0x28;
 
     private static bool ArrayLoad(NativeInstruction instruction, out ulong offset)
     {
