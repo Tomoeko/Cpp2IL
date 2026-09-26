@@ -20,6 +20,7 @@ import exception_regions
 import field_array
 import float_forward_store
 import nested_single_getter
+import fixed_reference_array
 import field_guard
 import hashlib
 import json
@@ -98,6 +99,7 @@ PROFILES = {
     "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 4},
     "float-forward-store": {"assembly": "FloatForwardStoreFixture", "source": VALIDATION / "FloatForwardStoreFixture", "methods": 5},
     "nested-single-getter": {"assembly": "NestedSingleGetterFixture", "source": VALIDATION / "NestedSingleGetterFixture", "methods": 3},
+    "fixed-reference-array": {"assembly": "FixedReferenceArrayFixture", "source": VALIDATION / "FixedReferenceArrayFixture", "methods": 5},
     "unused-reference-nested-store": {"assembly": "NestedFlagSetterFixture", "source": VALIDATION / "NestedFlagSetterFixture", "methods": 4},
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
@@ -263,6 +265,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return float_forward_store.verify(path, stage, VERSION)
     if profile == "nested-single-getter":
         return nested_single_getter.verify(path, stage, VERSION)
+    if profile == "fixed-reference-array":
+        return fixed_reference_array.verify(path, stage, VERSION)
     if profile == "native-int-field":
         return native_int_field.verify(path, stage, VERSION)
     if profile == "reference-null":
