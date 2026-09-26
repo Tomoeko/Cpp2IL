@@ -16,7 +16,7 @@ using ManagedRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Proves an instance Boolean or Int32 read through one reference field.
+/// Proves an instance Boolean, Int32 or Single read through one reference field.
 /// Its complete native body has a terminal, proved runtime null throw for a
 /// missing child; the managed second field read retains that exception.
 /// </summary>
@@ -40,12 +40,15 @@ internal static class X64NestedScalarFieldReadProof
             method.Definition is not { GenericContainer: null, parameterCount: 0,
                 RawReturnType: { NumMods: 0, Byref: 0, Pinned: 0 } rawReturn } definition ||
             rawReturn.Type is not (Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN or
-                Il2CppTypeEnum.IL2CPP_TYPE_I4) ||
+                Il2CppTypeEnum.IL2CPP_TYPE_I4 or Il2CppTypeEnum.IL2CPP_TYPE_R4) ||
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
-            !ReferenceEquals(method.ReturnType,
-                rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
-                    ? app.SystemTypes.SystemBooleanType : app.SystemTypes.SystemInt32Type) ||
+            !ReferenceEquals(method.ReturnType, rawReturn.Type switch
+            {
+                Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN => app.SystemTypes.SystemBooleanType,
+                Il2CppTypeEnum.IL2CPP_TYPE_I4 => app.SystemTypes.SystemInt32Type,
+                _ => app.SystemTypes.SystemSingleType,
+            }) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
@@ -135,17 +138,36 @@ internal static class X64NestedScalarFieldReadProof
             rawField.Type == rawReturn.Type).ToArray();
         if (values is not [{ } valueField] || valueField.Name != valueField.DefaultName ||
             !ReferenceEquals(child, owner) &&
-            (valueField.Visibility != FieldAttributes.Public || child.DeclaringType != null ||
-             child.Visibility != TypeAttributes.Public))
+            (valueField.Visibility != FieldAttributes.Public ||
+             !HasPublicTypeChain(child)))
             return null;
         var childLocal = new LocalVariable("proved-child",
             new ManagedRegister(null, "proved-child"), child);
-        if (!NarrowFieldEqualityProof.HasUnchangedFieldLayout(
-                new FieldReference(valueField, childLocal, (int)valueOffset),
-                rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32))
+        var valueReference = new FieldReference(valueField, childLocal,
+            (int)valueOffset);
+        if (rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4
+                ? !NarrowFieldEqualityProof.HasUnchangedSingleFieldLayout(valueReference)
+                : !NarrowFieldEqualityProof.HasUnchangedFieldLayout(valueReference,
+                    rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32))
             return null;
 
         return new Evidence(receiverField, valueField);
+    }
+
+    private static bool HasPublicTypeChain(TypeAnalysisContext type)
+    {
+        for (var current = type; current != null; current = current.DeclaringType)
+        {
+            if (current.Attributes != current.DefaultAttributes ||
+                current.Name != current.DefaultName ||
+                current.Namespace != current.DefaultNamespace ||
+                current.GenericParameters.Count != 0 ||
+                current.Definition is not { GenericContainer: null } ||
+                current.Visibility != (current.DeclaringType == null
+                    ? TypeAttributes.Public : TypeAttributes.NestedPublic))
+                return false;
+        }
+        return true;
     }
 
     private static bool FileBackedExecutableBody(MethodAnalysisContext method, PE pe,
@@ -201,10 +223,12 @@ internal static class X64NestedScalarFieldReadProof
         out ulong offset)
     {
         offset = instruction.MemoryDisplacement64;
+        var floating = type == Il2CppTypeEnum.IL2CPP_TYPE_R4;
         return instruction.Code == (type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
-                   ? Code.Movzx_r32_rm8 : Code.Mov_r32_rm32) &&
+                   ? Code.Movzx_r32_rm8 : floating
+                       ? Code.Movss_xmm_xmmm32 : Code.Mov_r32_rm32) &&
                instruction.Op0Kind == OpKind.Register &&
-               instruction.Op0Register == NativeRegister.EAX &&
+               instruction.Op0Register == (floating ? NativeRegister.XMM0 : NativeRegister.EAX) &&
                instruction.Op1Kind == OpKind.Memory &&
                instruction.MemoryBase == NativeRegister.RAX &&
                instruction.MemoryIndex == NativeRegister.None &&

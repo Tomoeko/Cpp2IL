@@ -1,0 +1,5 @@
+{
+    "name": "RecoveryValidation.Runtime",
+    "rootNamespace": "RecoveryValidation",
+    "references": ["NestedSingleGetterFixture"]
+}
