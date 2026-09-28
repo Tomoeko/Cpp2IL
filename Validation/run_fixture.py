@@ -99,6 +99,8 @@ import guarded_sink
 import folded_state_constructor
 import folded_literal_constructor
 import shared_inert_constructor
+import float_initializer_constructor
+import scalar_wrapper
 import shared_abi
 import constructor_thunk_chain
 
@@ -141,6 +143,10 @@ PROFILES = {
     "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
     "folded-literal-constructor": {"assembly": "FoldedLiteralConstructorFixture", "source": VALIDATION / "FoldedLiteralConstructorFixture", "methods": 3},
     "shared-inert-constructor": {"assembly": "SharedInertConstructorFixture", "source": VALIDATION / "SharedInertConstructorFixture", "methods": 2},
+    "float-initializer-constructor": {"assembly": "FloatInitializerConstructorFixture",
+                                      "source": VALIDATION / "FloatInitializerConstructorFixture", "methods": 1},
+    "scalar-wrapper": {"assembly": "ScalarWrapperFixture",
+                        "source": VALIDATION / "ScalarWrapperFixture", "methods": 7},
     "constructor-thunk-chain": {"assembly": "ConstructorThunkChainFixture", "source": VALIDATION / "ConstructorThunkChainFixture", "methods": 7},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 10},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
@@ -300,6 +306,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return folded_literal_constructor.verify(path, stage, VERSION)
     if profile == "shared-inert-constructor":
         return shared_inert_constructor.verify(path, stage, VERSION)
+    if profile == "float-initializer-constructor":
+        return float_initializer_constructor.verify(path, stage, VERSION)
+    if profile == "scalar-wrapper":
+        return scalar_wrapper.verify(path, stage, VERSION)
     if profile == "constructor-thunk-chain":
         return constructor_thunk_chain.verify(path, stage, VERSION)
     if profile == "array-call":
