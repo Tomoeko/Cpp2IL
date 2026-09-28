@@ -18,10 +18,10 @@ from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_proces
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
-    "catch-divide", "exception-regions", "array-access", "array-sequence", "field-array", "field-boolean-array", "field-boolean-array-read", "constructed-base-boolean-array", "narrow-array", "float-array", "word-array", "reference-array", "boolean-getter", "boolean-getter-metadata", "virtual-string-call", "generic-dispatch", "guarded-sink", "folded-state-constructor", "folded-literal-constructor", "constructor-thunk-chain", "boolean-parameter-branch", "array-call",
+    "catch-divide", "exception-regions", "array-access", "array-sequence", "field-array", "field-boolean-array", "field-boolean-array-read", "range-array-read", "constructed-base-boolean-array", "narrow-array", "float-array", "word-array", "reference-array", "boolean-getter", "boolean-getter-metadata", "virtual-string-call", "generic-dispatch", "guarded-sink", "folded-state-constructor", "folded-literal-constructor", "constructor-thunk-chain", "boolean-parameter-branch", "array-call",
     "enum-passthrough", "static-field-getter", "static-word-getter", "reference-field", "native-int-field", "reference-null", "reference-field-null", "sequential-null-guards", "call-result-null-guards",
     "reference-store", "external-references", "numerics-reference", "byte-threshold", "dense-switch", "composed-array", "composed-read", "parameter-array", "field-guard", "inherited-field-guard",
-    "zero-arg-field-call", "boolean-tail-field-call", "call-result-boolean-store", "call-result-tail-guard", "unsealed-zero-store", "forwarded-argument", "struct-forward-call", "struct-static-forward-call", "scalar-truncation", "loop-calls", "word-fields",
+    "zero-arg-field-call", "boolean-tail-field-call", "call-result-boolean-store", "call-result-tail-guard", "ordered-call-tail-guard", "unsealed-zero-store", "forwarded-argument", "struct-forward-call", "struct-static-forward-call", "scalar-truncation", "loop-calls", "word-fields",
     "nested-boolean-store",
     "nested-boolean-getter",
     "float-forward-store",

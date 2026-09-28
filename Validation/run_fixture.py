@@ -17,6 +17,7 @@ import guarded_boxed_cast
 import reference_field
 import native_int_field
 import reference_array
+import range_array_read
 import exception_regions
 import field_array
 import field_boolean_array
@@ -88,6 +89,7 @@ import zero_arg_field_call
 import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
+import ordered_call_tail_guard
 import unsealed_zero_store
 import virtual_string_call
 import virtual_tail_dispatch
@@ -111,6 +113,7 @@ PROFILES = {
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "field-boolean-array": {"assembly": "BooleanFieldArrayFixture", "source": VALIDATION / "BooleanFieldArrayFixture", "methods": 3},
     "field-boolean-array-read": {"assembly": "FieldBooleanArrayReadFixture", "source": VALIDATION / "FieldBooleanArrayReadFixture", "methods": 4},
+    "range-array-read": {"assembly": "RangeArrayReadFixture", "source": VALIDATION / "RangeArrayReadFixture", "methods": 4},
     "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 4},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 6},
@@ -187,6 +190,9 @@ PROFILES = {
                                   "source": VALIDATION / "CallResultBooleanStoreFixture", "methods": 6},
     "call-result-tail-guard": {"assembly": "CallResultTailGuardFixture",
                                "source": VALIDATION / "CallResultTailGuardFixture", "methods": 5},
+    "ordered-call-tail-guard": {"assembly": "OrderedCallTailGuardFixture",
+                                 "source": VALIDATION / "OrderedCallTailGuardFixture", "methods": 9,
+                                 "noManagedBody": {("OrderedCallTailGuardFixture.GuardBase", "Forward")}},
     "unsealed-zero-store": {"assembly": "UnsealedZeroStoreFixture",
                             "source": VALIDATION / "UnsealedZeroStoreFixture", "methods": 3},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
@@ -315,6 +321,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return fixed_reference_array.verify(path, stage, VERSION)
     if profile == "field-boolean-array-read":
         return field_boolean_array_read.verify(path, stage, VERSION)
+    if profile == "range-array-read":
+        return range_array_read.verify(path, stage, VERSION)
     if profile == "fixed-scalar-array":
         return fixed_scalar_array.verify(path, stage, VERSION)
     if profile == "array-element-store":
@@ -387,6 +395,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return call_result_boolean_store.verify(path, stage, VERSION)
     if profile == "call-result-tail-guard":
         return call_result_tail_guard.verify(path, stage, VERSION)
+    if profile == "ordered-call-tail-guard":
+        return ordered_call_tail_guard.verify(path, stage, VERSION)
     if profile == "unsealed-zero-store":
         return unsealed_zero_store.verify(path, stage, VERSION)
     if profile == "forwarded-argument":

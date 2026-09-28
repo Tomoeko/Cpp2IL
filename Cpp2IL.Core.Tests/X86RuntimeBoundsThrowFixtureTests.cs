@@ -55,7 +55,21 @@ public class X86RuntimeBoundsThrowFixtureTests
             var native = X86Utils.Iterate(access).ToArray();
             Assert.That(X86ScalarArrayAccessProof.TryProveShape(native, isWrite, elementSize), Is.True);
             Assert.That(X86ScalarArrayAccessProof.TryProveShape(native.Take(12).ToArray(), isWrite, elementSize), Is.True,
-                "The final proven nonreturning bounds call needs no trailing padding instruction.");
+                "The prefix matcher accepts 12 instructions; lifting also requires the closed region below.");
+            var region = X86ScalarArrayAccessProof.TryCompleteTrapTerminatedRegion(app,
+                access.UnderlyingPointer, native);
+            Assert.That(region, Is.Not.Null, "The native access must occupy one complete unwind region.");
+            Assert.That(region!, Has.Count.EqualTo(13));
+            Assert.That(region[12].Code, Is.EqualTo(Code.Int3));
+            var unwind = X64UnwindProof.ForApplication(app)!.ClassifySpan(access.UnderlyingPointer,
+                region[12].NextIP);
+            Assert.Multiple(() =>
+            {
+                Assert.That(unwind.Kind, Is.EqualTo(X64UnwindProof.SpanKind.HandlerFree));
+                Assert.That(unwind.Start, Is.EqualTo(access.UnderlyingPointer));
+                Assert.That(unwind.RootStart, Is.EqualTo(access.UnderlyingPointer));
+                Assert.That(unwind.End, Is.EqualTo(region[12].NextIP));
+            });
             Assert.That(access.Parameters[0].ParameterType, Is.TypeOf<Cpp2IL.Core.Model.Contexts.SzArrayTypeAnalysisContext>());
             var expectedElement = (elementSize, unsigned) switch
             {
@@ -72,6 +86,20 @@ public class X86RuntimeBoundsThrowFixtureTests
                 calls.Select(instruction => instruction.IP).ToHashSet()), Is.Null);
             Assert.That(app.InstructionSet.GetIsilFromMethod(access).Select(instruction => instruction.OpCode),
                 Is.EqualTo(new[] { IsilOpCode.Move, IsilOpCode.Return }));
+            var appendedStore = X86Utils.Disassemble([0x89, 0x41, 0x24],
+                native[11].NextIP, false).Single();
+            var extended = native.Take(12).Append(appendedStore).ToArray();
+            Assert.That(X86ScalarArrayAccessProof.TryLift(access, extended), Is.Null,
+                "A side effect after the final call must not be hidden by a prefix-only proof.");
+            var interiorEntry = native[1].IP;
+            Assert.That(app.MethodsByAddress.ContainsKey(interiorEntry), Is.False);
+            app.MethodsByAddress.Add(interiorEntry, [access]);
+            try
+            {
+                Assert.That(X86ScalarArrayAccessProof.TryLift(access, native), Is.Null,
+                    "A second managed entry inside the native region changes its ownership.");
+            }
+            finally { app.MethodsByAddress.Remove(interiorEntry); }
             var wrongBranch = native.ToArray();
             wrongBranch[4].Code = Code.Ja_rel8_64;
             Assert.That(X86ScalarArrayAccessProof.TryProveShape(wrongBranch, isWrite, elementSize), Is.False);

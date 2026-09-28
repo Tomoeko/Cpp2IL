@@ -350,6 +350,14 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64RangeArrayReadRecovery.TryGenerate(methodContext,
+                    methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Range-indexed reference-array read IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64FieldBooleanArrayReadRecovery.TryGenerate(methodContext,
                     methodDefinition))
             {

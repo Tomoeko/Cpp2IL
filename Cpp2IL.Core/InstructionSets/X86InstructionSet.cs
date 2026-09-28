@@ -99,7 +99,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         if (X86DirectBooleanFieldGetterProof.TryLift(context, nativeInstructions) is { } booleanGetter)
             return booleanGetter; // The complete leaf binds a byte read to this method's own Boolean field.
         if (X86ScalarArrayAccessProof.TryLift(context, nativeInstructions) is { } arrayAccess)
-            return arrayAccess; // The closed proof includes both helper exits and the caller unwind region.
+            return arrayAccess; // Both helper exits and the complete file-backed caller unwind region are proved.
         if (X86FieldArrayAccessProof.TryLift(context, nativeInstructions) is { } fieldArrayAccess)
             return fieldArrayAccess; // The field read and both array exception exits are proved together.
         if (X86FieldBooleanArrayLiteralStoreProof.TryLift(context, nativeInstructions) is { } booleanArrayStore)

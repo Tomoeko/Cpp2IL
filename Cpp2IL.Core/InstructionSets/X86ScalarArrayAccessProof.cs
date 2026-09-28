@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Utils;
 using Iced.Intel;
 using LibCpp2IL;
 using LibCpp2IL.BinaryStructures;
@@ -101,9 +102,7 @@ internal static class X86ScalarArrayAccessProof
                 requireUniqueBinding: false) ||
             RuntimeNullGuardCoalescer.HasOutputOptions(context))
             return null;
-        var provedRegion = isSingleElement || isWordElement || isReferenceElement
-            ? TryCompleteTrapTerminatedRegion(app, context.UnderlyingPointer, body)
-            : body;
+        var provedRegion = TryCompleteTrapTerminatedRegion(app, context.UnderlyingPointer, body);
         if (provedRegion == null ||
             X86RuntimeNullThrowProof.TryIdentify(app, nullCall.NearBranchTarget) == null ||
             !X86RuntimeBoundsThrowProof.TryIdentify(app, boundsCall.NearBranchTarget) ||
@@ -181,34 +180,52 @@ internal static class X86ScalarArrayAccessProof
     internal static IReadOnlyList<Instruction>? TryCompleteTrapTerminatedRegion(ApplicationAnalysisContext app,
         ulong entry, IReadOnlyList<Instruction> body, int terminalCallIndex = 11)
     {
-        if (terminalCallIndex is not (11 or 12) || body.Count <= terminalCallIndex)
+        if (terminalCallIndex is not (11 or 12) || body.Count <= terminalCallIndex ||
+            body[0].IP != entry)
             return null;
         // The exact native region has one INT3 after the proved nonreturning bounds call.
         // X86Utils may stop before that byte or decode onward through alignment into the next
         // function. Reconstruct the complete unwind region from file-backed player bytes.
         var trapAddress = body[terminalCallIndex].NextIP;
-        if (trapAddress == ulong.MaxValue || app.Binary is not PE pe ||
-            !pe.TryMapVirtualAddressToRaw(trapAddress, out var raw))
+        if (trapAddress == ulong.MaxValue || app.Binary is not PE pe)
             return null;
         var end = trapAddress + 1;
+        // A longer span cannot decode to the expected instruction count: x86
+        // instructions are at most 15 bytes each.
+        if (end <= entry || end - entry > (ulong)(15 * (terminalCallIndex + 2)))
+            return null;
+        var regionLength = (int)(end - entry);
         var unwind = X64UnwindProof.ForApplication(app);
         var span = unwind?.ClassifySpan(entry, end);
         if (span is not { Kind: X64UnwindProof.SpanKind.HandlerFree } ||
             span.Value.Start != entry || span.Value.RootStart != entry || span.Value.End != end ||
             !unwind!.MatchesUnwind(entry, end, 4, 0, [4, 0x42]))
             return null;
+
+        var nextEntry = app.GetAddressOfNextFunctionStart(entry);
+        if ((nextEntry != 0 && nextEntry < end) ||
+            Enumerable.Range(1, regionLength - 1).Any(offset =>
+                app.MethodsByAddress.ContainsKey(entry + (ulong)offset)))
+            return null;
+
+        var first = pe.MapVirtualAddressToRaw(entry, false);
         var bytes = pe.GetRawBinaryContent();
-        if (raw < 0 || raw >= bytes.Length || bytes[(int)raw] != 0xCC)
+        if (first < 0 || first > bytes.Length - regionLength)
             return null;
-        var decoder = Decoder.Create(64, new ByteArrayCodeReader([0xCC]), trapAddress);
-        var trap = decoder.Decode();
-        if (trap.Code != Code.Int3 || trap.IP != trapAddress || trap.NextIP != end ||
+        var exactBytes = bytes.Slice(checked((int)first), regionLength);
+        if (!X64AncestorConstructorThunkProof.FileBackedExecutable(pe, unwind, exactBytes, entry))
+            return null;
+
+        var decoded = X86Utils.Disassemble(exactBytes, entry, false);
+        if (decoded.Count != terminalCallIndex + 2 ||
+            !decoded.Take(terminalCallIndex + 1).SequenceEqual(body.Take(terminalCallIndex + 1)) ||
+            decoded[terminalCallIndex + 1].Code != Code.Int3 ||
+            decoded[terminalCallIndex + 1].IP != trapAddress ||
+            decoded[terminalCallIndex + 1].NextIP != end ||
             body.Count > terminalCallIndex + 1 && body[terminalCallIndex + 1].IP < end &&
-            (body[terminalCallIndex + 1].IP != trapAddress ||
-             body[terminalCallIndex + 1].Code != Code.Int3 ||
-             body[terminalCallIndex + 1].NextIP != end))
+            !body[terminalCallIndex + 1].Equals(decoded[terminalCallIndex + 1]))
             return null;
-        return body.Take(terminalCallIndex + 1).Append(trap).ToArray();
+        return decoded.ToArray();
     }
 
     internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4,
