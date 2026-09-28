@@ -87,10 +87,7 @@ internal static class X86FieldBooleanArrayLiteralStoreProof
                     NumMods: 0, Byref: 0, Pinned: 0 } ||
             matched.FieldType is not SzArrayTypeAnalysisContext { ElementType: var element } ||
             !ReferenceEquals(element, app.SystemTypes.SystemBooleanType) ||
-            !NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(
-                new FieldReference(matched,
-                    new LocalVariable("proved-owner", new ManagedRegister(null, "rcx"), owner),
-                    shape.FieldOffset)))
+            !HasProvedFieldLayout(matched, owner, shape.FieldOffset))
             return null;
 
         var body = X64Stack28BodyProof.Read(method, 13, 96);
@@ -103,6 +100,15 @@ internal static class X86FieldBooleanArrayLiteralStoreProof
             return null;
 
         return new Evidence(matched, shape.Value);
+    }
+
+    private static bool HasProvedFieldLayout(FieldAnalysisContext field,
+        TypeAnalysisContext owner, int offset)
+    {
+        var access = new FieldReference(field,
+            new LocalVariable("proved-owner", new ManagedRegister(null, "rcx"), owner), offset);
+        return NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access) ||
+               NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayoutWithFieldlessConstructedBase(access);
     }
 
     internal sealed record Shape(int FieldOffset, bool Value);

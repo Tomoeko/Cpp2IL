@@ -25,10 +25,25 @@ internal static class X86CallerExceptionRegionProof
             : Check(body, context.UnderlyingPointer, provedNoReturnCallIPs, index.ClassifySpan);
     }
 
+    // A caller-specific proof may bind one terminal indirect jump to a managed
+    // target and its ABI. This entry point still checks every reachable native
+    // instruction, leaf-frame write and unwind region before accepting the exit.
+    internal static string? CheckProvedTerminalIndirectBranch(MethodAnalysisContext context,
+        IReadOnlyList<Instruction> body, ulong tailIp)
+    {
+        var app = context.AppContext;
+        var index = X64UnwindProof.ForApplication(app);
+        return index == null
+            ? Reject("the native unwind directory is malformed or unavailable")
+            : Check(body, context.UnderlyingPointer, new HashSet<ulong>(),
+                index.ClassifySpan, tailIp);
+    }
+
     // The classifier is independently responsible for PE bounds, unwind format and handler
     // flags. This overload isolates native reachability and leaf-frame rules in regressions.
     internal static string? Check(IReadOnlyList<Instruction> body, ulong entry, ISet<ulong> provedNoReturnCallIPs,
-        Func<ulong, ulong, X64UnwindProof.SpanClassification> classify)
+        Func<ulong, ulong, X64UnwindProof.SpanClassification> classify,
+        ulong? provedTerminalIndirectBranchIp = null)
     {
         if (body.Count == 0 || body[0].IP != entry)
             return Reject("the decoded entry is missing");
@@ -120,6 +135,11 @@ internal static class X86CallerExceptionRegionProof
                 case FlowControl.Call:
                 case FlowControl.IndirectCall:
                     pending.Push(instruction.NextIP);
+                    break;
+                case FlowControl.IndirectBranch:
+                    if (address != provedTerminalIndirectBranchIp ||
+                        instruction.NextIP != end || instruction.Op0Kind != OpKind.Memory)
+                        return Reject("native control flow has an unproved exit");
                     break;
                 default:
                     return Reject("native control flow has an unproved exit");

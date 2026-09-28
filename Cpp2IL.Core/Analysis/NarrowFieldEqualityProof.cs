@@ -100,6 +100,19 @@ internal static class NarrowFieldEqualityProof
                    field.DeclaringType.AppContext.Binary.PointerSizeBytes * 8, true);
     }
 
+    // Constructed instances do not project their inherited fields in the model.
+    // This path is only for a separately proved complete Boolean[] store whose
+    // immediate generic base definition is fieldless and whose remaining chain
+    // and sibling fields have exact, nonoverlapping metadata offsets.
+    internal static bool HasUnchangedReferenceFieldLayoutWithFieldlessConstructedBase(
+        FieldReference reference)
+    {
+        var field = reference.Field;
+        return !field.FieldType.IsValueType &&
+               HasUnchangedFieldLayout(reference,
+                   field.DeclaringType.AppContext.Binary.PointerSizeBytes * 8, true, true);
+    }
+
     internal static bool HasUnchangedFieldLayout(FieldReference reference, int width)
         => HasUnchangedFieldLayout(reference, width, false);
 
@@ -208,8 +221,8 @@ internal static class NarrowFieldEqualityProof
                (definition.Attributes & TypeAttributes.LayoutMask) != TypeAttributes.ExplicitLayout &&
                ReferenceEquals(definition.BaseType, definition.DefaultBaseType) &&
                definition.BaseType != null &&
-               definition.Fields.All(field => field.IsStatic ||
-                   (field.Attributes & FieldAttributes.Literal) != 0);
+               definition.Fields.All(field => field.Attributes == field.DefaultAttributes &&
+                   (field.IsStatic || (field.Attributes & FieldAttributes.Literal) != 0));
     }
 
     internal static bool HasExactStorageWidth(TypeAnalysisContext type, int width) => width switch

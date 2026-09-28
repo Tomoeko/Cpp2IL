@@ -73,13 +73,15 @@ internal static class X64GenericBaseConstructorProof
             return null;
 
         method.EnsureRawBytes();
-        var native = X86Utils.Iterate(method).TakeWhile(instruction => instruction.IP < span.End).ToArray();
+        var decoded = X86Utils.Iterate(method).ToArray();
+        var native = decoded.TakeWhile(instruction => instruction.IP < span.End).ToArray();
         var first = pe.MapVirtualAddressToRaw(span.Start, false);
         var last = pe.MapVirtualAddressToRaw(span.End - 1, false);
-        if (method.RawBytes.Length != 57 || native.Length != 13 ||
+        if (method.RawBytes.Length < 57 || native.Length != 13 ||
             first < 0 || last - first != 56 || last >= pe.GetRawBinaryContent().Length ||
             !pe.GetRawBinaryContent().Slice(checked((int)first), 57)
-                .SequenceEqual(method.RawBytes.AsSpan()) ||
+                .SequenceEqual(method.RawBytes.AsSpan().Slice(0, 57)) ||
+            !HasBoundedMetadataTail(method, decoded, span.End, unwind) ||
             native[0].IP != span.Start || native[^1].NextIP != span.End ||
             native.Any(instruction => instruction.IsInvalid || instruction.CodeSize != CodeSize.Code64 ||
                 instruction.HasLockPrefix || instruction.HasRepPrefix ||
@@ -89,7 +91,7 @@ internal static class X64GenericBaseConstructorProof
             Enumerable.Range(0, 57).Any(offset =>
                 !unwind.IsExecutableRva(checked((uint)(span.Start + (ulong)offset - unwind.ImageBase))) ||
                 pe.MapVirtualAddressToRaw(span.Start + (ulong)offset, false) != first + offset) ||
-            Enumerable.Range(1, 56).Any(offset =>
+            Enumerable.Range(1, method.RawBytes.Length == 57 ? 56 : 63).Any(offset =>
                 app.MethodsByAddress.ContainsKey(span.Start + (ulong)offset)) ||
             !X64NativePaddingProof.HasInt3Padding(pe, span.End, span.Start + 64) ||
             !TryProveShape(native, out var shape) ||
@@ -146,6 +148,23 @@ internal static class X64GenericBaseConstructorProof
         {
             return null;
         }
+    }
+
+    private static bool HasBoundedMetadataTail(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> decoded, ulong end, X64UnwindProof.Index unwind)
+    {
+        if (method.RawBytes.Length == 57)
+            return true;
+        // The metadata span can include trap alignment and another method.
+        // Its authenticated unwind end and a fresh .pdata entry must separate
+        // the tail jump from every byte beyond the 57-byte managed body.
+        if (method.RawBytes.Length <= 64 || end > ulong.MaxValue - 7)
+            return false;
+        var next = decoded.FirstOrDefault(instruction => instruction.IP == end + 7);
+        return !next.IsInvalid && next.IP == end + 7 &&
+               next.NextIP > next.IP &&
+               next.NextIP - method.UnderlyingPointer <= (ulong)method.RawBytes.Length &&
+               unwind.HasFunctionEntryAt(next.IP, next.NextIP);
     }
 
     internal static bool TryProveShape(IReadOnlyList<NativeInstruction> body, out Shape shape)

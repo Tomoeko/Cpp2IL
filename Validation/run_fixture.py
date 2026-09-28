@@ -19,6 +19,7 @@ import reference_array
 import exception_regions
 import field_array
 import field_boolean_array
+import constructed_base_boolean_array
 import float_forward_store
 import nested_single_getter
 import fixed_reference_array
@@ -82,7 +83,9 @@ import word_array
 import word_fields
 import zero_arg_field_call
 import boolean_tail_field_call
+import unsealed_zero_store
 import virtual_string_call
+import virtual_tail_dispatch
 import generic_dispatch
 import guarded_sink
 import folded_state_constructor
@@ -101,6 +104,7 @@ PROFILES = {
     "array-sequence": {"assembly": "ArraySequenceFixture", "source": VALIDATION / "ArraySequenceFixture", "methods": 2},
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "field-boolean-array": {"assembly": "BooleanFieldArrayFixture", "source": VALIDATION / "BooleanFieldArrayFixture", "methods": 3},
+    "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 4},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 6},
     "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 4},
@@ -149,6 +153,8 @@ PROFILES = {
                                               ("RuntimeCastConcatFixture.INodeOwner", "set_Current")}},
     "static-literal-concat": {"assembly": "StaticLiteralConcatFixture", "source": VALIDATION / "StaticLiteralConcatFixture", "methods": 1},
     "throw-only": {"assembly": "ThrowOnlyFixture", "source": VALIDATION / "ThrowOnlyFixture", "methods": 6},
+    "virtual-tail-dispatch": {"assembly": "VirtualTailDispatchFixture",
+                              "source": VALIDATION / "VirtualTailDispatchFixture", "methods": 5},
     "metadata-guard-move": {"assembly": "MetadataGuardMoveFixture", "source": VALIDATION / "MetadataGuardMoveFixture", "methods": 3},
     "metadata-guard-parameter": {"assembly": "MetadataGuardParameterFixture", "source": VALIDATION / "MetadataGuardParameterFixture", "methods": 1},
     "metadata-forwarding": {"assembly": "MetadataForwardingFixture", "source": VALIDATION / "MetadataForwardingFixture", "methods": 5},
@@ -166,6 +172,8 @@ PROFILES = {
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 8},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
+    "unsealed-zero-store": {"assembly": "UnsealedZeroStoreFixture",
+                            "source": VALIDATION / "UnsealedZeroStoreFixture", "methods": 3},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
     "struct-forward-call": {"assembly": "StructForwardCallFixture", "source": VALIDATION / "StructForwardCallFixture", "methods": 5},
     "struct-static-forward-call": {"assembly": "StructStaticForwardCallFixture", "source": VALIDATION / "StructStaticForwardCallFixture", "methods": 6},
@@ -234,6 +242,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return field_array.verify(path, stage, VERSION)
     if profile == "field-boolean-array":
         return field_boolean_array.verify(path, stage, VERSION)
+    if profile == "constructed-base-boolean-array":
+        return constructed_base_boolean_array.verify(path, stage, VERSION)
     if profile == "narrow-array":
         return narrow_array.verify(path, stage, VERSION)
     if profile == "nested-boolean-store":
@@ -322,6 +332,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return static_literal_concat.verify(path, stage, VERSION)
     if profile == "throw-only":
         return throw_only.verify(path, stage, VERSION)
+    if profile == "virtual-tail-dispatch":
+        return virtual_tail_dispatch.verify(path, stage, VERSION)
     if profile == "metadata-guard-move":
         return metadata_guard_move.verify(path, stage, VERSION)
     if profile == "metadata-guard-parameter":
@@ -348,6 +360,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return zero_arg_field_call.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":
         return boolean_tail_field_call.verify(path, stage, VERSION)
+    if profile == "unsealed-zero-store":
+        return unsealed_zero_store.verify(path, stage, VERSION)
     if profile == "forwarded-argument":
         return forwarded_argument.verify(path, stage, VERSION)
     if profile == "struct-forward-call":

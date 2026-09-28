@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
 using Iced.Intel;
@@ -71,8 +70,7 @@ internal static class X86GuardedZeroStoreProof
                 (definition.InternalParameterData?.Length ?? 0) != 0 ||
                 method.DeclaringType.IsGenericInstance ||
                 method.DeclaringType.GenericParameters.Count != 0 ||
-                method.DeclaringType.Attributes != method.DeclaringType.DefaultAttributes ||
-                (method.DeclaringType.Attributes & TypeAttributes.Sealed) == 0)
+                method.DeclaringType.Attributes != method.DeclaringType.DefaultAttributes)
                 return null;
             var parents = method.DeclaringType.Fields.Where(field => !field.IsStatic &&
                 field.Offset == shape.ReceiverOffset &&
@@ -93,7 +91,6 @@ internal static class X86GuardedZeroStoreProof
         if (box.Definition is not { GenericContainer: null } ||
             box.IsGenericInstance || box.GenericParameters.Count != 0 ||
             box.Attributes != box.DefaultAttributes ||
-            (box.Attributes & TypeAttributes.Sealed) == 0 ||
             !ISIL.NullCheckedCall.IsReferenceClass(box))
             return null;
 
@@ -107,6 +104,11 @@ internal static class X86GuardedZeroStoreProof
             raw.Type == rawType).ToArray();
         var call = body[shape.CallIndex];
         if (fields is not [{ } storeField] ||
+            !NarrowFieldEqualityProof.HasUnchangedFieldLayout(
+                new IsilFieldReference(storeField,
+                    new IsilLocalVariable("native-store-receiver",
+                        new IsilRegister(null, shape.ReceiverOffset is null ? "rcx" : "rax"), box),
+                    (int)storeField.Offset), shape.StoreWidth * 8) ||
             X86RuntimeNullThrowProof.TryIdentify(app, call.NearBranchTarget) == null ||
             X86CallerExceptionRegionProof.Check(method, body, new HashSet<ulong> { call.IP }) != null)
             return null;

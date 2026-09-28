@@ -186,18 +186,51 @@ internal static class X64ObjectConstructorThunkProof
                 NumMods: 0, Byref: 0, Pinned: 0 } } definition &&
         ReferenceEquals(definition.DeclaringType, owner.Definition) &&
         (definition.InternalParameterData?.Length ?? 0) == 0 &&
-        owner.Definition is { GenericContainer: null,
+        owner.Definition is {
             RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
                 NumMods: 0, Byref: 0, Pinned: 0 } } &&
         owner.Attributes == owner.DefaultAttributes &&
         owner.Name == owner.DefaultName && owner.Namespace == owner.DefaultNamespace &&
-        owner.GenericParameters.Count == 0 && !owner.IsGenericInstance &&
+        !owner.IsGenericInstance &&
+        (owner.Definition.GenericContainer == null && owner.GenericParameters.Count == 0 ||
+         HasFieldlessGenericObjectOwner(owner, app)) &&
         owner.BaseType is { } baseType && NullCheckedCall.IsReferenceClass(baseType) &&
         !RuntimeNullGuardCoalescer.HasOutputOptions(method) &&
-        RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,
-            requireUniqueBinding: false) &&
+        HasUnchangedConstructorBinding(method, owner, app) &&
         method.UnderlyingPointer != 0 &&
         (method.RawBytes.Length == 7 || allowOverlong && method.RawBytes.Length > 7);
+
+    private static bool HasUnchangedConstructorBinding(MethodAnalysisContext method,
+        TypeAnalysisContext owner, ApplicationAnalysisContext app)
+    {
+        if (owner.Definition?.GenericContainer == null)
+            return RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,
+                requireUniqueBinding: false);
+        // The generic definition's constructor can share a native thunk with
+        // many MethodDefs. Its own unchanged MethodDef, declaring type, and
+        // exact bound address establish the managed identity for this entry.
+        return ReferenceEquals(method.Definition?.DeclaringType, owner.Definition) &&
+               method.Definition is { GenericContainer: null, parameterCount: 0,
+                   RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
+                       NumMods: 0, Byref: 0, Pinned: 0 } } &&
+               (method.Definition.InternalParameterData?.Length ?? 0) == 0 &&
+               method.UnderlyingPointer != 0 &&
+               app.MethodsByAddress.TryGetValue(method.UnderlyingPointer, out var aliases) &&
+               aliases.Count(candidate => ReferenceEquals(candidate, method)) == 1;
+    }
+
+    private static bool HasFieldlessGenericObjectOwner(TypeAnalysisContext owner,
+        ApplicationAnalysisContext app) =>
+        owner.Definition is { GenericContainer: not null, HasCctor: false,
+            PackingSizeIsDefault: true, ClassSizeIsDefault: true } &&
+        owner.GenericParameters.Count > 0 &&
+        ReferenceEquals(owner.BaseType, app.SystemTypes.SystemObjectType) &&
+        ReferenceEquals(owner.BaseType, owner.DefaultBaseType) &&
+        owner.InterfaceContexts.Count == 0 &&
+        owner.Methods.Count(candidate => candidate.Name == ".ctor") == 1 &&
+        owner.Methods.All(candidate => candidate.Name != ".cctor") &&
+        owner.Fields.All(field => field.Attributes == field.DefaultAttributes &&
+            (field.IsStatic || (field.Attributes & FieldAttributes.Literal) != 0));
 
     private static bool FileBacked(PE pe, ulong start, ulong end)
     {
