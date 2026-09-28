@@ -27,6 +27,7 @@ import float_forward_store
 import nested_single_getter
 import fixed_reference_array
 import folded_reference_array
+import owner_indexed_enum_array
 import inherited_reference_array_read
 import fixed_scalar_array
 import array_element_store
@@ -91,6 +92,8 @@ import zero_arg_field_call
 import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
+import call_result_false_tail
+import dual_result_tail_guard
 import ordered_call_tail_guard
 import ordered_noarg_tail_guard
 import unsealed_zero_store
@@ -129,6 +132,8 @@ PROFILES = {
     "nested-single-getter": {"assembly": "NestedSingleGetterFixture", "source": VALIDATION / "NestedSingleGetterFixture", "methods": 3},
     "fixed-reference-array": {"assembly": "FixedReferenceArrayFixture", "source": VALIDATION / "FixedReferenceArrayFixture", "methods": 5},
     "folded-reference-array": {"assembly": "FoldedReferenceArrayFixture", "source": VALIDATION / "FoldedReferenceArrayFixture", "methods": 7},
+    "owner-indexed-enum-array": {"assembly": "OwnerIndexedEnumArrayFixture",
+                                  "source": VALIDATION / "OwnerIndexedEnumArrayFixture", "methods": 4},
     "inherited-reference-array-read": {"assembly": "InheritedReferenceArrayReadFixture",
                                        "source": VALIDATION / "InheritedReferenceArrayReadFixture", "methods": 6},
     "fixed-scalar-array": {"assembly": "FixedScalarArrayFixture", "source": VALIDATION / "FixedScalarArrayFixture", "methods": 3},
@@ -207,6 +212,10 @@ PROFILES = {
                                   "source": VALIDATION / "CallResultBooleanStoreFixture", "methods": 6},
     "call-result-tail-guard": {"assembly": "CallResultTailGuardFixture",
                                "source": VALIDATION / "CallResultTailGuardFixture", "methods": 5},
+    "call-result-false-tail": {"assembly": "CallResultFalseTailFixture",
+                               "source": VALIDATION / "CallResultFalseTailFixture", "methods": 7},
+    "dual-result-tail-guard": {"assembly": "DualResultTailGuardFixture",
+                               "source": VALIDATION / "DualResultTailGuardFixture", "methods": 12},
     "ordered-call-tail-guard": {"assembly": "OrderedCallTailGuardFixture",
                                  "source": VALIDATION / "OrderedCallTailGuardFixture", "methods": 9,
                                  "noManagedBody": {("OrderedCallTailGuardFixture.GuardBase", "Forward")}},
@@ -349,6 +358,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return fixed_reference_array.verify(path, stage, VERSION)
     if profile == "folded-reference-array":
         return folded_reference_array.verify(path, stage, VERSION)
+    if profile == "owner-indexed-enum-array":
+        return owner_indexed_enum_array.verify(path, stage, VERSION)
     if profile == "inherited-reference-array-read":
         return inherited_reference_array_read.verify(path, stage, VERSION)
     if profile == "field-boolean-array-read":
@@ -427,6 +438,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return call_result_boolean_store.verify(path, stage, VERSION)
     if profile == "call-result-tail-guard":
         return call_result_tail_guard.verify(path, stage, VERSION)
+    if profile == "call-result-false-tail":
+        return call_result_false_tail.verify(path, stage, VERSION)
+    if profile == "dual-result-tail-guard":
+        return dual_result_tail_guard.verify(path, stage, VERSION)
     if profile == "ordered-call-tail-guard":
         return ordered_call_tail_guard.verify(path, stage, VERSION)
     if profile == "ordered-noarg-tail-guard":

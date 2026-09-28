@@ -90,7 +90,7 @@ internal static class X64ScalarWrapperStaticConstructorProof
                     pe, unwind, shape.TypeInfoSlot, 8) ||
                 app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata !=
                     shape.Initializer ||
-                !X64MetadataInitializationHelperProof.TryIdentify(
+                !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(
                     app, pe, unwind, shape.Initializer) ||
                 app.LibCpp2IlContext.GetRawTypeGlobalByAddress(shape.TypeInfoSlot) is not
                     { Type: MetadataUsageType.TypeInfo, IsValid: true } usage ||
