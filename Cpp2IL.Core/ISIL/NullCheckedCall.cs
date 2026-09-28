@@ -60,10 +60,10 @@ internal static class NullCheckedCall
         (type.Type is Il2CppTypeEnum.IL2CPP_TYPE_CLASS or Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or Il2CppTypeEnum.IL2CPP_TYPE_STRING) &&
         type.Attributes == type.DefaultAttributes && ReferenceEquals(type.BaseType, type.DefaultBaseType);
 
-    private static bool HasUnchangedReferenceBase(TypeAnalysisContext? receiver, TypeAnalysisContext owner)
+    internal static bool HasUnchangedReferenceBase(TypeAnalysisContext? receiver, TypeAnalysisContext owner)
     {
-        // A nonvirtual call to a base method still uses the derived receiver's null check.
-        // Follow only original, ordinary class inheritance; changed bases or cycles are not evidence.
+        // A base member still uses the derived receiver's null check. Follow only original,
+        // ordinary class inheritance; changed bases or cycles are not evidence.
         var seen = new System.Collections.Generic.HashSet<TypeAnalysisContext>();
         for (var type = receiver; type != null && seen.Add(type); type = type.BaseType)
         {

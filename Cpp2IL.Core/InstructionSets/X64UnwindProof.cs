@@ -155,6 +155,19 @@ internal static class X64UnwindProof
             return new(SpanKind.NoEntry, start, end);
         }
 
+        // A following function can have exception handling or unwind operations
+        // outside this reader's supported set. Its validated .pdata start still
+        // separates it from an earlier leaf and its trap padding. This proves
+        // only the boundary, never the following function's behavior.
+        internal bool HasFunctionEntryAt(ulong start, ulong firstInstructionEnd)
+        {
+            if (!TryRange(start, firstInstructionEnd, out var rva, out var endRva))
+                return false;
+            var index = Find(rva);
+            return index < _functions.Length && _functions[index].Start == rva &&
+                   endRva <= _functions[index].End;
+        }
+
         internal HandlerInfo? GetHandler(ulong entry)
         {
             if (entry == ulong.MaxValue || !TryRange(entry, entry + 1, out var rva, out _))

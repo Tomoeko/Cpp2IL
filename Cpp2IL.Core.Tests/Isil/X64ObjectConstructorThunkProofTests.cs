@@ -14,6 +14,57 @@ public class X64ObjectConstructorThunkProofTests
 {
     [Test]
     [NonParallelizable]
+    public void ExactPlayerBoundsEmptyThunkBeforeUnsupportedNeighborUnwind()
+    {
+        var directory = Environment.GetEnvironmentVariable(
+            "CPP2IL_FIXED_SCALAR_ARRAY_EMPTY_CTOR_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_FIXED_SCALAR_ARRAY_EMPTY_CTOR_INPUT to the neutral empty-constructor player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data",
+            "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata,
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var constructor = app.GetAssemblyByName("FixedScalarArrayFixture")!.Types
+                .Single(type => type.Name == "ScalarCatalog").Methods
+                .Single(method => method.Name == ".ctor");
+            constructor.EnsureRawBytes();
+            var decoded = X86Utils.Iterate(constructor).ToArray();
+            Assert.That(constructor.RawBytes.Length, Is.GreaterThan(16));
+            Assert.That(decoded[2].Code, Is.EqualTo(Code.Int3));
+            var next = Array.FindIndex(decoded, 2, instruction =>
+                instruction.Code != Code.Int3);
+            Assert.That(next, Is.GreaterThan(2));
+            var unwind = X64UnwindProof.ForApplication(app)!;
+            Assert.That(unwind.ClassifySpan(decoded[next].IP,
+                decoded[next].NextIP).Kind,
+                Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+            Assert.That(unwind.HasFunctionEntryAt(decoded[next].IP,
+                decoded[next].NextIP), Is.True);
+            Assert.That(X64ObjectConstructorThunkProof.Find(constructor, decoded)!
+                .DeclaringType, Is.SameAs(app.SystemTypes.SystemObjectType));
+
+            var shiftedEntry = decoded.ToArray();
+            shiftedEntry[next].IP++;
+            Assert.That(X64ObjectConstructorThunkProof.Find(constructor,
+                shiftedEntry), Is.Null);
+            var changedPadding = decoded.ToArray();
+            changedPadding[next - 1].Code = Code.Nopd;
+            Assert.That(X64ObjectConstructorThunkProof.Find(constructor,
+                changedPadding), Is.Null);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    [NonParallelizable]
     public void ExactPlayerPreservesEachImmediateBaseInFoldedConstructorChain()
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_LITERAL_CONCAT_FIXTURE_INPUT");

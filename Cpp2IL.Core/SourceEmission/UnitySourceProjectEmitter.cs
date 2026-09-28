@@ -6,6 +6,7 @@ using System.Text;
 using AsmResolver;
 using AsmResolver.DotNet;
 using AsmResolver.DotNet.Signatures;
+using AsmResolver.PE.DotNet.Metadata.Tables;
 using Cpp2IL.Core.Reporting;
 using Cpp2IL.Core.Utils.AsmResolver;
 using ICSharpCode.Decompiler;
@@ -89,6 +90,8 @@ public static class UnitySourceProjectEmitter
                 {
                     foreach (var field in type.Fields.Where(f => f.HasFieldMarshal && f.MarshalDescriptor == null))
                         report.Diagnostics.Add($"SOURCE004: {name}: {field.FullName}: Field marshaling metadata is unresolved; no MarshalAs value was invented.");
+                    foreach (var property in type.Properties.Where(property => !AccessorsMatchPropertySignature(property)))
+                        report.Diagnostics.Add($"SOURCE013: {name}: {property.FullName}: Property and accessor signatures disagree or an accessor is missing; source declaration fidelity is unresolved.");
                     foreach (var method in type.Methods)
                     {
                         foreach (var parameter in method.ParameterDefinitions.Where(p => p.HasFieldMarshal && p.MarshalDescriptor == null))
@@ -265,6 +268,34 @@ public static class UnitySourceProjectEmitter
             report.WriteJson(Path.Combine(outputDirectory, "source-emission-report.json"));
         }
         return report;
+    }
+
+    internal static bool AccessorsMatchPropertySignature(PropertyDefinition property)
+    {
+        var signature = property.Signature;
+        if (signature == null)
+            return false;
+
+        var comparer = new SignatureComparer(SignatureComparisonFlags.ExactVersion);
+        var getter = property.GetMethod?.Signature;
+        var setter = property.SetMethod?.Signature;
+        if (getter == null && setter == null)
+            return false;
+        if (getter != null && (getter.HasThis != signature.HasThis ||
+                              !comparer.Equals(getter.ReturnType, signature.ReturnType) ||
+                              !comparer.Equals(getter.ParameterTypes, signature.ParameterTypes)))
+            return false;
+        if (setter == null)
+            return true;
+        if (setter.HasThis != signature.HasThis || setter.ReturnType.ElementType != ElementType.Void ||
+            setter.ParameterTypes.Count != signature.ParameterTypes.Count + 1 ||
+            !comparer.Equals(setter.ParameterTypes[^1], signature.ReturnType))
+            return false;
+
+        for (var index = 0; index < signature.ParameterTypes.Count; index++)
+            if (!comparer.Equals(setter.ParameterTypes[index], signature.ParameterTypes[index]))
+                return false;
+        return true;
     }
 
     public static bool IsTargetProvidedAssembly(string name) =>

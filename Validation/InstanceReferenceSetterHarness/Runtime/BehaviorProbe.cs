@@ -66,6 +66,14 @@ namespace RecoveryValidation
                 typeof(ReferenceCell).GetProperty("Value").PropertyType == typeof(object)));
             observations.Add(Row("declaration", "text-property-type",
                 typeof(TextCell).GetProperty("Value").PropertyType == typeof(string)));
+            var indexedProperty = typeof(IIndexedCell).GetProperty("Item");
+            var indexParameters = indexedProperty?.GetIndexParameters();
+            var setterParameters = indexedProperty?.GetSetMethod()?.GetParameters();
+            observations.Add(Row("declaration", "setter-only-indexer-signature",
+                indexedProperty?.PropertyType == typeof(string) &&
+                indexParameters?.Length == 1 && indexParameters[0].ParameterType == typeof(int) &&
+                setterParameters?.Length == 2 && setterParameters[0].ParameterType == typeof(int) &&
+                setterParameters[1].ParameterType == typeof(string)));
 
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             File.WriteAllText(path, ReportJson.Encode(new Dictionary<string, object>

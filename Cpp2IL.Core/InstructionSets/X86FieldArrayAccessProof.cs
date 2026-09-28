@@ -17,9 +17,10 @@ namespace Cpp2IL.Core.InstructionSets;
 /// </summary>
 internal static class X86FieldArrayAccessProof
 {
-    internal enum AccessKind { ReadFirst, ReadAt, WriteAt }
+    internal enum AccessKind { ReadFirst, ReadFixed, ReadAt, WriteAt }
 
-    internal sealed record Shape(AccessKind Kind, int FieldOffset, int NullCallIndex, int BoundsCallIndex);
+    internal sealed record Shape(AccessKind Kind, int FieldOffset, int NullCallIndex,
+        int BoundsCallIndex, int FixedIndex = 0);
 
     internal static List<ISIL.Instruction>? TryLift(MethodAnalysisContext method, IReadOnlyList<Instruction> body)
     {
@@ -29,9 +30,10 @@ internal static class X86FieldArrayAccessProof
         var array = new ISIL.Register(null, "field_array_value");
         var field = new ISIL.MemoryOperand(new ISIL.Register(null, "rcx"), null,
             evidence.Field.Offset);
+        var fixedRead = evidence.Shape.Kind is AccessKind.ReadFirst or AccessKind.ReadFixed;
         var element = new ISIL.MemoryOperand(array,
-            evidence.Shape.Kind == AccessKind.ReadFirst ? null : new ISIL.Register(null, "rdx"),
-            0x20, evidence.Shape.Kind == AccessKind.ReadFirst ? 0 : 4);
+            fixedRead ? null : new ISIL.Register(null, "rdx"),
+            0x20 + (fixedRead ? evidence.Shape.FixedIndex * 4 : 0), fixedRead ? 0 : 4);
         if (evidence.Shape.Kind == AccessKind.WriteAt)
             return
             [
@@ -75,6 +77,9 @@ internal static class X86FieldArrayAccessProof
                                       MethodImplAttributes.InternalCall)) != 0 ||
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
             body[0].IP != method.UnderlyingPointer ||
+            shape.Kind == AccessKind.ReadFixed &&
+            (X64Stack28BodyProof.Read(method, 12, 96) is not { } closed ||
+             !closed.SequenceEqual(body.Take(12))) ||
             !MatchesSignature(method, shape.Kind))
             return null;
 
@@ -116,7 +121,7 @@ internal static class X86FieldArrayAccessProof
         var app = method.AppContext;
         var expectedParameters = kind switch
         {
-            AccessKind.ReadFirst => 0,
+            AccessKind.ReadFirst or AccessKind.ReadFixed => 0,
             AccessKind.ReadAt => 1,
             AccessKind.WriteAt => 2,
             _ => -1,
@@ -169,18 +174,27 @@ internal static class X86FieldArrayAccessProof
             return null;
         if (first)
         {
+            if (body[4].Op1Kind is not
+                (OpKind.Immediate8 or OpKind.Immediate8to32 or OpKind.Immediate32))
+                return null;
+            var fixedIndex = body[4].GetImmediate(1);
             if (!Branch(body[3], Mnemonic.Je, body[9].IP) ||
                 body[4].Mnemonic != Mnemonic.Cmp || body[4].OpCount != 2 ||
                 !Memory(body[4], 0, Register.RAX, Register.None, 1, 0x18, 4) ||
-                body[4].Op1Kind is not (OpKind.Immediate8 or OpKind.Immediate8to32 or OpKind.Immediate32) ||
-                body[4].GetImmediate(1) != 0 ||
+                fixedIndex > 127 ||
                 !Branch(body[5], Mnemonic.Jbe, body[11].IP) ||
                 body[6].Code != Code.Mov_r32_rm32 ||
                 body[6].Op0Kind != OpKind.Register || body[6].Op0Register != Register.EAX ||
-                !Memory(body[6], 1, Register.RAX, Register.None, 1, 0x20, 4) ||
+                !Memory(body[6], 1, Register.RAX, Register.None, 1,
+                    0x20 + fixedIndex * 4, 4) ||
+                fixedIndex != 0 &&
+                (body[3].Code != Code.Je_rel8_64 ||
+                 body[4].Code != Code.Cmp_rm32_imm8 ||
+                 body[5].Code != Code.Jbe_rel8_64) ||
                 !SuccessAndExits(body, 7, 8, 9, 10, 11))
                 return null;
-            return new Shape(AccessKind.ReadFirst, fieldOffset, 9, 11);
+            return new Shape(fixedIndex == 0 ? AccessKind.ReadFirst : AccessKind.ReadFixed,
+                fieldOffset, 9, 11, checked((int)fixedIndex));
         }
 
         if (!Branch(body[3], Mnemonic.Je, body[10].IP) ||

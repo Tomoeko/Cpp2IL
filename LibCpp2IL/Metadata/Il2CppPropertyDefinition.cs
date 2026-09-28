@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using LibCpp2IL.BinaryStructures;
 using LibCpp2IL.Reflection;
@@ -37,9 +38,17 @@ public class Il2CppPropertyDefinition : ReadableClass, IIl2CppTokenProvider
 
     public Il2CppMethodDefinition? Setter => set.IsNull || DeclaringType == null ? null : OwningContext.Metadata.GetMethodDefinitionFromIndex(DeclaringType.FirstMethodIdx + set);
 
-    public Il2CppTypeReflectionData? PropertyType => Getter == null ? Setter!.Parameters![0].Type : Getter!.ReturnType;
+    public Il2CppTypeReflectionData? PropertyType => Getter == null ? GetSetterValueParameter(Setter?.Parameters).Type : Getter.ReturnType;
 
-    public Il2CppType? RawPropertyType => Getter == null ? Setter!.Parameters![0].RawType : Getter!.RawReturnType;
+    public Il2CppType? RawPropertyType => Getter == null ? GetSetterValueParameter(Setter?.Parameters).RawType : Getter.RawReturnType;
+
+    internal static Il2CppParameterReflectionData GetSetterValueParameter(Il2CppParameterReflectionData[]? parameters)
+    {
+        if (parameters is not { Length: > 0 })
+            throw new InvalidDataException("A property setter has no value parameter.");
+
+        return parameters[^1];
+    }
 
     public bool IsStatic => Getter == null ? Setter!.IsStatic : Getter!.IsStatic;
     public uint Token => token;

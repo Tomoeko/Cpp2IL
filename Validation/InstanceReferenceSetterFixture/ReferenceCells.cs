@@ -2,6 +2,11 @@ using System.Runtime.CompilerServices;
 
 namespace InstanceReferenceSetterFixture
 {
+    public interface IIndexedCell
+    {
+        string this[int index] { set; }
+    }
+
     public class ReferenceCell
     {
         public object Neighbor;

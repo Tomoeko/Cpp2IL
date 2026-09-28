@@ -46,7 +46,9 @@ internal static class RuntimeNullGuardCoalescer
                       !ReferenceEquals(Operation.Operands[1], StoredValue) ||
                       !ValidStoredValue(method)) ||
                 !ReferenceEquals(Access.Local, Receiver) ||
-                !ReferenceEquals(Access.Field, Field) || !ReferenceEquals(Receiver.Type, Owner) ||
+                !ReferenceEquals(Access.Field, Field) ||
+                !NullCheckedCall.HasUnchangedReferenceBase(Receiver.Type, Owner) ||
+                (StoredValue != null && !ReferenceEquals(Receiver.Type, Owner)) ||
                 !ReferenceEquals(Field.DeclaringType, Owner) ||
                 !NullCheckedCall.SameOrdinaryType(Field.FieldType, ValueType) ||
                 Field.Attributes != Attributes || Field.IsStatic || Access.Offset != Offset || Field.Offset != Offset ||
@@ -56,7 +58,7 @@ internal static class RuntimeNullGuardCoalescer
                 return StoredValue == null &&
                        ProvedNative64BitFieldRead(method, Access) is { } fieldRead &&
                        ValidFieldReceiver(method, fieldRead.ReceiverField);
-            return UnchangedParameter(method, Receiver, Owner);
+            return UnchangedParameter(method, Receiver, Receiver.Type!);
         }
 
         private bool ValidStoredValue(MethodAnalysisContext method) => StoredValue switch
@@ -80,14 +82,14 @@ internal static class RuntimeNullGuardCoalescer
         {
             if (receiverField == null)
                 return method.ParameterLocals.Contains(Receiver) &&
-                       UnchangedParameter(method, Receiver, Owner);
+                       UnchangedParameter(method, Receiver, Receiver.Type!);
             var definitions = method.ControlFlowGraph!.Instructions
                 .Where(instruction => ReferenceEquals(instruction.Destination, Receiver)).ToArray();
             if (definitions is not [{ OpCode: OpCode.Move, IntegerBitWidth: 0,
                     Operands: [LocalVariable destination, FieldReference source] }] ||
                 !ReferenceEquals(destination, Receiver) ||
                 !ReferenceEquals(source.Field, receiverField) ||
-                !ReferenceEquals(source.Field.FieldType, Owner) ||
+                !ReferenceEquals(source.Field.FieldType, Receiver.Type) ||
                 !source.Local.IsThis || !method.ParameterLocals.Contains(source.Local) ||
                 !ReferenceEquals(source.Local.Type, method.DeclaringType) ||
                 source.Offset != source.Field.Offset ||
@@ -387,7 +389,8 @@ internal static class RuntimeNullGuardCoalescer
                             Operands: [LocalVariable fieldDestination, FieldReference access] } &&
                         ReferenceEquals(access.Local, receiver) &&
                         receiver.Type != null && NullCheckedCall.IsReferenceClass(receiver.Type) &&
-                        ReferenceEquals(access.Field.DeclaringType, receiver.Type) &&
+                        NullCheckedCall.HasUnchangedReferenceBase(receiver.Type,
+                            access.Field.DeclaringType) &&
                         !access.Field.IsStatic && access.Offset >= 0 && access.Offset == access.Field.Offset &&
                         NullCheckedCall.SameOrdinaryType(fieldDestination.Type, access.Field.FieldType) &&
                         provesNativeField(access))

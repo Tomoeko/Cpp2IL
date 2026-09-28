@@ -113,6 +113,7 @@ internal static class NarrowFieldEqualityProof
     {
         var field = reference.Field;
         var owner = field.DeclaringType;
+        var receiver = reference.Local.Type;
         if (field.IsStatic || field.Attributes != field.DefaultAttributes ||
             (field.Attributes & (FieldAttributes.Literal | FieldAttributes.HasFieldMarshal)) != 0 ||
             field.BackingData?.Field.RawFieldType is not { NumMods: 0, Byref: 0, Pinned: 0 } ||
@@ -126,7 +127,9 @@ internal static class NarrowFieldEqualityProof
               field.FieldType.Type is (Il2CppTypeEnum.IL2CPP_TYPE_I or
                   Il2CppTypeEnum.IL2CPP_TYPE_U)) ||
             field.Offset < 2 * owner.AppContext.Binary.PointerSizeBytes || field.Offset != field.DefaultOffset || reference.Offset != field.Offset ||
-            !ReferenceEquals(reference.Local.Type, owner) || owner.IsValueType || owner.IsEnumType ||
+            (!ReferenceEquals(receiver, owner) &&
+             !NullCheckedCall.HasUnchangedReferenceBase(receiver, owner)) ||
+            owner.IsValueType || owner.IsEnumType ||
             owner is GenericInstanceTypeAnalysisContext || owner.GenericParameters.Count != 0 ||
             owner.Definition is not { PackingSizeIsDefault: true, ClassSizeIsDefault: true } ||
             owner.Attributes != owner.DefaultAttributes || (owner.Attributes & TypeAttributes.LayoutMask) == TypeAttributes.ExplicitLayout)
@@ -137,9 +140,21 @@ internal static class NarrowFieldEqualityProof
         var visited = new HashSet<TypeAnalysisContext>();
         var sawConstructedBase = false;
         var reachedObject = false;
-        for (var type = owner; type != null;)
+        var reachedOwner = false;
+        for (var type = receiver; type != null;)
         {
             if (!visited.Add(type))
+                return false;
+            // Every derived layout must preserve the inherited field's original offset
+            // without overlapping storage.
+            if (ReferenceEquals(type, owner))
+                reachedOwner = true;
+            else if (!reachedOwner &&
+                     (type.Attributes != type.DefaultAttributes ||
+                      !ReferenceEquals(type.BaseType, type.DefaultBaseType) ||
+                      type.Definition is not { PackingSizeIsDefault: true, ClassSizeIsDefault: true,
+                          RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS, NumMods: 0,
+                              Byref: 0, Pinned: 0 } }))
                 return false;
             if (type is GenericInstanceTypeAnalysisContext constructed)
             {
@@ -175,7 +190,7 @@ internal static class NarrowFieldEqualityProof
             }
             type = type.BaseType;
         }
-        return !allowFieldlessConstructedBase || (sawConstructedBase && reachedObject);
+        return reachedOwner && (!allowFieldlessConstructedBase || (sawConstructedBase && reachedObject));
     }
 
     private static bool HasUnchangedFieldlessGenericBase(GenericInstanceTypeAnalysisContext constructed)

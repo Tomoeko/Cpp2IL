@@ -1,0 +1,3 @@
+<linker>
+  <assembly fullname="InstanceReferenceSetterFixture" preserve="all" />
+</linker>

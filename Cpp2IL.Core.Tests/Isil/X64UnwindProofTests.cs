@@ -138,6 +138,24 @@ public class X64UnwindProofTests
     }
 
     [Test]
+    public void UnrelatedFunctionBoundaryDoesNotRequireItsUnwindSemantics()
+    {
+        var image = Image();
+        image[0x900] = 2; // Unsupported unwind version in the next function.
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.That(index.ClassifySpan(ImageBase + 0x1000,
+            ImageBase + 0x1001).Kind, Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+        Assert.That(index.HasFunctionEntryAt(ImageBase + 0x1000,
+            ImageBase + 0x1001), Is.True);
+        Assert.That(index.HasFunctionEntryAt(ImageBase + 0x1001,
+            ImageBase + 0x1002), Is.False);
+        Assert.That(index.HasFunctionEntryAt(ImageBase + 0x1000,
+            ImageBase + 0x1101), Is.False);
+        Assert.That(index.HasFunctionEntryAt(ImageBase + 0x1200,
+            ImageBase + 0x1201), Is.False);
+    }
+
+    [Test]
     public void ExactHandlerFreeChainNamesItsPrimaryFunction()
     {
         var index = X64UnwindProof.Parse(ChainImage())!;

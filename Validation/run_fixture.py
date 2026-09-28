@@ -21,8 +21,10 @@ import field_array
 import float_forward_store
 import nested_single_getter
 import fixed_reference_array
+import fixed_scalar_array
 import array_element_store
 import field_guard
+import inherited_field_guard
 import hashlib
 import json
 import os
@@ -102,6 +104,7 @@ PROFILES = {
     "float-forward-store": {"assembly": "FloatForwardStoreFixture", "source": VALIDATION / "FloatForwardStoreFixture", "methods": 5},
     "nested-single-getter": {"assembly": "NestedSingleGetterFixture", "source": VALIDATION / "NestedSingleGetterFixture", "methods": 3},
     "fixed-reference-array": {"assembly": "FixedReferenceArrayFixture", "source": VALIDATION / "FixedReferenceArrayFixture", "methods": 5},
+    "fixed-scalar-array": {"assembly": "FixedScalarArrayFixture", "source": VALIDATION / "FixedScalarArrayFixture", "methods": 3},
     "shared-abi": {"assembly": "SharedAbiFixture", "source": VALIDATION / "SharedAbiFixture", "methods": 15},
     "array-element-store": {"assembly": "ArrayElementStoreFixture", "source": VALIDATION / "ArrayElementStoreFixture", "methods": 4},
     "unused-reference-nested-store": {"assembly": "NestedFlagSetterFixture", "source": VALIDATION / "NestedFlagSetterFixture", "methods": 4},
@@ -122,7 +125,8 @@ PROFILES = {
     "static-word-getter": {"assembly": "StaticWordGetterFixture", "source": VALIDATION / "StaticWordGetterFixture", "methods": 2},
     "static-scalar-setter": {"assembly": "StaticScalarSetterFixture", "source": VALIDATION / "StaticScalarSetterFixture", "methods": 1},
     "instance-reference-property": {"assembly": "InstanceReferencePropertyFixture", "source": VALIDATION / "InstanceReferencePropertyFixture", "methods": 5},
-    "instance-reference-setter": {"assembly": "InstanceReferenceSetterFixture", "source": VALIDATION / "InstanceReferenceSetterFixture", "methods": 4},
+    "instance-reference-setter": {"assembly": "InstanceReferenceSetterFixture", "source": VALIDATION / "InstanceReferenceSetterFixture", "methods": 5,
+                                  "noManagedBody": {("InstanceReferenceSetterFixture.IIndexedCell", "set_Item")}},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
     "native-int-field": {"assembly": "NativeIntFieldFixture", "source": VALIDATION / "NativeIntFieldFixture", "methods": 3},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
@@ -154,6 +158,8 @@ PROFILES = {
     "composed-read": {"assembly": "ComposedReadFixture", "source": VALIDATION / "ComposedReadFixture", "methods": 4},
     "parameter-array": {"assembly": "ParameterArrayFixture", "source": VALIDATION / "ParameterArrayFixture", "methods": 3},
     "field-guard": {"assembly": "FieldGuardFixture", "source": VALIDATION / "FieldGuardFixture", "methods": 19},
+    "inherited-field-guard": {"assembly": "InheritedFieldGuardFixture",
+                              "source": VALIDATION / "InheritedFieldGuardFixture", "methods": 3},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 8},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
     "struct-forward-call": {"assembly": "StructForwardCallFixture", "source": VALIDATION / "StructForwardCallFixture", "methods": 5},
@@ -273,6 +279,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return nested_single_getter.verify(path, stage, VERSION)
     if profile == "fixed-reference-array":
         return fixed_reference_array.verify(path, stage, VERSION)
+    if profile == "fixed-scalar-array":
+        return fixed_scalar_array.verify(path, stage, VERSION)
     if profile == "array-element-store":
         return array_element_store.verify(path, stage, VERSION)
     if profile == "native-int-field":
@@ -327,6 +335,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return parameter_array.verify(path, stage, VERSION)
     if profile == "field-guard":
         return field_guard.verify(path, stage, VERSION)
+    if profile == "inherited-field-guard":
+        return inherited_field_guard.verify(path, stage, VERSION)
     if profile == "zero-arg-field-call":
         return zero_arg_field_call.verify(path, stage, VERSION)
     if profile == "forwarded-argument":

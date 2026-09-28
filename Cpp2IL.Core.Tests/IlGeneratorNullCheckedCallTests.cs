@@ -51,12 +51,7 @@ public partial class IlGeneratorParameterTests
     [Test]
     public void DerivedReceiverCanRetainBaseCallNullFailure()
     {
-        var derivedDefinition = new TypeDefinition("Synthetic", "Derived", AsmResolver.PE.DotNet.Metadata.Tables.TypeAttributes.Public | AsmResolver.PE.DotNet.Metadata.Tables.TypeAttributes.Class,
-            _type);
-        _module.TopLevelTypes.Add(derivedDefinition);
-        var derived = new InjectedTypeAnalysisContext(_typeContext.DeclaringAssembly, "Synthetic", "Derived",
-            _typeContext, System.Reflection.TypeAttributes.Public | System.Reflection.TypeAttributes.Class);
-        derived.PutExtraData("AsmResolverType", derivedDefinition);
+        var (derivedDefinition, derived) = AddDerivedClass();
         var fixture = CreateNullGuard(false, false, derived);
         Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.EqualTo(1));
         Assert.That(fixture.Call.CallSemantics, Is.EqualTo(CallSemantics.NullCheckedInstance));
@@ -74,16 +69,7 @@ public partial class IlGeneratorParameterTests
         Assert.That(fixture.Definition.CilMethodBody!.Instructions.Count(i => i.OpCode == CilOpCodes.Callvirt), Is.EqualTo(1));
 
         AddDefaultConstructor();
-        var derivedConstructor = new MethodDefinition(".ctor", AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.Public |
-            AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.SpecialName |
-            AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.RuntimeSpecialName,
-            MethodSignature.CreateInstance(_module.CorLibTypeFactory.Void));
-        derivedDefinition.Methods.Add(derivedConstructor);
-        derivedConstructor.CilMethodBody = new CilMethodBody();
-        derivedConstructor.CilMethodBody.Instructions.Add(CilOpCodes.Ldarg_0);
-        derivedConstructor.CilMethodBody.Instructions.Add(CilOpCodes.Call,
-            _type.Methods.Single(method => method.Name == ".ctor"));
-        derivedConstructor.CilMethodBody.Instructions.Add(CilOpCodes.Ret);
+        AddDerivedConstructor(derivedDefinition);
 
         using var runtime = Load();
         var method = runtime.Type.GetMethod("Guarded")!;
@@ -169,6 +155,53 @@ public partial class IlGeneratorParameterTests
         var instance = Activator.CreateInstance(runtime.Type)!;
         runtime.Type.GetField("Value")!.SetValue(instance, -17);
         Assert.That(method.Invoke(null, [instance]), Is.EqualTo(-17));
+    }
+
+    [Test]
+    public void DerivedReceiverCanReadAnInheritedFieldWithItsNullFailure()
+    {
+        var (derivedDefinition, derived) = AddDerivedClass();
+        var fixture = CreateFieldNullGuard(derived);
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.EqualTo(1));
+        var evidence = fixture.Context.NullCheckedFieldAccesses.Single();
+        Assert.That(evidence.IsValidFor(fixture.Context), Is.True);
+        derived.BaseType = _app.SystemTypes.SystemObjectType;
+        Assert.That(evidence.IsValidFor(fixture.Context), Is.False,
+            "A changed base chain cannot authenticate the inherited field.");
+        derived.OverrideBaseType = null;
+
+        SsaForm.Remove(fixture.Context);
+        CopyCoalescer.Run(fixture.Context);
+        Simplifier.Simplify(fixture.Context);
+        DeadCodeEliminator.Run(fixture.Context);
+        LocalVariables.RemoveUnused(fixture.Context);
+        IlGenerator.GenerateIl(fixture.Context, fixture.Definition);
+        Assert.That(fixture.Definition.CilMethodBody!.Instructions.Count(i => i.OpCode == CilOpCodes.Ldfld), Is.EqualTo(1));
+        AddDefaultConstructor();
+        AddDerivedConstructor(derivedDefinition);
+        using var runtime = Load();
+        var method = runtime.Type.GetMethod("GuardedField")!;
+        Assert.That(Assert.Throws<TargetInvocationException>(() => method.Invoke(null, [null]))!.InnerException,
+            Is.TypeOf<NullReferenceException>());
+        var instance = Activator.CreateInstance(runtime.Type.Assembly.GetType("Synthetic.Derived")!)!;
+        runtime.Type.GetField("Value")!.SetValue(instance, -17);
+        Assert.That(method.Invoke(null, [instance]), Is.EqualTo(-17));
+    }
+
+    [Test]
+    public void UnrelatedFieldReceiverDoesNotCoalesceTheNullArm()
+    {
+        var definition = new TypeDefinition("Synthetic", "Unrelated",
+            AsmResolver.PE.DotNet.Metadata.Tables.TypeAttributes.Public |
+            AsmResolver.PE.DotNet.Metadata.Tables.TypeAttributes.Class,
+            _module.CorLibTypeFactory.Object.Type);
+        _module.TopLevelTypes.Add(definition);
+        var unrelated = new InjectedTypeAnalysisContext(_typeContext.DeclaringAssembly, "Synthetic", "Unrelated",
+            _app.SystemTypes.SystemObjectType, System.Reflection.TypeAttributes.Public | System.Reflection.TypeAttributes.Class);
+        unrelated.PutExtraData("AsmResolverType", definition);
+        var fixture = CreateFieldNullGuard(unrelated);
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.Zero);
+        Assert.That(fixture.Context.ControlFlowGraph!.Instructions, Does.Contain(fixture.NullThrow));
     }
 
     [Test]
@@ -513,7 +546,8 @@ public partial class IlGeneratorParameterTests
     }
 
     private (InjectedMethodAnalysisContext Context, MethodDefinition Definition, LocalVariable Receiver,
-        InjectedFieldAnalysisContext Field, Instruction Load, Instruction NullThrow) CreateFieldNullGuard()
+        InjectedFieldAnalysisContext Field, Instruction Load, Instruction NullThrow)
+        CreateFieldNullGuard(TypeAnalysisContext? receiverType = null)
     {
         var fieldDefinition = new FieldDefinition("Value", FieldAttributes.Public, _module.CorLibTypeFactory.Int32);
         _type.Fields.Add(fieldDefinition);
@@ -522,7 +556,7 @@ public partial class IlGeneratorParameterTests
         field.PutExtraData("AsmResolverField", fieldDefinition);
         _typeContext.Fields.Add(field);
         var (context, definition, parameters) = CreateMethod("GuardedField", _app.SystemTypes.SystemInt32Type,
-            [_typeContext]);
+            [receiverType ?? _typeContext]);
         var condition = NullGuardLocal("condition", 1240, _app.SystemTypes.SystemBooleanType);
         var result = NullGuardLocal("result", 1241, _app.SystemTypes.SystemInt32Type);
         var comparison = new Instruction(0, OpCode.CheckEqual, condition, parameters[0], Imm(0))
@@ -585,6 +619,33 @@ public partial class IlGeneratorParameterTests
         }
         il.Add(CilOpCodes.Ret);
         return target;
+    }
+
+    private (TypeDefinition Definition, InjectedTypeAnalysisContext Context) AddDerivedClass()
+    {
+        var definition = new TypeDefinition("Synthetic", "Derived",
+            AsmResolver.PE.DotNet.Metadata.Tables.TypeAttributes.Public |
+            AsmResolver.PE.DotNet.Metadata.Tables.TypeAttributes.Class, _type);
+        _module.TopLevelTypes.Add(definition);
+        var context = new InjectedTypeAnalysisContext(_typeContext.DeclaringAssembly, "Synthetic", "Derived",
+            _typeContext, System.Reflection.TypeAttributes.Public | System.Reflection.TypeAttributes.Class);
+        context.PutExtraData("AsmResolverType", definition);
+        return (definition, context);
+    }
+
+    private void AddDerivedConstructor(TypeDefinition derivedDefinition)
+    {
+        var constructor = new MethodDefinition(".ctor",
+            AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.Public |
+            AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.SpecialName |
+            AsmResolver.PE.DotNet.Metadata.Tables.MethodAttributes.RuntimeSpecialName,
+            MethodSignature.CreateInstance(_module.CorLibTypeFactory.Void));
+        derivedDefinition.Methods.Add(constructor);
+        constructor.CilMethodBody = new CilMethodBody();
+        constructor.CilMethodBody.Instructions.Add(CilOpCodes.Ldarg_0);
+        constructor.CilMethodBody.Instructions.Add(CilOpCodes.Call,
+            _type.Methods.Single(method => method.Name == ".ctor"));
+        constructor.CilMethodBody.Instructions.Add(CilOpCodes.Ret);
     }
 
     private static bool SyntheticNullThrow(Instruction instruction) => instruction is

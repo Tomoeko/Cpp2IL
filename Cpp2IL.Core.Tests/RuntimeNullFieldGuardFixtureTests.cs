@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using AssetRipper.Primitives;
+using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.ISIL;
 
 namespace Cpp2IL.Core.Tests;
@@ -50,6 +51,53 @@ public class RuntimeNullFieldGuardFixtureTests
                 Assert.That(evidence.IsValidFor(method), Is.False);
             }
             finally { evidence.Field.Attributes = attributes; }
+            Assert.That(evidence.IsValidFor(method), Is.True);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    public void PlayerOnlyInheritedFieldGuardRequiresTheOriginalBaseChainAndNonoverlappingLayout()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_INHERITED_FIELD_GUARD_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_INHERITED_FIELD_GUARD_FIXTURE_INPUT to the public inherited-field player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var method = app.GetAssemblyByName("InheritedFieldGuardFixture")!.Types
+                .Single(type => type.Name == "InheritedFieldReads").Methods.Single(candidate => candidate.Name == "Read");
+            method.Analyze();
+            Assert.That(method.AnalysisWarnings, Is.Empty);
+            var evidence = method.NullCheckedFieldAccesses.Single();
+            Assert.That(method.ControlFlowGraph!.Instructions.Any(instruction => instruction.OpCode == OpCode.RuntimeNullThrow), Is.False);
+            Assert.That(evidence.IsValidFor(method), Is.True);
+            Assert.That(evidence.StoredValue, Is.Null);
+            var receiver = evidence.Receiver.Type!;
+            Assert.That(receiver, Is.Not.SameAs(evidence.Field.DeclaringType));
+            Assert.That(NarrowFieldEqualityProof.HasUnchangedFieldLayout(evidence.Access, 32), Is.True);
+            var derivedField = receiver.Fields.Single(field => field.Name == "Neighbor");
+            try
+            {
+                derivedField.Offset = evidence.Offset;
+                Assert.That(evidence.IsValidFor(method), Is.False,
+                    "An overlapping derived field invalidates the inherited layout proof.");
+            }
+            finally { derivedField.OverrideOffset = null; }
+            Assert.That(evidence.IsValidFor(method), Is.True);
+            try
+            {
+                receiver.BaseType = app.SystemTypes.SystemObjectType;
+                Assert.That(evidence.IsValidFor(method), Is.False,
+                    "A changed base chain cannot authenticate the inherited field.");
+            }
+            finally { receiver.OverrideBaseType = null; }
             Assert.That(evidence.IsValidFor(method), Is.True);
         }
         finally { Cpp2IlApi.ResetInternalState(); }

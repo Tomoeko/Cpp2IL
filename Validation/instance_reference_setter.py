@@ -37,7 +37,8 @@ def observations():
     expected.append({"subject": "text", "check": "null-receiver",
                      "exception": "System.NullReferenceException"})
     expected.extend({"subject": "declaration", "check": check, "result": True}
-                    for check in ("reference-property-type", "text-property-type"))
+                    for check in ("reference-property-type", "text-property-type",
+                                  "setter-only-indexer-signature"))
     return expected
 
 
@@ -54,4 +55,4 @@ def verify(path, stage, version):
         raise ValueError("Instance reference setter behavior differs from independent oracle")
     return {"status": "passed", "observations": len(expected),
             "platform": report["platform"], "profile": "instance-reference-setter",
-            "scope": "direct reference field identity, replacement, null clearing, receiver aliasing and null receivers"}
+            "scope": "direct reference field identity, replacement, null clearing, receiver aliasing, null receivers and property declarations"}

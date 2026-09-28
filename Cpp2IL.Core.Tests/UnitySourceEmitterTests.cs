@@ -485,6 +485,54 @@ public class UnitySourceEmitterTests
     }
 
     [Test]
+    public void PropertyAccessorValidationChecksIndexerValueAndIndexTypes()
+    {
+        var module = CreateAssembly("Synthetic.Application").ManifestModule!;
+        var types = module.CorLibTypeFactory;
+        var property = new PropertyDefinition("Item", PropertyAttributes.None,
+            PropertySignature.CreateInstance(types.String, [types.Int32]));
+        var setter = new MethodDefinition("set_Item", MethodAttributes.Public | MethodAttributes.SpecialName,
+            MethodSignature.CreateInstance(types.Void, [types.Int32, types.String]));
+        property.SetSemanticMethods(null, setter);
+
+        Assert.That(UnitySourceProjectEmitter.AccessorsMatchPropertySignature(property), Is.True);
+
+        setter.Signature = MethodSignature.CreateInstance(types.Void, [types.Int32, types.Int32]);
+        Assert.That(UnitySourceProjectEmitter.AccessorsMatchPropertySignature(property), Is.False,
+            "The indexer's value type must match the property type.");
+
+        setter.Signature = MethodSignature.CreateInstance(types.Void, [types.String, types.String]);
+        Assert.That(UnitySourceProjectEmitter.AccessorsMatchPropertySignature(property), Is.False,
+            "The index parameter type must also match.");
+
+        setter.Signature = MethodSignature.CreateInstance(types.Void, [types.Int32]);
+        Assert.That(UnitySourceProjectEmitter.AccessorsMatchPropertySignature(property), Is.False,
+            "A setter needs a value parameter after its index parameters.");
+    }
+
+    [Test]
+    public void PropertyAccessorValidationRejectsGetterSetterDisagreement()
+    {
+        var module = CreateAssembly("Synthetic.Application").ManifestModule!;
+        var types = module.CorLibTypeFactory;
+        var property = new PropertyDefinition("Value", PropertyAttributes.None,
+            PropertySignature.CreateInstance(types.Int32));
+        var getter = new MethodDefinition("get_Value", MethodAttributes.Public | MethodAttributes.SpecialName,
+            MethodSignature.CreateInstance(types.Int32));
+        var setter = new MethodDefinition("set_Value", MethodAttributes.Public | MethodAttributes.SpecialName,
+            MethodSignature.CreateInstance(types.Void, [types.Int32]));
+        property.SetSemanticMethods(getter, setter);
+
+        Assert.That(UnitySourceProjectEmitter.AccessorsMatchPropertySignature(property), Is.True);
+
+        setter.Signature = MethodSignature.CreateInstance(types.Void, [types.String]);
+        Assert.That(UnitySourceProjectEmitter.AccessorsMatchPropertySignature(property), Is.False);
+        setter.Signature = MethodSignature.CreateInstance(types.Void, [types.Int32]);
+        getter.Signature = MethodSignature.CreateInstance(types.String);
+        Assert.That(UnitySourceProjectEmitter.AccessorsMatchPropertySignature(property), Is.False);
+    }
+
+    [Test]
     public void ByReferenceReturnWithoutModifierCannotClaimCompleteSource()
     {
         var assembly = CreateAssembly("Synthetic.Application");

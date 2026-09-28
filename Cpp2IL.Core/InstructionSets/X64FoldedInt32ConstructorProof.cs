@@ -202,10 +202,7 @@ internal static class X64FoldedInt32ConstructorProof
             !X64NativePaddingProof.HasInt3Padding(pe, end, next) ||
             unwind.ClassifySpan(end, next).Kind !=
                 X64UnwindProof.SpanKind.NoEntry ||
-            unwind.ClassifySpan(next, decoded[index].NextIP) is not
-                { Kind: X64UnwindProof.SpanKind.HandlerFree,
-                    Start: var nextStart, RootStart: var nextRoot } ||
-            nextStart != next || nextRoot != next ||
+            !unwind.HasFunctionEntryAt(next, decoded[index].NextIP) ||
             Enumerable.Range(0, checked((int)(next - end))).Any(offset =>
                 app.MethodsByAddress.ContainsKey(end + (ulong)offset)))
             return false;

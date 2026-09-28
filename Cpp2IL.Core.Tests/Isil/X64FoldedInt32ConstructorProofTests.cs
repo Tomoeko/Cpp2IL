@@ -15,6 +15,61 @@ public class X64FoldedInt32ConstructorProofTests
 {
     [Test]
     [NonParallelizable]
+    public void ExactPlayerBoundsFoldedConstructorBeforeUnsupportedNeighborUnwind()
+    {
+        var directory = Environment.GetEnvironmentVariable(
+            "CPP2IL_FIXED_SCALAR_ARRAY_INT32_CTOR_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_FIXED_SCALAR_ARRAY_INT32_CTOR_INPUT to the neutral Int32-constructor player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data",
+            "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata,
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var constructor = app.GetAssemblyByName("FixedScalarArrayFixture")!.Types
+                .Single(type => type.Name == "ScalarCatalog").Methods
+                .Single(method => method.Name == ".ctor");
+            constructor.EnsureRawBytes();
+            var decoded = X86Utils.Iterate(constructor).ToArray();
+            Assert.That(constructor.RawBytes.Length, Is.GreaterThan(36));
+            var proof = X64FoldedInt32ConstructorProof.Find(constructor, decoded);
+            Assert.That(proof, Is.Not.Null);
+            Assert.That(proof!.NativeEnd - constructor.UnderlyingPointer,
+                Is.EqualTo(36UL));
+            Assert.That(proof.State.Offset, Is.EqualTo(40));
+            Assert.That(proof.BaseConstructor.DeclaringType,
+                Is.SameAs(app.SystemTypes.SystemObjectType));
+            var next = Array.FindIndex(decoded, 12, instruction =>
+                instruction.Code != Code.Int3);
+            Assert.That(next, Is.GreaterThan(12));
+            var unwind = X64UnwindProof.ForApplication(app)!;
+            Assert.That(unwind.ClassifySpan(decoded[next].IP,
+                decoded[next].NextIP).Kind,
+                Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+            Assert.That(unwind.HasFunctionEntryAt(decoded[next].IP,
+                decoded[next].NextIP), Is.True);
+
+            var shiftedEntry = decoded.ToArray();
+            shiftedEntry[next].IP++;
+            Assert.That(X64FoldedInt32ConstructorProof.Find(constructor,
+                shiftedEntry), Is.Null);
+            var changedPadding = decoded.ToArray();
+            changedPadding[next - 1].Code = Code.Nopd;
+            Assert.That(X64FoldedInt32ConstructorProof.Find(constructor,
+                changedPadding), Is.Null);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    [NonParallelizable]
     public void ExactPlayerBindsUnwindBoundedFoldedConstructors()
     {
         var directory = Environment.GetEnvironmentVariable(
