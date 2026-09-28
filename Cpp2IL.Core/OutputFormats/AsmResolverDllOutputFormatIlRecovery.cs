@@ -300,6 +300,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64GuardedBoxedInt32Recovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Guarded boxed Int32 comparison IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64TypeFromHandleRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
@@ -340,6 +347,14 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
                     "Fixed reference-array read IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
+            if (X64FieldBooleanArrayReadRecovery.TryGenerate(methodContext,
+                    methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Guarded Boolean-array field read IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 

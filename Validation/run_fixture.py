@@ -13,12 +13,14 @@ import numerics_reference
 import static_field_getter
 import catch_divide
 import class_cast_lookup
+import guarded_boxed_cast
 import reference_field
 import native_int_field
 import reference_array
 import exception_regions
 import field_array
 import field_boolean_array
+import field_boolean_array_read
 import constructed_base_boolean_array
 import float_forward_store
 import nested_single_getter
@@ -108,6 +110,7 @@ PROFILES = {
     "array-sequence": {"assembly": "ArraySequenceFixture", "source": VALIDATION / "ArraySequenceFixture", "methods": 2},
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "field-boolean-array": {"assembly": "BooleanFieldArrayFixture", "source": VALIDATION / "BooleanFieldArrayFixture", "methods": 3},
+    "field-boolean-array-read": {"assembly": "FieldBooleanArrayReadFixture", "source": VALIDATION / "FieldBooleanArrayReadFixture", "methods": 4},
     "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 4},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 6},
@@ -154,6 +157,8 @@ PROFILES = {
     "iterator-factory-direct-ctor": {"assembly": "IteratorFactoryDirectCtorFixture", "source": VALIDATION / "IteratorFactoryDirectCtorFixture", "methods": 8},
     "literal-concat": {"assembly": "LiteralConcatFixture", "source": VALIDATION / "LiteralConcatFixture", "methods": 7},
     "class-cast-lookup": {"assembly": "ClassCastLookupFixture", "source": VALIDATION / "ClassCastLookupFixture", "methods": 5},
+    "guarded-boxed-cast": {"assembly": "GuardedBoxedCastFixture",
+                           "source": VALIDATION / "GuardedBoxedCastFixture", "methods": 1},
     "runtime-cast-concat": {"assembly": "RuntimeCastConcatFixture", "source": VALIDATION / "RuntimeCastConcatFixture", "methods": 21,
                             "noManagedBody": {("RuntimeCastConcatFixture.INodeOwner", "get_Current"),
                                               ("RuntimeCastConcatFixture.INodeOwner", "set_Current")}},
@@ -308,6 +313,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return nested_single_getter.verify(path, stage, VERSION)
     if profile == "fixed-reference-array":
         return fixed_reference_array.verify(path, stage, VERSION)
+    if profile == "field-boolean-array-read":
+        return field_boolean_array_read.verify(path, stage, VERSION)
     if profile == "fixed-scalar-array":
         return fixed_scalar_array.verify(path, stage, VERSION)
     if profile == "array-element-store":
@@ -340,6 +347,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return literal_concat.verify(path, stage, VERSION)
     if profile == "class-cast-lookup":
         return class_cast_lookup.verify(path, stage, VERSION)
+    if profile == "guarded-boxed-cast":
+        return guarded_boxed_cast.verify(path, stage, VERSION)
     if profile == "runtime-cast-concat":
         return runtime_cast_concat.verify(path, stage, VERSION)
     if profile == "static-literal-concat":
