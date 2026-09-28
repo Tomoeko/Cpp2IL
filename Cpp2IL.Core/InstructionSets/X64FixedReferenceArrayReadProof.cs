@@ -30,21 +30,11 @@ internal static class X64FixedReferenceArrayReadProof
             var app = method.AppContext;
             if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
                 app.Binary is not PE pe ||
-                method.DeclaringType is not { Definition: { GenericContainer: null,
-                    RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
-                        NumMods: 0, Byref: 0, Pinned: 0 } } } owner ||
-                !NullCheckedCall.IsReferenceClass(owner) ||
-                owner.GenericParameters.Count != 0 ||
-                owner.Name != owner.DefaultName ||
-                owner.Namespace != owner.DefaultNamespace ||
-                owner.Attributes != owner.DefaultAttributes ||
-                !ReferenceEquals(owner.BaseType, owner.DefaultBaseType) ||
-                owner.Definition is not { PackingSizeIsDefault: true,
-                    ClassSizeIsDefault: true } ||
-                !OrdinaryGetter(method, owner) ||
+                !OrdinaryOwnerAndGetter(method) ||
                 !app.MethodsByAddress.TryGetValue(method.UnderlyingPointer,
                     out var bindings) ||
-                bindings is not [var bound] || !ReferenceEquals(bound, method))
+                bindings.Count is not (1 or 2) ||
+                bindings.Count(binding => ReferenceEquals(binding, method)) != 1)
                 return null;
 
             if (X64Stack28BodyProof.Read(method, 12, 80) is not { } body ||
@@ -69,44 +59,25 @@ internal static class X64FixedReferenceArrayReadProof
                     new HashSet<ulong> { body[9].IP, body[11].IP }) != null)
                 return null;
 
-            var fields = owner.Fields.Where(field => !field.IsStatic &&
-                field.Offset == (long)fieldOffset).ToArray();
-            if (fields.Length == 0 && owner.BaseType is
-                { IsGenericInstance: false,
-                    Definition: { GenericContainer: null,
-                        RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
-                            NumMods: 0, Byref: 0, Pinned: 0 } } } baseType &&
-                baseType.GenericParameters.Count == 0 &&
-                baseType.Name == baseType.DefaultName &&
-                baseType.Namespace == baseType.DefaultNamespace &&
-                baseType.Attributes == baseType.DefaultAttributes &&
-                ReferenceEquals(baseType.BaseType, baseType.DefaultBaseType))
+            FieldAnalysisContext? selectedField = null;
+            foreach (var binding in bindings)
             {
-                // A derived getter may directly read a public array declared by
-                // its immediate ordinary base. Keep the field owner's metadata
-                // identity and prove the complete receiver layout below.
-                fields = baseType.Fields.Where(field => !field.IsStatic &&
-                    field.Offset == (long)fieldOffset &&
-                    field.Visibility == FieldAttributes.Public &&
-                    ReferenceEquals(field.DeclaringType, baseType) &&
-                    !owner.Fields.Any(owned => owned.Name == field.Name)).ToArray();
+                // Linker folding may give several different managed getters the
+                // same native address. Each binding must independently explain
+                // the complete body through its own signature and field layout.
+                if (binding.UnderlyingPointer != method.UnderlyingPointer ||
+                    !ReferenceEquals(binding.DeclaringType?.DeclaringAssembly,
+                        method.DeclaringType?.DeclaringAssembly) ||
+                    (!ReferenceEquals(binding, method) &&
+                     (X64Stack28BodyProof.Read(binding, 12, 80) is not { } aliasBody ||
+                      !aliasBody.SequenceEqual(body))) ||
+                    BindField(binding, fieldOffset) is not { } boundField)
+                    return null;
+                if (ReferenceEquals(binding, method))
+                    selectedField = boundField;
             }
-            if (fields is not [{ } arrayField] ||
-                arrayField.Name != arrayField.DefaultName ||
-                arrayField.BackingData?.Field.RawFieldType is not
-                    { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
-                        NumMods: 0, Byref: 0, Pinned: 0 } ||
-                arrayField.FieldType is not SzArrayTypeAnalysisContext
-                    { ElementType: var element } ||
-                !ReferenceEquals(element, method.ReturnType))
-                return null;
-            var ownerLocal = new LocalVariable("proved-owner",
-                new ManagedRegister(null, "proved-owner"), owner);
-            if (!NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(
-                    new FieldReference(arrayField, ownerLocal, (int)fieldOffset)))
-                return null;
 
-            return new Evidence(arrayField, index);
+            return selectedField == null ? null : new Evidence(selectedField, index);
         }
         catch (Exception exception) when (exception is ArgumentException or
                                           InvalidOperationException or
@@ -114,6 +85,69 @@ internal static class X64FixedReferenceArrayReadProof
         {
             return null;
         }
+    }
+
+    private static FieldAnalysisContext? BindField(MethodAnalysisContext method,
+        ulong fieldOffset)
+    {
+        if (!OrdinaryOwnerAndGetter(method))
+            return null;
+        var owner = method.DeclaringType!;
+
+        var fields = owner.Fields.Where(field => !field.IsStatic &&
+                field.Offset == (long)fieldOffset).ToArray();
+        if (fields.Length == 0 && owner.BaseType is
+            { IsGenericInstance: false,
+                Definition: { GenericContainer: null,
+                    RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                        NumMods: 0, Byref: 0, Pinned: 0 } } } baseType &&
+            baseType.GenericParameters.Count == 0 &&
+            baseType.Name == baseType.DefaultName &&
+            baseType.Namespace == baseType.DefaultNamespace &&
+            baseType.Attributes == baseType.DefaultAttributes &&
+            ReferenceEquals(baseType.BaseType, baseType.DefaultBaseType))
+        {
+            // A derived getter may directly read a public array declared by
+            // its immediate ordinary base. Keep the field owner's metadata
+            // identity and prove the complete receiver layout below.
+            fields = baseType.Fields.Where(field => !field.IsStatic &&
+                field.Offset == (long)fieldOffset &&
+                field.Visibility == FieldAttributes.Public &&
+                ReferenceEquals(field.DeclaringType, baseType) &&
+                !owner.Fields.Any(owned => owned.Name == field.Name)).ToArray();
+        }
+        if (fields is not [{ } arrayField] ||
+            arrayField.Name != arrayField.DefaultName ||
+            arrayField.BackingData?.Field.RawFieldType is not
+                { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
+                    NumMods: 0, Byref: 0, Pinned: 0 } ||
+            arrayField.FieldType is not SzArrayTypeAnalysisContext
+                { ElementType: var element } ||
+            !ReferenceEquals(element, method.ReturnType))
+            return null;
+        var ownerLocal = new LocalVariable("proved-owner",
+            new ManagedRegister(null, "proved-owner"), owner);
+        return NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(
+            new FieldReference(arrayField, ownerLocal, (int)fieldOffset))
+            ? arrayField : null;
+    }
+
+    private static bool OrdinaryOwnerAndGetter(MethodAnalysisContext method)
+    {
+        if (method.DeclaringType is not { Definition: { GenericContainer: null,
+                RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                    NumMods: 0, Byref: 0, Pinned: 0 } } } owner ||
+            !NullCheckedCall.IsReferenceClass(owner) ||
+            owner.GenericParameters.Count != 0 ||
+            owner.Name != owner.DefaultName ||
+            owner.Namespace != owner.DefaultNamespace ||
+            owner.Attributes != owner.DefaultAttributes ||
+            !ReferenceEquals(owner.BaseType, owner.DefaultBaseType) ||
+            owner.Definition is not { PackingSizeIsDefault: true,
+                ClassSizeIsDefault: true } ||
+            !OrdinaryGetter(method, owner))
+            return false;
+        return true;
     }
 
     private static bool OrdinaryGetter(MethodAnalysisContext method,
@@ -132,7 +166,8 @@ internal static class X64FixedReferenceArrayReadProof
                                       MethodImplAttributes.ManagedMask |
                                       MethodImplAttributes.InternalCall)) != 0 ||
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
-            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
+            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,
+                requireUniqueBinding: false) ||
             method.UnderlyingPointer is 0 or ulong.MaxValue ||
             method.Definition is not { GenericContainer: null, parameterCount: 0,
                 RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
@@ -153,7 +188,7 @@ internal static class X64FixedReferenceArrayReadProof
             ReferenceEquals(property.Getter, method)).ToArray();
         if ((method.Attributes & MethodAttributes.SpecialName) == 0)
             return properties.Length == 0;
-        return properties is [{ } property] && property.Setter == null &&
+        return properties is [{ } property] &&
                property.Definition is { } rawProperty &&
                ReferenceEquals(rawProperty.Getter, definition) &&
                property.Name == property.DefaultName &&
@@ -161,9 +196,57 @@ internal static class X64FixedReferenceArrayReadProof
                property.Attributes == property.DefaultAttributes &&
                property.OverridePropertyType == null && !property.IsStatic &&
                ReferenceEquals(property.PropertyType, resultType) &&
+               (property.Setter == null ||
+                CoherentSetter(property, owner, resultType)) &&
                rawProperty.RawPropertyType is
                    { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
-                       NumMods: 0, Byref: 0, Pinned: 0 };
+                   NumMods: 0, Byref: 0, Pinned: 0 };
+    }
+
+    private static bool CoherentSetter(PropertyAnalysisContext property,
+        TypeAnalysisContext owner, TypeAnalysisContext resultType)
+    {
+        if (property.Definition is not { } rawProperty ||
+            property.Setter is not { } setter ||
+            setter.Definition is not { GenericContainer: null, parameterCount: 1,
+                RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
+                    NumMods: 0, Byref: 0, Pinned: 0 } } rawSetter ||
+            !ReferenceEquals(rawProperty.Setter, rawSetter) ||
+            !ReferenceEquals(rawSetter.DeclaringType, owner.Definition) ||
+            !ReferenceEquals(setter.DeclaringType, owner) ||
+            setter.Name != setter.DefaultName ||
+            setter.Name != "set_" + property.Name ||
+            setter.IsStatic || setter.IsVirtual || !setter.IsVoid ||
+            !ReferenceEquals(setter.ReturnType,
+                setter.AppContext.SystemTypes.SystemVoidType) ||
+            setter.GenericParameters.Count != 0 ||
+            setter.OverrideReturnType != null ||
+            setter.Attributes != setter.DefaultAttributes ||
+            setter.ImplAttributes != setter.DefaultImplAttributes ||
+            (setter.Attributes & (MethodAttributes.SpecialName |
+                                  MethodAttributes.Abstract |
+                                  MethodAttributes.PinvokeImpl)) !=
+                MethodAttributes.SpecialName ||
+            (setter.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
+                                      MethodImplAttributes.ManagedMask |
+                                      MethodImplAttributes.InternalCall)) != 0 ||
+            RuntimeNullGuardCoalescer.HasOutputOptions(setter) ||
+            rawSetter.InternalParameterData is not [var rawParameter] ||
+            rawParameter.RawType is not
+                { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                    NumMods: 0, Byref: 0, Pinned: 0 } rawType ||
+            setter.Parameters is not [var parameter] ||
+            !ReferenceEquals(parameter.DeclaringMethod, setter) ||
+            !ReferenceEquals(parameter.Definition, rawParameter) ||
+            parameter.ParameterIndex != 0 || parameter.IsRef ||
+            parameter.Name != parameter.DefaultName ||
+            parameter.Attributes != parameter.DefaultAttributes ||
+            parameter.OverrideParameterType != null ||
+            !ReferenceEquals(parameter.ParameterType, resultType) ||
+            !ReferenceEquals(setter.AppContext.ResolveIl2CppType(rawType),
+                resultType))
+            return false;
+        return true;
     }
 
     private static bool ArrayLoad(NativeInstruction instruction, out ulong offset)

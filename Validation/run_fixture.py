@@ -26,6 +26,7 @@ import constructed_base_boolean_array
 import float_forward_store
 import nested_single_getter
 import fixed_reference_array
+import folded_reference_array
 import inherited_reference_array_read
 import fixed_scalar_array
 import array_element_store
@@ -91,6 +92,7 @@ import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
 import ordered_call_tail_guard
+import ordered_noarg_tail_guard
 import unsealed_zero_store
 import virtual_string_call
 import virtual_tail_dispatch
@@ -101,6 +103,7 @@ import folded_literal_constructor
 import shared_inert_constructor
 import float_initializer_constructor
 import scalar_wrapper
+import scalar_wrapper_cctor
 import shared_abi
 import constructor_thunk_chain
 
@@ -125,6 +128,7 @@ PROFILES = {
     "float-forward-store": {"assembly": "FloatForwardStoreFixture", "source": VALIDATION / "FloatForwardStoreFixture", "methods": 5},
     "nested-single-getter": {"assembly": "NestedSingleGetterFixture", "source": VALIDATION / "NestedSingleGetterFixture", "methods": 3},
     "fixed-reference-array": {"assembly": "FixedReferenceArrayFixture", "source": VALIDATION / "FixedReferenceArrayFixture", "methods": 5},
+    "folded-reference-array": {"assembly": "FoldedReferenceArrayFixture", "source": VALIDATION / "FoldedReferenceArrayFixture", "methods": 7},
     "inherited-reference-array-read": {"assembly": "InheritedReferenceArrayReadFixture",
                                        "source": VALIDATION / "InheritedReferenceArrayReadFixture", "methods": 6},
     "fixed-scalar-array": {"assembly": "FixedScalarArrayFixture", "source": VALIDATION / "FixedScalarArrayFixture", "methods": 3},
@@ -147,6 +151,8 @@ PROFILES = {
                                       "source": VALIDATION / "FloatInitializerConstructorFixture", "methods": 1},
     "scalar-wrapper": {"assembly": "ScalarWrapperFixture",
                         "source": VALIDATION / "ScalarWrapperFixture", "methods": 7},
+    "scalar-wrapper-cctor": {"assembly": "ScalarWrapperCctorFixture",
+                              "source": VALIDATION / "ScalarWrapperCctorFixture", "methods": 7},
     "constructor-thunk-chain": {"assembly": "ConstructorThunkChainFixture", "source": VALIDATION / "ConstructorThunkChainFixture", "methods": 7},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 10},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
@@ -204,6 +210,9 @@ PROFILES = {
     "ordered-call-tail-guard": {"assembly": "OrderedCallTailGuardFixture",
                                  "source": VALIDATION / "OrderedCallTailGuardFixture", "methods": 9,
                                  "noManagedBody": {("OrderedCallTailGuardFixture.GuardBase", "Forward")}},
+    "ordered-noarg-tail-guard": {"assembly": "OrderedNoArgTailGuardFixture",
+                                   "source": VALIDATION / "OrderedNoArgTailGuardFixture", "methods": 9,
+                                   "noManagedBody": {("OrderedNoArgTailGuardFixture.GuardBase", "Forward")}},
     "unsealed-zero-store": {"assembly": "UnsealedZeroStoreFixture",
                             "source": VALIDATION / "UnsealedZeroStoreFixture", "methods": 3},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
@@ -310,6 +319,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return float_initializer_constructor.verify(path, stage, VERSION)
     if profile == "scalar-wrapper":
         return scalar_wrapper.verify(path, stage, VERSION)
+    if profile == "scalar-wrapper-cctor":
+        return scalar_wrapper_cctor.verify(path, stage, VERSION)
     if profile == "constructor-thunk-chain":
         return constructor_thunk_chain.verify(path, stage, VERSION)
     if profile == "array-call":
@@ -336,6 +347,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return nested_single_getter.verify(path, stage, VERSION)
     if profile == "fixed-reference-array":
         return fixed_reference_array.verify(path, stage, VERSION)
+    if profile == "folded-reference-array":
+        return folded_reference_array.verify(path, stage, VERSION)
     if profile == "inherited-reference-array-read":
         return inherited_reference_array_read.verify(path, stage, VERSION)
     if profile == "field-boolean-array-read":
@@ -416,6 +429,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return call_result_tail_guard.verify(path, stage, VERSION)
     if profile == "ordered-call-tail-guard":
         return ordered_call_tail_guard.verify(path, stage, VERSION)
+    if profile == "ordered-noarg-tail-guard":
+        return ordered_noarg_tail_guard.verify(path, stage, VERSION)
     if profile == "unsealed-zero-store":
         return unsealed_zero_store.verify(path, stage, VERSION)
     if profile == "forwarded-argument":

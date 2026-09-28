@@ -104,7 +104,7 @@ internal static class X64ScalarWrapperTailCallProof
     {
         var app = method.AppContext;
         var wrapper = method.DeclaringType;
-        if (wrapper is not { Definition: { GenericContainer: null, HasCctor: false,
+        if (wrapper is not { Definition: { GenericContainer: null,
                 IsValueType: true, IsEnumType: false, IsBlittable: true,
                 IsByRefLike: false, IsImportOrWindowsRuntime: false,
                 PackingSizeIsDefault: true, ClassSizeIsDefault: true,
@@ -117,8 +117,22 @@ internal static class X64ScalarWrapperTailCallProof
             wrapper.Attributes != wrapper.DefaultAttributes ||
             (wrapper.Attributes & TypeAttributes.LayoutMask) != TypeAttributes.SequentialLayout ||
             !ReferenceEquals(wrapper.BaseType, wrapper.DefaultBaseType) ||
-            !ReferenceEquals(wrapper.BaseType, app.SystemTypes.SystemValueTypeType) ||
-            wrapper.Methods.Any(candidate => candidate.Name == ".cctor"))
+            !ReferenceEquals(wrapper.BaseType, app.SystemTypes.SystemValueTypeType))
+            return false;
+
+        var constructors = wrapper.Methods.Where(candidate =>
+            candidate.Name == ".cctor").ToArray();
+        if (wrapper.Definition.HasCctor)
+        {
+            if (constructors is not [{ } constructor] ||
+                X64ScalarWrapperStaticConstructorProof.Find(constructor) is not
+                    { ScalarField: var initializedField } ||
+                !ReferenceEquals(initializedField, ScalarField(wrapper)) ||
+                (MethodAnalysisContext.MaxMethodSizeBytes != -1 &&
+                 constructor.RawBytes.Length > MethodAnalysisContext.MaxMethodSizeBytes))
+                return false;
+        }
+        else if (constructors.Length != 0)
             return false;
 
         var parameterCount = method.Name == "CompareTo" ? 1 : 0;
@@ -146,7 +160,7 @@ internal static class X64ScalarWrapperTailCallProof
                (parameterCount == 0 || UnchangedWrapperParameter(method, wrapper));
     }
 
-    private static FieldAnalysisContext? ScalarField(TypeAnalysisContext wrapper)
+    internal static FieldAnalysisContext? ScalarField(TypeAnalysisContext wrapper)
     {
         var app = wrapper.AppContext;
         var fields = wrapper.Fields.Where(candidate => !candidate.IsStatic).ToArray();

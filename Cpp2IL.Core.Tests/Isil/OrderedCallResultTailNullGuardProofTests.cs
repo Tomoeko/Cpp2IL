@@ -16,6 +16,117 @@ namespace Cpp2IL.Core.Tests.Isil;
 public class OrderedCallResultTailNullGuardProofTests
 {
     [Test]
+    public void ExactNoArgumentPlayerRequiresOrderedCallsAndUniqueBindings()
+    {
+        var directory = Environment.GetEnvironmentVariable(
+            "CPP2IL_ORDERED_NOARG_TAIL_GUARD_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_ORDERED_NOARG_TAIL_GUARD_FIXTURE_INPUT to the neutral exact player input.");
+
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data",
+            "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata,
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var assembly = app.GetAssemblyByName("OrderedNoArgTailGuardFixture")!;
+            var baseType = assembly.Types.Single(type => type.Name == "GuardBase");
+            var owner = assembly.Types.Single(type => type.Name == "GuardOwner");
+            var node = assembly.Types.Single(type => type.Name == "GuardNode");
+            var method = owner.Methods.Single(candidate => candidate.Name == "Forward");
+            var effect = baseType.Methods.Single(candidate => candidate.Name == "Mark");
+            var producer = owner.Methods.Single(candidate => candidate.Name == "GetNode");
+            var target = node.Methods.Single(candidate => candidate.Name == "Apply");
+
+            var body = OrderedCallResultTailNullGuardProof.ReadBody(method);
+            Assert.That(body, Is.Not.Null,
+                "The complete, file-backed handler-free unwind region is required.");
+            var shape = OrderedCallResultTailNullGuardProof.TryProveShape(body!);
+            Assert.That(shape, Is.Not.Null);
+            Assert.Multiple(() =>
+            {
+                Assert.That(method.RawBytes.Length, Is.EqualTo(51));
+                Assert.That(body, Has.Length.EqualTo(16));
+                Assert.That(shape!.Value.EffectTarget, Is.EqualTo(effect.UnderlyingPointer));
+                Assert.That(shape.Value.ProducerTarget, Is.EqualTo(producer.UnderlyingPointer));
+                Assert.That(shape.Value.TailTarget, Is.EqualTo(target.UnderlyingPointer));
+                Assert.That(X86RuntimeNullThrowProof.TryIdentify(app,
+                    shape.Value.NullHelper), Is.Not.Null);
+            });
+
+            RejectNativeMutation(body!, changed =>
+                changed[9].NearBranch64 = body[14].IP,
+                "The null edge must reach the authenticated helper.");
+            RejectNativeMutation(body, changed =>
+                changed[10].Op0Register = NativeRegister.R8D,
+                "The no-argument MethodInfo slot must be zeroed.");
+            RejectNativeMutation(body, changed =>
+                changed[11].Op1Register = NativeRegister.RBX,
+                "The terminal receiver must be the producer result.");
+            RejectNativeMutation(body, changed =>
+                changed[14].Code = Code.Call_rel32_64,
+                "The guarded target transfer must be terminal.");
+            RejectNativeMutation(body, changed =>
+                changed[3].Op1Register = NativeRegister.RDX,
+                "The first call must receive the original instance.");
+            Assert.That(OrderedCallResultTailNullGuardProof.TryProveShape(
+                body.Skip(1).ToArray()), Is.Null);
+
+            method.Analyze();
+            var calls = method.ControlFlowGraph!.Instructions
+                .Where(instruction => instruction.IsCall).ToArray();
+            Assert.That(calls, Has.Length.EqualTo(3));
+            Assert.That(calls.Select(instruction => instruction.NativeAddress),
+                Is.EqualTo(new ulong?[] { shape!.Value.EffectCallsite,
+                    shape.Value.ProducerCallsite, shape.Value.TailCallsite }));
+            var origin = calls[1];
+            var guarded = calls[2];
+            var result = (LocalVariable)origin.Destination!;
+            Assert.That(guarded.Operands, Has.Count.EqualTo(2));
+            bool Bound() => CallResultNullGuardProof.HasBoundTarget(method,
+                result, origin, guarded, target);
+            Assert.That(Bound(), Is.True);
+
+            var trimmedOperands = guarded.Operands.ToList();
+            guarded.AddOperands([new Immediate(0)]);
+            try
+            {
+                Assert.That(Bound(), Is.True,
+                    "The pre-trim null MethodInfo argument is part of the native ABI.");
+                guarded.SetOperand(2, new Immediate(1));
+                Assert.That(Bound(), Is.False);
+            }
+            finally { guarded.SetOperands(trimmedOperands); }
+
+            var effectAddress = calls[0].NativeAddress;
+            calls[0].NativeAddress = shape.Value.ProducerCallsite;
+            try { Assert.That(Bound(), Is.False); }
+            finally { calls[0].NativeAddress = effectAddress; }
+
+            RejectAlias(app.MethodsByAddress[method.UnderlyingPointer], method,
+                Bound);
+            RejectAlias(app.MethodsByAddress[effect.UnderlyingPointer], effect,
+                Bound);
+            RejectAlias(app.MethodsByAddress[producer.UnderlyingPointer], producer,
+                Bound);
+            RejectAlias(app.MethodsByAddress[target.UnderlyingPointer], target,
+                Bound);
+            Assert.That(Bound(), Is.True);
+            if (guarded.CallSemantics == CallSemantics.Direct)
+                Assert.That(RuntimeNullGuardCoalescer.Run(method), Is.EqualTo(1));
+            Assert.That(guarded.CallSemantics,
+                Is.EqualTo(CallSemantics.NullCheckedInstance));
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
     public void ExactPlayerPreservesCallOrderAndRejectsChangedNativeOrManagedBindings()
     {
         var directory = Environment.GetEnvironmentVariable(
