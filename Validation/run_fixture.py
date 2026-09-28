@@ -83,12 +83,14 @@ import word_array
 import word_fields
 import zero_arg_field_call
 import boolean_tail_field_call
+import call_result_boolean_store
 import unsealed_zero_store
 import virtual_string_call
 import virtual_tail_dispatch
 import generic_dispatch
 import guarded_sink
 import folded_state_constructor
+import folded_literal_constructor
 import shared_abi
 import constructor_thunk_chain
 
@@ -125,6 +127,7 @@ PROFILES = {
                          "noManagedBody": (("GenericDispatchFixture.IRead`1", "Read"),)},
     "guarded-sink": {"assembly": "GuardedSinkFixture", "source": VALIDATION / "GuardedSinkFixture", "methods": 3},
     "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
+    "folded-literal-constructor": {"assembly": "FoldedLiteralConstructorFixture", "source": VALIDATION / "FoldedLiteralConstructorFixture", "methods": 3},
     "constructor-thunk-chain": {"assembly": "ConstructorThunkChainFixture", "source": VALIDATION / "ConstructorThunkChainFixture", "methods": 7},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 10},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
@@ -172,6 +175,8 @@ PROFILES = {
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 8},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
+    "call-result-boolean-store": {"assembly": "CallResultBooleanStoreFixture",
+                                  "source": VALIDATION / "CallResultBooleanStoreFixture", "methods": 6},
     "unsealed-zero-store": {"assembly": "UnsealedZeroStoreFixture",
                             "source": VALIDATION / "UnsealedZeroStoreFixture", "methods": 3},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
@@ -270,6 +275,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return guarded_sink.verify(path, stage, VERSION)
     if profile == "folded-state-constructor":
         return folded_state_constructor.verify(path, stage, VERSION)
+    if profile == "folded-literal-constructor":
+        return folded_literal_constructor.verify(path, stage, VERSION)
     if profile == "constructor-thunk-chain":
         return constructor_thunk_chain.verify(path, stage, VERSION)
     if profile == "array-call":
@@ -360,6 +367,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return zero_arg_field_call.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":
         return boolean_tail_field_call.verify(path, stage, VERSION)
+    if profile == "call-result-boolean-store":
+        return call_result_boolean_store.verify(path, stage, VERSION)
     if profile == "unsealed-zero-store":
         return unsealed_zero_store.verify(path, stage, VERSION)
     if profile == "forwarded-argument":

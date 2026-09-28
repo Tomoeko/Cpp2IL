@@ -64,7 +64,7 @@ internal static class CallResultNullGuardProof
         return NullCheckedCall.TryGet(managedPrefix, out producer, out receiver);
     }
 
-    private static bool HasExactReferenceGetterBody(MethodAnalysisContext producer)
+    internal static bool HasExactReferenceGetterBody(MethodAnalysisContext producer)
     {
         if (producer.AppContext.Binary is not PE pe ||
             X64UnwindProof.ForApplication(producer.AppContext) is not { } unwind ||
@@ -172,7 +172,7 @@ internal static class CallResultNullGuardProof
         }
     }
 
-    private static bool HasUnambiguousTarget(MethodAnalysisContext target,
+    internal static bool HasUnambiguousTarget(MethodAnalysisContext target,
         TypeAnalysisContext? receiverType)
     {
         if (receiverType == null || !NullCheckedCall.IsReferenceClass(receiverType) ||

@@ -70,6 +70,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var noReturnCalls = new HashSet<ulong>();
         if (X64ObjectConstructorThunkProof.TryLift(context, nativeInstructions) is { } objectConstructorThunk)
             return objectConstructorThunk; // The complete tail thunk binds the shared Object constructor target.
+        if (X64FoldedLiteralConstructorProof.TryLift(context, nativeInstructions) is { } foldedLiteralConstructor)
+            return foldedLiteralConstructor; // The field initializer and inert Object tail are both independently bound.
         if (X64IteratorConstructorProof.TryLift(context, nativeInstructions) is { } iteratorConstructor)
             return iteratorConstructor; // The factory proof authenticates the Object constructor and state field.
         if (X64FoldedInt32ConstructorProof.TryLift(context, nativeInstructions) is { } foldedInt32Constructor)
