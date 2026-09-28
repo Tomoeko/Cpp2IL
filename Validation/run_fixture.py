@@ -28,6 +28,7 @@ import nested_single_getter
 import fixed_reference_array
 import folded_reference_array
 import owner_indexed_enum_array
+import nested_array_call
 import inherited_reference_array_read
 import fixed_scalar_array
 import array_element_store
@@ -134,6 +135,8 @@ PROFILES = {
     "folded-reference-array": {"assembly": "FoldedReferenceArrayFixture", "source": VALIDATION / "FoldedReferenceArrayFixture", "methods": 7},
     "owner-indexed-enum-array": {"assembly": "OwnerIndexedEnumArrayFixture",
                                   "source": VALIDATION / "OwnerIndexedEnumArrayFixture", "methods": 4},
+    "nested-array-call": {"assembly": "NestedArrayCallFixture",
+                          "source": VALIDATION / "NestedArrayCallFixture", "methods": 14},
     "inherited-reference-array-read": {"assembly": "InheritedReferenceArrayReadFixture",
                                        "source": VALIDATION / "InheritedReferenceArrayReadFixture", "methods": 6},
     "fixed-scalar-array": {"assembly": "FixedScalarArrayFixture", "source": VALIDATION / "FixedScalarArrayFixture", "methods": 3},
@@ -360,6 +363,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return folded_reference_array.verify(path, stage, VERSION)
     if profile == "owner-indexed-enum-array":
         return owner_indexed_enum_array.verify(path, stage, VERSION)
+    if profile == "nested-array-call":
+        return nested_array_call.verify(path, stage, VERSION)
     if profile == "inherited-reference-array-read":
         return inherited_reference_array_read.verify(path, stage, VERSION)
     if profile == "field-boolean-array-read":

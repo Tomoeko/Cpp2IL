@@ -1,0 +1,3 @@
+<linker>
+  <assembly fullname="NestedArrayCallFixture" preserve="all" />
+</linker>

@@ -29,6 +29,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "fixed-reference-array",
     "folded-reference-array",
     "owner-indexed-enum-array",
+    "nested-array-call",
     "inherited-reference-array-read",
     "fixed-scalar-array",
     "array-element-store",
