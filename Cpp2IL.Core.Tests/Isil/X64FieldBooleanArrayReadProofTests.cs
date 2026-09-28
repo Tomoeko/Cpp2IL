@@ -112,4 +112,82 @@ public class X64FieldBooleanArrayReadProofTests
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }
+
+    [Test]
+    public void FieldlessConstructedBaseReadRequiresUniqueFieldAndCallerBinding()
+    {
+        var directory = Environment.GetEnvironmentVariable(
+            "CPP2IL_CONSTRUCTED_BASE_BOOLEAN_ARRAY_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_CONSTRUCTED_BASE_BOOLEAN_ARRAY_FIXTURE_INPUT to the neutral player input.");
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(
+                Path.Combine(directory, "GameAssembly.dll"),
+                Path.Combine(directory, "RecoveryFixture_Data", "il2cpp_data", "Metadata",
+                    "global-metadata.dat"),
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var owner = app.GetAssemblyByName("ConstructedBaseBooleanArrayFixture")!.Types
+                .Single(type => type.Name == "GenericBooleanArrayState");
+            var method = owner.Methods.Single(candidate => candidate.Name == "ReadAt");
+            var body = X64Stack28BodyProof.Read(method, 14, 64);
+            Assert.That(body, Is.Not.Null);
+            Assert.That(body![^1].NextIP - body[0].IP, Is.EqualTo(47));
+            Assert.That(X64FieldBooleanArrayReadProof.Find(method)?.ArrayField.Name,
+                Is.EqualTo("Values"));
+
+            var array = owner.Fields.Single(field => field.Name == "Values");
+            var before = owner.Fields.Single(field => field.Name == "Before");
+            try
+            {
+                before.OverrideOffset = array.Offset;
+                Assert.That(X64FieldBooleanArrayReadProof.Find(method), Is.Null,
+                    "an overlapping sibling invalidates the constructed-base layout");
+            }
+            finally { before.OverrideOffset = null; }
+
+            var aliases = app.MethodsByAddress[method.UnderlyingPointer];
+            aliases.Add(method);
+            try
+            {
+                Assert.That(X64FieldBooleanArrayReadProof.Find(method), Is.Null,
+                    "duplicate folded bindings are not uniquely identified");
+            }
+            finally { aliases.RemoveAt(aliases.Count - 1); }
+
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    public void VolatileConstructedBaseReadHasADistinctNativeBody()
+    {
+        var directory = Environment.GetEnvironmentVariable(
+            "CPP2IL_CONSTRUCTED_BASE_BOOLEAN_ARRAY_VOLATILE_CONTROL_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_CONSTRUCTED_BASE_BOOLEAN_ARRAY_VOLATILE_CONTROL_INPUT to the neutral volatile player input.");
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(
+                Path.Combine(directory, "GameAssembly.dll"),
+                Path.Combine(directory, "RecoveryFixture_Data", "il2cpp_data", "Metadata",
+                    "global-metadata.dat"),
+                UnityVersion.Parse("2021.3.35f1"));
+            var owner = Cpp2IlApi.CurrentAppContext!
+                .GetAssemblyByName("ConstructedBaseBooleanArrayFixture")!.Types
+                .Single(type => type.Name == "VolatileBooleanArrayState");
+            var method = owner.Methods.Single(candidate => candidate.Name == "ReadAt");
+            method.EnsureRawBytes();
+            Assert.That(method.RawBytes.Length, Is.EqualTo(62));
+            Assert.That(X64FieldBooleanArrayReadProof.Find(method), Is.Null);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
 }

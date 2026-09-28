@@ -10,7 +10,6 @@ public class X86IntegerExtensionRejectionTests
     [TestCase("0FBEC1")] // movsx eax, cl
     [TestCase("480FBFC1")] // movsx rax, cx
     [TestCase("4863C1")] // movsxd rax, ecx
-    [TestCase("0FB6C1")] // movzx eax, cl
     [TestCase("0FB601")] // movzx eax, byte [rcx]
     [TestCase("0FB6C4")] // movzx eax, ah
     [TestCase("660FB6C1")] // movzx ax, cl

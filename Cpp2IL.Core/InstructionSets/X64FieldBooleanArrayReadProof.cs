@@ -95,8 +95,9 @@ internal static class X64FieldBooleanArrayReadProof
 
             var receiver = new LocalVariable("proved-owner",
                 new ManagedRegister(null, "rcx"), owner);
-            return NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(
-                new FieldReference(arrayField, receiver, fieldOffset))
+            var access = new FieldReference(arrayField, receiver, fieldOffset);
+            return (NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access) ||
+                    NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayoutWithFieldlessConstructedBase(access))
                 ? new Evidence(arrayField) : null;
         }
         catch (Exception exception) when (exception is ArgumentException or

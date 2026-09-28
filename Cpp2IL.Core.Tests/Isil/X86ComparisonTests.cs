@@ -73,6 +73,10 @@ public class X86ComparisonTests
     [TestCase("84E4")] // test ah, ah; the high byte is not the low byte of rax
     [TestCase("4084E4")] // test spl, spl; stack-pointer alias is not admitted
     [TestCase("4084ED")] // test bpl, bpl; frame-pointer alias is not admitted
+    [TestCase("F6C401")] // test ah, 1; an ordinary high byte is not the parent low byte
+    [TestCase("40F6C401")] // test spl, 1; stack-pointer alias is not admitted
+    [TestCase("F6401001")] // test byte ptr [rax+16], 1; memory effects are not proved
+    [TestCase("66F7C20100")] // test dx, 1; the word lane is not admitted
     [TestCase("F30F5FC1")] // maxss xmm0, xmm1
     [TestCase("F30F5DC1")] // minss xmm0, xmm1
     [TestCase("0F4703")] // cmova eax, [rbx] reads memory even when not selected
@@ -106,6 +110,41 @@ public class X86ComparisonTests
             foreach (var parent in new long[] { 0, 1, 0x100, 0x101, 0x1234567800000000, long.MinValue, -256, -255 })
                 Assert.That(Evaluate(code, "branch", 0, parent), Is.EqualTo((parent & 0xFF) == 0),
                     $"full parent register {parent:X16}");
+        }
+    }
+
+    [TestCase("F6C200", 0)]
+    [TestCase("F6C201", 1)]
+    [TestCase("F6C202", 2)]
+    [TestCase("F6C240", 64)]
+    [TestCase("F6C280", 128)]
+    [TestCase("F6C2A5", 165)]
+    public void LowByteImmediateTestMasksUnknownParentBitsAndPreservesFlagLimits(string bytes, int mask)
+    {
+        var nativeTest = Lift(Convert.FromHexString(bytes));
+        var selected = nativeTest.Single(x => x.Destination is Register { Name: "COMPARE_MASKED_BYTE" });
+        Assert.That(selected.OpCode, Is.EqualTo(OpCode.And));
+        Assert.That(selected.IntegerBitWidth, Is.EqualTo(32));
+        Assert.That(selected.Operands[2], Is.EqualTo(new Immediate(mask)));
+        Assert.That(nativeTest.Single(x => x.Destination is Register { Name: "ZF" }).OpCode,
+            Is.EqualTo(OpCode.CheckEqual));
+        foreach (var flag in new[] { "CF", "OF" })
+            Assert.That(nativeTest.Single(x => x.Destination is Register r && r.Name == flag).OpCode,
+                Is.EqualTo(OpCode.Move), flag);
+        foreach (var flag in new[] { "SF", "PF" })
+            Assert.That(nativeTest.Single(x => x.Destination is Register r && r.Name == flag).OpCode,
+                Is.EqualTo(OpCode.UnresolvedValue), flag);
+
+        var zeroBranch = nativeTest.Concat(Lift([0x74, 0])).ToList(); // je
+        var aboveBranch = nativeTest.Concat(Lift([0x77, 0])).ToList(); // ja, CF=0 and ZF=0
+        foreach (var parent in new long[] { 0, 1, 2, 64, 128, 165, 255, 256, 257,
+                     0x1234567800000000, 0x12345678000000A5, long.MinValue, -256, -1 })
+        {
+            var anySelectedBit = (parent & mask) != 0;
+            Assert.That(Evaluate(zeroBranch, "branch", 0, parent), Is.EqualTo(!anySelectedBit),
+                $"ZF: full parent register {parent:X16}, mask {mask:X2}");
+            Assert.That(Evaluate(aboveBranch, "branch", 0, parent), Is.EqualTo(anySelectedBit),
+                $"JA: full parent register {parent:X16}, mask {mask:X2}");
         }
     }
 

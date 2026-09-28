@@ -13,6 +13,12 @@ namespace ConstructedBaseBooleanArrayFixture
         public long After;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
+        public bool ReadAt(int index)
+        {
+            return Values[index];
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
         public void SetTrue(int index)
         {
             Values[index] = true;

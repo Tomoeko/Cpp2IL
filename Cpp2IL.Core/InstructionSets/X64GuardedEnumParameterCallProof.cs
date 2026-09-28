@@ -76,7 +76,7 @@ internal static class X64GuardedEnumParameterCallProof
         (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                                   MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) == 0;
 
-    private static bool AccessibleTarget(TypeAnalysisContext caller, MethodAnalysisContext target)
+    internal static bool AccessibleTarget(TypeAnalysisContext caller, MethodAnalysisContext target)
     {
         var type = target.DeclaringType;
         if (type == null)

@@ -613,6 +613,27 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                         Imm(8), Imm(32), Imm(0));
                     break;
                 }
+                if (instruction.CodeSize == CodeSize.Code64 &&
+                    instruction.Op0Kind == OpKind.Register && instruction.Op0Register.GetSize() == 4 &&
+                    instruction.Op0Register.GetFullRegister() != Register.RSP &&
+                    instruction.Op1Kind == OpKind.Register &&
+                    instruction.Op1Register is Register.AL or Register.BL or Register.CL or Register.DL or
+                        Register.SIL or Register.DIL or Register.R8L or Register.R9L or Register.R10L or Register.R11L or
+                        Register.R12L or Register.R13L or Register.R14L or Register.R15L or
+                        Register.AX or Register.BX or Register.CX or Register.DX or Register.SI or Register.DI or
+                        Register.R8W or Register.R9W or Register.R10W or Register.R11W or
+                        Register.R12W or Register.R13W or Register.R14W or Register.R15W &&
+                    instruction.SegmentPrefix == Register.None && !instruction.HasLockPrefix &&
+                    !instruction.HasRepPrefix && !instruction.HasRepnePrefix)
+                {
+                    // Register aliases are canonicalized to their full parent. Explicit
+                    // truncation preserves the source's low 8/16 bits before the 32-bit
+                    // destination write zeroes its upper half.
+                    Add(instruction.IP, ISIL.OpCode.IntegerExtend,
+                        ConvertOperand(instruction, 0), ConvertOperand(instruction, 1),
+                        Imm(instruction.Op1Register.GetSize() * 8), Imm(32), Imm(0));
+                    break;
+                }
                 goto case Mnemonic.Movsx;
             case Mnemonic.Movsx:
             case Mnemonic.Movsxd:
@@ -1076,14 +1097,16 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Test:
             case Mnemonic.Cmp:
                 operandSize = (instruction.Op0Kind == OpKind.Register ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize()) * 8;
-                if (instruction.Mnemonic == Mnemonic.Test && operandSize == 8 &&
-                    instruction.CodeSize == CodeSize.Code64 && instruction.Op0Kind == OpKind.Register &&
-                    instruction.Op1Kind == OpKind.Register && instruction.Op0Register == instruction.Op1Register &&
+                var lowByteRegister = operandSize == 8 && instruction.CodeSize == CodeSize.Code64 &&
+                    instruction.Op0Kind == OpKind.Register &&
                     instruction.Op0Register is Register.AL or Register.BL or Register.CL or Register.DL or
                         Register.SIL or Register.DIL or Register.R8L or Register.R9L or Register.R10L or Register.R11L or
-                        Register.R12L or Register.R13L or Register.R14L or Register.R15L &&
-                    instruction.SegmentPrefix == Register.None && !instruction.HasLockPrefix &&
-                    !instruction.HasRepPrefix && !instruction.HasRepnePrefix)
+                        Register.R12L or Register.R13L or Register.R14L or Register.R15L;
+                var ordinaryTestEncoding = instruction.SegmentPrefix == Register.None && !instruction.HasLockPrefix &&
+                    !instruction.HasRepPrefix && !instruction.HasRepnePrefix;
+                if (instruction.Mnemonic == Mnemonic.Test && lowByteRegister && ordinaryTestEncoding &&
+                    instruction.Op1Kind == OpKind.Register && instruction.Op0Register == instruction.Op1Register &&
+                    instruction.OpCount == 2)
                 {
                     // The native instruction tests only the low byte, even when the enclosing
                     // register has nonzero high bits. Keep other TEST flag results on the common
@@ -1092,6 +1115,18 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     Add(instruction.IP, ISIL.OpCode.IntegerExtend, lowByte, ConvertOperand(instruction, 0),
                         Imm(8), Imm(32), Imm(0));
                     Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), lowByte, Imm(0)).IntegerBitWidth = 32;
+                    break;
+                }
+                if (instruction.Mnemonic == Mnemonic.Test && lowByteRegister && ordinaryTestEncoding &&
+                    !unresolvedMetadataGuard && instruction.OpCount == 2 && instruction.Op1Kind == OpKind.Immediate8)
+                {
+                    // TEST reads only the low byte. Its immediate is also eight bits, so the
+                    // full parent register ANDed with that mask has the same zero predicate,
+                    // regardless of unknown upper bits. No partial-register write is inferred.
+                    var selectedBits = new ISIL.Register(null, "COMPARE_MASKED_BYTE");
+                    Add(instruction.IP, ISIL.OpCode.And, selectedBits, ConvertOperand(instruction, 0),
+                        Imm(instruction.Immediate8)).IntegerBitWidth = 32;
+                    Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), selectedBits, Imm(0)).IntegerBitWidth = 32;
                     break;
                 }
                 var narrowZero = operandSize == 8 && instruction.Op1Kind == OpKind.Immediate8 && instruction.Immediate8 == 0 ||

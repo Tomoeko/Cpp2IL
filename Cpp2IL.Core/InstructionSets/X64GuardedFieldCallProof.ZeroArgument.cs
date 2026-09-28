@@ -26,6 +26,9 @@ internal static partial class X64GuardedFieldCallProof
     private static Evidence? FindZeroArgumentClass(MethodAnalysisContext method)
         => FindZeroArgumentTail(method, Il2CppTypeEnum.IL2CPP_TYPE_CLASS);
 
+    private static Evidence? FindZeroArgumentInt32Enum(MethodAnalysisContext method)
+        => FindZeroArgumentTail(method, Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE);
+
     private static Evidence? FindZeroArgumentTail(MethodAnalysisContext method,
         Il2CppTypeEnum returnType)
     {
@@ -44,12 +47,14 @@ internal static partial class X64GuardedFieldCallProof
             declaredReturnType != returnType ||
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
-            !(returnType == Il2CppTypeEnum.IL2CPP_TYPE_CLASS
-                ? NullCheckedCall.IsReferenceClass(method.ReturnType)
-                : ReferenceEquals(method.ReturnType,
-                    returnType == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
-                        ? app.SystemTypes.SystemBooleanType
-                        : app.SystemTypes.SystemInt32Type)) ||
+            !(returnType switch
+            {
+                Il2CppTypeEnum.IL2CPP_TYPE_CLASS => NullCheckedCall.IsReferenceClass(method.ReturnType),
+                Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE => UnchangedInt32EnumReturn(method),
+                Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN =>
+                    ReferenceEquals(method.ReturnType, app.SystemTypes.SystemBooleanType),
+                _ => ReferenceEquals(method.ReturnType, app.SystemTypes.SystemInt32Type),
+            }) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
@@ -74,6 +79,7 @@ internal static partial class X64GuardedFieldCallProof
         var native = X86Utils.Iterate(method).ToArray();
         if (native.Length != 8 || native[0].IP != start ||
             (returnType == Il2CppTypeEnum.IL2CPP_TYPE_CLASS && method.RawBytes.Length != 29) ||
+            (returnType == Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE && method.RawBytes.Length != 32) ||
             native[^1].NextIP != start + (ulong)method.RawBytes.Length ||
             native[^1].NextIP > region.End || region.End - native[^1].NextIP > 16 ||
             Enumerable.Range(1, method.RawBytes.Length - 1).Any(offset =>
@@ -120,8 +126,57 @@ internal static partial class X64GuardedFieldCallProof
             RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(target,
                 requireUniqueBinding: false) &&
             !RuntimeNullGuardCoalescer.HasOutputOptions(target) &&
-            CallEligible(target, receiverField, Array.Empty<FieldAnalysisContext>())).ToArray();
+            (returnType == Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE
+                ? EnumCallEligible(owner, target)
+                : CallEligible(target, receiverField, Array.Empty<FieldAnalysisContext>()))).ToArray();
         return candidates is [var target] ?
             new Evidence(target, receiverField, Array.Empty<FieldAnalysisContext>()) : null;
+    }
+
+    private static bool UnchangedInt32EnumReturn(MethodAnalysisContext method)
+    {
+        var enumType = method.ReturnType;
+        if (method.OverrideReturnType != null ||
+            !ReferenceEquals(enumType, method.DefaultReturnType) ||
+            enumType.Definition is not { IsEnumType: true, GenericContainer: null,
+                RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE,
+                    NumMods: 0, Byref: 0, Pinned: 0 } } ||
+            enumType.IsGenericInstance || enumType.GenericParameters.Count != 0 ||
+            enumType.Name != enumType.DefaultName || enumType.Namespace != enumType.DefaultNamespace ||
+            enumType.Attributes != enumType.DefaultAttributes ||
+            enumType.OverrideEnumUnderlyingType != null ||
+            !ReferenceEquals(enumType.BaseType, enumType.DefaultBaseType) ||
+            !ReferenceEquals(enumType.EnumUnderlyingType, method.AppContext.SystemTypes.SystemInt32Type) ||
+            !ReferenceEquals(enumType.DefaultEnumUnderlyingType, enumType.EnumUnderlyingType))
+            return false;
+
+        return enumType.Fields.Where(field => !field.IsStatic).ToArray() is [var value] &&
+               value.Name == "value__" && value.Name == value.DefaultName &&
+               value.Attributes == value.DefaultAttributes &&
+               value.Offset == value.DefaultOffset && value.OverrideFieldType == null &&
+               ReferenceEquals(value.FieldType, method.AppContext.SystemTypes.SystemInt32Type) &&
+               value.BackingData?.Field.RawFieldType is
+                   { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4,
+                       NumMods: 0, Byref: 0, Pinned: 0 };
+    }
+
+    private static bool EnumCallEligible(TypeAnalysisContext owner, MethodAnalysisContext target)
+    {
+        if (target.IsStatic || target.IsVirtual || target.Name is ".ctor" or ".cctor" ||
+            target.Name != target.DefaultName || target.OverrideReturnType != null ||
+            !ReferenceEquals(target.ReturnType, target.DefaultReturnType) ||
+            target.Definition is not { GenericContainer: null, parameterCount: 0 } ||
+            target.GenericParameters.Count != 0 ||
+            target.Attributes != target.DefaultAttributes ||
+            target.ImplAttributes != target.DefaultImplAttributes ||
+            (target.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
+            (target.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
+                                      MethodImplAttributes.ManagedMask |
+                                      MethodImplAttributes.InternalCall)) != 0 ||
+            target.DeclaringType is not { } receiverType ||
+            !NullCheckedCall.IsReferenceClass(receiverType) ||
+            !X64GuardedEnumParameterCallProof.AccessibleTarget(owner, target))
+            return false;
+        return UnchangedInt32EnumReturn(target);
     }
 }

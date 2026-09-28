@@ -47,6 +47,7 @@ import sys
 import time
 
 import byte_fields
+import byte_mask_parameter
 import boolean_getter
 import boolean_getter_metadata
 import byte_threshold
@@ -60,6 +61,7 @@ import forwarded_argument
 import struct_forward_call
 import struct_static_forward_call
 import integer_extensions
+import register_zero_extension
 import instance_reference_property
 import instance_reference_setter
 import iterator_factory
@@ -95,6 +97,7 @@ import word_array
 import word_fields
 import zero_arg_field_call
 import reference_tail_call
+import enum_return_tail
 import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
@@ -131,7 +134,7 @@ PROFILES = {
     "field-boolean-array": {"assembly": "BooleanFieldArrayFixture", "source": VALIDATION / "BooleanFieldArrayFixture", "methods": 3},
     "field-boolean-array-read": {"assembly": "FieldBooleanArrayReadFixture", "source": VALIDATION / "FieldBooleanArrayReadFixture", "methods": 4},
     "range-array-read": {"assembly": "RangeArrayReadFixture", "source": VALIDATION / "RangeArrayReadFixture", "methods": 4},
-    "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 4},
+    "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 6},
     "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 4},
@@ -209,6 +212,7 @@ PROFILES = {
     "alias-ambiguity": {"assembly": "AliasAmbiguityFixture", "source": VALIDATION / "AliasAmbiguityFixture", "methods": 3},
     "boolean-parameter-branch": {"assembly": "BooleanParameterBranchFixture", "source": VALIDATION / "BooleanParameterBranchFixture", "methods": 3},
     "narrow-test-arithmetic": {"assembly": "NarrowTestArithmeticFixture", "source": VALIDATION / "NarrowTestArithmeticFixture", "methods": 1},
+    "byte-mask-parameter": {"assembly": "ByteMaskParameterFixture", "source": VALIDATION / "ByteMaskParameterFixture", "methods": 6},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "dense-switch": {"assembly": "DenseSwitchFixture", "source": VALIDATION / "DenseSwitchFixture", "methods": 2},
     "composed-array": {"assembly": "ComposedArrayFixture", "source": VALIDATION / "ComposedArrayFixture", "methods": 6},
@@ -219,6 +223,7 @@ PROFILES = {
                               "source": VALIDATION / "InheritedFieldGuardFixture", "methods": 3},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 8},
     "reference-tail-call": {"assembly": "ReferenceTailCallFixture", "source": VALIDATION / "ReferenceTailCallFixture", "methods": 2},
+    "enum-return-tail": {"assembly": "EnumReturnTailFixture", "source": VALIDATION / "EnumReturnTailFixture", "methods": 4},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
     "call-result-boolean-store": {"assembly": "CallResultBooleanStoreFixture",
@@ -248,6 +253,7 @@ PROFILES = {
     "loop-calls": {"assembly": "LoopCallFixture", "source": VALIDATION / "LoopCallFixture", "methods": 4},
     "word-fields": {"assembly": "WordFieldFixture", "source": VALIDATION / "WordFieldFixture", "methods": 4},
     "integer-extensions": {"assembly": "IntegerExtensionFixture", "source": VALIDATION / "IntegerExtensionFixture", "methods": 12},
+    "register-zero-extension": {"assembly": "RegisterZeroExtensionFixture", "source": VALIDATION / "RegisterZeroExtensionFixture", "methods": 4},
     "byte-fields": {"assembly": "ByteFieldFixture", "source": VALIDATION / "ByteFieldFixture", "methods": 4},
     "float-comparisons": {"assembly": "FloatComparisonFixture", "source": VALIDATION / "FloatComparisonFixture", "methods": 12},
     "xmm-spill": {"assembly": "XmmSpillFixture", "source": VALIDATION / "XmmSpillFixture", "methods": 2},
@@ -299,6 +305,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return boolean_parameter_branch.verify(path, stage, VERSION)
     if profile == "narrow-test-arithmetic":
         return narrow_test_arithmetic.verify(path, stage, VERSION)
+    if profile == "byte-mask-parameter":
+        return byte_mask_parameter.verify(path, stage, VERSION)
     if profile == "catch-divide":
         return catch_divide.verify(path, stage, VERSION)
     if profile == "exception-regions":
@@ -457,6 +465,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return zero_arg_field_call.verify(path, stage, VERSION)
     if profile == "reference-tail-call":
         return reference_tail_call.verify(path, stage, VERSION)
+    if profile == "enum-return-tail":
+        return enum_return_tail.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":
         return boolean_tail_field_call.verify(path, stage, VERSION)
     if profile == "call-result-boolean-store":
@@ -491,6 +501,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return word_fields.verify(path, stage, VERSION)
     if profile == "integer-extensions":
         return integer_extensions.verify(path, stage, VERSION)
+    if profile == "register-zero-extension":
+        return register_zero_extension.verify(path, stage, VERSION)
     if profile == "byte-fields":
         return byte_fields.verify(path, stage, VERSION)
     if profile == "float-comparisons":

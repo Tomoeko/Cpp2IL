@@ -45,6 +45,7 @@ namespace RecoveryValidation
                         owner => owner.SetTrue(index));
                     Record(observations, scenario, "set-false", index,
                         owner => owner.SetFalse(index));
+                    RecordRead(observations, scenario, index);
                 }
             }
 
@@ -89,6 +90,15 @@ namespace RecoveryValidation
                 { "aliasBefore", alias == null ? (object)null : alias.Before },
                 { "aliasAfterField", alias == null ? (object)null : alias.After }
             });
+        }
+
+        private static void RecordRead(List<object> observations, Scenario scenario, int index)
+        {
+            bool? result = null;
+            Record(observations, scenario, "read", index,
+                owner => result = owner.ReadAt(index));
+            ((Dictionary<string, object>)observations[observations.Count - 1])["result"] =
+                result.HasValue ? (object)result.Value : null;
         }
 
         private static bool[] Copy(bool[] values) => values == null ? null : (bool[])values.Clone();
