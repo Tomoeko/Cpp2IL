@@ -25,7 +25,7 @@ internal static partial class X64GuardedFieldCallProof
 
     internal static Evidence? Find(MethodAnalysisContext method)
     {
-        if (FindZeroArgumentInt32(method) is { } zeroArgument)
+        if ((FindZeroArgumentInt32(method) ?? FindZeroArgumentBoolean(method)) is { } zeroArgument)
             return zeroArgument;
 
         var app = method.AppContext;

@@ -20,6 +20,9 @@ namespace RecoveryValidation
             RecordThrow(observations, "unsupported:null", null, first, second, true);
             RecordThrow(observations, "unimplemented:null", null, first, second, false);
 
+            RecordRefThrow(observations, "ref:negative", first, second, -23);
+            RecordRefThrow(observations, "ref:positive", first, second, 17);
+
             RecordReturn(observations, "return:first-negative", first, first, second, -2);
             RecordReturn(observations, "return:first-overflow", first, first, second, int.MaxValue);
             RecordReturn(observations, "return:second-underflow", second, first, second, int.MinValue);
@@ -70,10 +73,26 @@ namespace RecoveryValidation
             Record(observations, kind, result, exception, first, second);
         }
 
-        private static void Record(List<object> observations, string kind, int? result, string exception,
-            ThrowOnlyCases first, ThrowOnlyCases second)
+        private static void RecordRefThrow(List<object> observations, string kind,
+            ThrowOnlyCases first, ThrowOnlyCases second, int input)
         {
-            observations.Add(new Dictionary<string, object>
+            var value = input;
+            string exception = "none";
+            try
+            {
+                ThrowOnlyCases.ThrowWithStaticRef(ref value);
+            }
+            catch (Exception error)
+            {
+                exception = error.GetType().FullName;
+            }
+            Record(observations, kind, null, exception, first, second, value);
+        }
+
+        private static void Record(List<object> observations, string kind, int? result, string exception,
+            ThrowOnlyCases first, ThrowOnlyCases second, int? refValue = null)
+        {
+            var observation = new Dictionary<string, object>
             {
                 { "kind", kind },
                 { "result", result },
@@ -84,7 +103,10 @@ namespace RecoveryValidation
                 { "secondCurrent", second.Current },
                 { "secondNeighbor", second.Neighbor },
                 { "secondCalls", second.Calls }
-            });
+            };
+            if (refValue.HasValue)
+                observation.Add("refValue", refValue.Value);
+            observations.Add(observation);
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]

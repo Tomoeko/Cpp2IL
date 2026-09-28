@@ -146,7 +146,7 @@ internal static class X64TerminalManagedThrowProof
             method.Definition is not { GenericContainer: null } definition ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
             method.Name is ".ctor" or ".cctor" || method.Name != method.DefaultName ||
-            method.IsStatic || method.GenericParameters.Count != 0 ||
+            method.GenericParameters.Count != 0 ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             method.OverrideReturnType != null ||
@@ -155,10 +155,33 @@ internal static class X64TerminalManagedThrowProof
                                       MethodImplAttributes.ManagedMask |
                                       MethodImplAttributes.InternalCall)) != 0 ||
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
-            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
+            !HasUnchangedThrowSignature(method) ||
             !method.AppContext.MethodsByAddress.TryGetValue(method.UnderlyingPointer, out var bindings) ||
             bindings is not [{ } unique] || !ReferenceEquals(unique, method))
             return false;
+        return true;
+    }
+
+    private static bool HasUnchangedThrowSignature(MethodAnalysisContext method)
+    {
+        if (!method.IsStatic)
+            return RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method);
+        if (method.Definition is not { GenericContainer: null, parameterCount: 1,
+                RawReturnType: { NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
+            definition.InternalParameterData is not [{ } rawParameter] ||
+            method.Parameters is not [{ } parameter] ||
+            !ReferenceEquals(parameter.Definition, rawParameter) ||
+            rawParameter.RawType is not { NumMods: 0, Byref: 1, Pinned: 0 } ||
+            parameter.OverrideParameterType != null ||
+            parameter.Attributes != parameter.DefaultAttributes ||
+            parameter.Name != parameter.DefaultName ||
+            parameter.UseOverrideDefaultValue)
+            return false;
+
+        // The exact caller shape replaces RCX with the TypeInfo slot before
+        // its first call. Only a static method's sole incoming byref occupies
+        // RCX; an instance method passes its first parameter in RDX, which an
+        // allocator callee may observe before the caller clears EDX.
         return true;
     }
 

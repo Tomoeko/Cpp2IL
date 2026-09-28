@@ -22,6 +22,12 @@ namespace ThrowOnlyFixture
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
+        public static byte[] ThrowWithStaticRef(ref int value)
+        {
+            throw new NotSupportedException();
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
         public int ReturnAfterCall(int input)
         {
             int adjusted = AddSeven(input);

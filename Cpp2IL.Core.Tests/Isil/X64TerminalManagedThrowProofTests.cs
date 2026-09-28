@@ -15,6 +15,71 @@ public class X64TerminalManagedThrowProofTests
 {
     [Test]
     [NonParallelizable]
+    public void ExactPlayerProvesUnusedStaticByrefParameterInCompleteThrowBody()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_THROW_ONLY_STATIC_BYREF_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_THROW_ONLY_STATIC_BYREF_FIXTURE_INPUT to the neutral throw-only player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data",
+            "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata,
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var owner = app.GetAssemblyByName("ThrowOnlyFixture")!.Types
+                .Single(type => type.Name == "ThrowOnlyCases");
+            var method = owner.Methods.Single(candidate =>
+                candidate.Name == "ThrowWithStaticRef");
+            method.EnsureRawBytes();
+            var native = X86Utils.Iterate(method).ToArray();
+            Assert.That(method.Parameters, Has.Count.EqualTo(1));
+            Assert.That(method.IsStatic, Is.True);
+            Assert.That(method.Parameters[0].Definition!.RawType!.Byref,
+                Is.EqualTo(1));
+            Assert.That(method.Parameters[0].OverrideParameterType, Is.Null);
+            Assert.That(method.Parameters[0].ParameterType.FullName,
+                Is.EqualTo(method.Parameters[0].DefaultParameterType.FullName));
+            Assert.That(X64TerminalManagedThrowProof.TryProveCallerShape(native),
+                Is.True);
+            Assert.That(X86CallerExceptionRegionProof.Check(method, native,
+                new HashSet<ulong> { native[16].IP }), Is.Null);
+            var proof = X64TerminalManagedThrowProof.Find(method, native);
+            Assert.That(proof, Is.Not.Null);
+            Assert.That(proof!.ExceptionType.Name,
+                Is.EqualTo("NotSupportedException"));
+            Assert.That(X64TerminalManagedThrowProof.TryLift(method, native)!
+                .Select(instruction => instruction.OpCode),
+                Is.EqualTo(new[] { ISIL.OpCode.Newobj, ISIL.OpCode.CallVoid,
+                    ISIL.OpCode.Throw }));
+
+            try
+            {
+                method.Parameters[0].ParameterType = app.SystemTypes.SystemInt32Type;
+                Assert.That(X64TerminalManagedThrowProof.Find(method, native), Is.Null);
+            }
+            finally { method.Parameters[0].OverrideParameterType = null; }
+            try
+            {
+                method.Parameters[0].Attributes |= System.Reflection.ParameterAttributes.Out;
+                Assert.That(X64TerminalManagedThrowProof.Find(method, native), Is.Null);
+            }
+            finally { method.Parameters[0].OverrideAttributes = null; }
+            var changedInput = native.ToArray();
+            changedInput[2].Code = Code.Mov_r64_rm64;
+            Assert.That(X64TerminalManagedThrowProof.Find(method, changedInput),
+                Is.Null, "An added incoming-argument read invalidates the closed body.");
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    [NonParallelizable]
     public void ExactGeneratedResetUsesUnwindBoundaryWithinAnOverlongReportedSpan()
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_ITERATOR_GENERATED_FIXTURE_INPUT");

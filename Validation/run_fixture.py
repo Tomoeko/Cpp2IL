@@ -18,6 +18,7 @@ import native_int_field
 import reference_array
 import exception_regions
 import field_array
+import field_boolean_array
 import float_forward_store
 import nested_single_getter
 import fixed_reference_array
@@ -80,6 +81,7 @@ import xmm_ref_mutation
 import word_array
 import word_fields
 import zero_arg_field_call
+import boolean_tail_field_call
 import virtual_string_call
 import generic_dispatch
 import guarded_sink
@@ -98,6 +100,7 @@ PROFILES = {
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
     "array-sequence": {"assembly": "ArraySequenceFixture", "source": VALIDATION / "ArraySequenceFixture", "methods": 2},
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
+    "field-boolean-array": {"assembly": "BooleanFieldArrayFixture", "source": VALIDATION / "BooleanFieldArrayFixture", "methods": 3},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 6},
     "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 4},
@@ -145,7 +148,7 @@ PROFILES = {
                             "noManagedBody": {("RuntimeCastConcatFixture.INodeOwner", "get_Current"),
                                               ("RuntimeCastConcatFixture.INodeOwner", "set_Current")}},
     "static-literal-concat": {"assembly": "StaticLiteralConcatFixture", "source": VALIDATION / "StaticLiteralConcatFixture", "methods": 1},
-    "throw-only": {"assembly": "ThrowOnlyFixture", "source": VALIDATION / "ThrowOnlyFixture", "methods": 5},
+    "throw-only": {"assembly": "ThrowOnlyFixture", "source": VALIDATION / "ThrowOnlyFixture", "methods": 6},
     "metadata-guard-move": {"assembly": "MetadataGuardMoveFixture", "source": VALIDATION / "MetadataGuardMoveFixture", "methods": 3},
     "metadata-guard-parameter": {"assembly": "MetadataGuardParameterFixture", "source": VALIDATION / "MetadataGuardParameterFixture", "methods": 1},
     "metadata-forwarding": {"assembly": "MetadataForwardingFixture", "source": VALIDATION / "MetadataForwardingFixture", "methods": 5},
@@ -161,6 +164,8 @@ PROFILES = {
     "inherited-field-guard": {"assembly": "InheritedFieldGuardFixture",
                               "source": VALIDATION / "InheritedFieldGuardFixture", "methods": 3},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 8},
+    "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
+                                "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
     "struct-forward-call": {"assembly": "StructForwardCallFixture", "source": VALIDATION / "StructForwardCallFixture", "methods": 5},
     "struct-static-forward-call": {"assembly": "StructStaticForwardCallFixture", "source": VALIDATION / "StructStaticForwardCallFixture", "methods": 6},
@@ -227,6 +232,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return array_sequence.verify(path, stage, VERSION)
     if profile == "field-array":
         return field_array.verify(path, stage, VERSION)
+    if profile == "field-boolean-array":
+        return field_boolean_array.verify(path, stage, VERSION)
     if profile == "narrow-array":
         return narrow_array.verify(path, stage, VERSION)
     if profile == "nested-boolean-store":
@@ -339,6 +346,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return inherited_field_guard.verify(path, stage, VERSION)
     if profile == "zero-arg-field-call":
         return zero_arg_field_call.verify(path, stage, VERSION)
+    if profile == "boolean-tail-field-call":
+        return boolean_tail_field_call.verify(path, stage, VERSION)
     if profile == "forwarded-argument":
         return forwarded_argument.verify(path, stage, VERSION)
     if profile == "struct-forward-call":

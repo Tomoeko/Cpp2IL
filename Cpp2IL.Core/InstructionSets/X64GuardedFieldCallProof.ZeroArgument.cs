@@ -18,6 +18,13 @@ internal static partial class X64GuardedFieldCallProof
     // The direct tail jump can share its native address with unrelated methods. The
     // receiver field's original class and unchanged signature must select one binding.
     private static Evidence? FindZeroArgumentInt32(MethodAnalysisContext method)
+        => FindZeroArgumentScalar(method, Il2CppTypeEnum.IL2CPP_TYPE_I4);
+
+    private static Evidence? FindZeroArgumentBoolean(MethodAnalysisContext method)
+        => FindZeroArgumentScalar(method, Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN);
+
+    private static Evidence? FindZeroArgumentScalar(MethodAnalysisContext method,
+        Il2CppTypeEnum returnType)
     {
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) || method.IsStatic ||
@@ -29,11 +36,15 @@ internal static partial class X64GuardedFieldCallProof
                     NumMods: 0, Byref: 0, Pinned: 0 } } } owner ||
             !NullCheckedCall.IsReferenceClass(owner) ||
             method.Definition is not { GenericContainer: null, parameterCount: 0,
-                RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4,
+                RawReturnType: { Type: var declaredReturnType,
                     NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
+            declaredReturnType != returnType ||
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
-            !ReferenceEquals(method.ReturnType, app.SystemTypes.SystemInt32Type) ||
+            !ReferenceEquals(method.ReturnType,
+                returnType == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
+                    ? app.SystemTypes.SystemBooleanType
+                    : app.SystemTypes.SystemInt32Type) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
@@ -97,6 +108,8 @@ internal static partial class X64GuardedFieldCallProof
             target.UnderlyingPointer == native[6].NearBranchTarget &&
             ReferenceEquals(target.DeclaringType, receiverField.FieldType) &&
             !target.IsStatic && target.Parameters.Count == 0 &&
+            target.Definition?.RawReturnType is { Type: var targetReturnType,
+                NumMods: 0, Byref: 0, Pinned: 0 } && targetReturnType == returnType &&
             ReferenceEquals(target.ReturnType, method.ReturnType) &&
             RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(target,
                 requireUniqueBinding: false) &&

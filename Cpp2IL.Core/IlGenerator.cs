@@ -359,7 +359,7 @@ public static partial class IlGenerator
                     LoadLocal(target.Array, method, locals);
                     LoadOperand(target.Index, method, locals);
                     LoadOperand(instruction.Operands[1], method, locals, stored);
-                    instructions.Add(CilOpCodes.Stelem, stored.ToTypeSignature().ToTypeDefOrRef());
+                    instructions.Add(CreateArrayElementStore(stored));
                     break;
                 }
 
@@ -1058,7 +1058,7 @@ public static partial class IlGenerator
                 LoadLocal(arrayAccess.Array, method, locals);
                 LoadOperand(arrayAccess.Index, method, locals);
                 instructions.Add(CilOpCodes.Ldloc, elementScratch);
-                instructions.Add(CilOpCodes.Stelem, elementType.ToTypeSignature().ToTypeDefOrRef());
+                instructions.Add(CreateArrayElementStore(elementType));
                 break;
 
             case MemoryOperand memory:
@@ -1078,5 +1078,15 @@ public static partial class IlGenerator
             default:
                 throw new DecompilerException($"Store destination is unresolved: {operand}");
         }
+    }
+
+    private static CilInstruction CreateArrayElementStore(TypeAnalysisContext elementType)
+    {
+        // A Boolean literal is loaded as Int32. Typed stelem Boolean fails
+        // IL verification here; the CLI's eight-bit store accepts that stack value.
+        return elementType.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
+            ? new CilInstruction(CilOpCodes.Stelem_I1)
+            : new CilInstruction(CilOpCodes.Stelem,
+                elementType.ToTypeSignature().ToTypeDefOrRef());
     }
 }

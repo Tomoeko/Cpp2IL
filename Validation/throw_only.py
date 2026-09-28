@@ -29,6 +29,10 @@ def observations():
         _observation("unsupported:second", None, "System.NotSupportedException", *initial),
         _observation("unsupported:null", None, "System.NullReferenceException", *initial),
         _observation("unimplemented:null", None, "System.NullReferenceException", *initial),
+        {**_observation("ref:negative", None, "System.NotSupportedException", *initial),
+         "refValue": -23},
+        {**_observation("ref:positive", None, "System.NotSupportedException", *initial),
+         "refValue": 17},
         _observation("return:first-negative", 10, "none", *first_return),
         _observation("return:first-overflow", -(2**31) + 16, "none", *first_overflow),
         _observation("return:second-underflow", -(2**31) + 18, "none", *second_underflow),
@@ -46,6 +50,6 @@ def verify(path, stage, version):
     expected = observations()
     if report.get("observations") != expected:
         raise ValueError("Throw-only behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 5,
+    return {"status": "passed", "observations": len(expected), "methods": 6,
             "platform": platform, "profile": "throw-only",
-            "scope": "two exact exception types, null owners, returning calls, signed wraparound and unchanged fields"}
+            "scope": "two exact exception types, null owners, byref and returning calls, signed wraparound and unchanged fields"}

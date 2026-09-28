@@ -42,7 +42,10 @@ internal static class X86DirectBooleanFieldGetterProof
     {
         var shape = TryProveShape(body);
         var hasUnrelatedSuffix = false;
-        if (shape == null && method.IsVirtual && body.Count > 3)
+        // Raw size estimates can include the next aligned native function for
+        // ordinary getters too. Its full bytes, padding and unwind entry are
+        // authenticated below before the two-instruction getter is accepted.
+        if (shape == null && body.Count > 3)
         {
             shape = TryProveShape(body.Take(2).ToArray());
             hasUnrelatedSuffix = shape != null;
