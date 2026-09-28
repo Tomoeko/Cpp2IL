@@ -1,0 +1,3 @@
+<linker>
+  <assembly fullname="ArrayElementScalarFieldFixture" preserve="all" />
+</linker>

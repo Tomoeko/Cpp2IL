@@ -29,6 +29,7 @@ import fixed_reference_array
 import folded_reference_array
 import owner_indexed_enum_array
 import nested_array_call
+import array_element_scalar_field
 import inherited_reference_array_read
 import fixed_scalar_array
 import array_element_store
@@ -95,6 +96,7 @@ import call_result_boolean_store
 import call_result_tail_guard
 import call_result_false_tail
 import dual_result_tail_guard
+import triple_literal_guard
 import ordered_call_tail_guard
 import ordered_noarg_tail_guard
 import unsealed_zero_store
@@ -137,6 +139,8 @@ PROFILES = {
                                   "source": VALIDATION / "OwnerIndexedEnumArrayFixture", "methods": 4},
     "nested-array-call": {"assembly": "NestedArrayCallFixture",
                           "source": VALIDATION / "NestedArrayCallFixture", "methods": 14},
+    "array-element-scalar-field": {"assembly": "ArrayElementScalarFieldFixture",
+                                   "source": VALIDATION / "ArrayElementScalarFieldFixture", "methods": 5},
     "inherited-reference-array-read": {"assembly": "InheritedReferenceArrayReadFixture",
                                        "source": VALIDATION / "InheritedReferenceArrayReadFixture", "methods": 6},
     "fixed-scalar-array": {"assembly": "FixedScalarArrayFixture", "source": VALIDATION / "FixedScalarArrayFixture", "methods": 3},
@@ -219,6 +223,8 @@ PROFILES = {
                                "source": VALIDATION / "CallResultFalseTailFixture", "methods": 7},
     "dual-result-tail-guard": {"assembly": "DualResultTailGuardFixture",
                                "source": VALIDATION / "DualResultTailGuardFixture", "methods": 12},
+    "triple-literal-guard": {"assembly": "TripleLiteralGuardFixture",
+                             "source": VALIDATION / "TripleLiteralGuardFixture", "methods": 6},
     "ordered-call-tail-guard": {"assembly": "OrderedCallTailGuardFixture",
                                  "source": VALIDATION / "OrderedCallTailGuardFixture", "methods": 9,
                                  "noManagedBody": {("OrderedCallTailGuardFixture.GuardBase", "Forward")}},
@@ -365,6 +371,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return owner_indexed_enum_array.verify(path, stage, VERSION)
     if profile == "nested-array-call":
         return nested_array_call.verify(path, stage, VERSION)
+    if profile == "array-element-scalar-field":
+        return array_element_scalar_field.verify(path, stage, VERSION)
     if profile == "inherited-reference-array-read":
         return inherited_reference_array_read.verify(path, stage, VERSION)
     if profile == "field-boolean-array-read":
@@ -447,6 +455,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return call_result_false_tail.verify(path, stage, VERSION)
     if profile == "dual-result-tail-guard":
         return dual_result_tail_guard.verify(path, stage, VERSION)
+    if profile == "triple-literal-guard":
+        return triple_literal_guard.verify(path, stage, VERSION)
     if profile == "ordered-call-tail-guard":
         return ordered_call_tail_guard.verify(path, stage, VERSION)
     if profile == "ordered-noarg-tail-guard":

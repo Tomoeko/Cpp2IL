@@ -345,8 +345,10 @@ internal static class X64LiteralConcatProof
     }
 
     internal static bool ProveConcat(MethodAnalysisContext concat,
-        ApplicationAnalysisContext app)
+        ApplicationAnalysisContext app, int argumentCount = 2)
     {
+        if (argumentCount is not (2 or 3))
+            return false;
         var text = app.SystemTypes.SystemStringType;
         var corlib = app.SystemTypes.SystemObjectType.DeclaringAssembly;
         if (!ReferenceEquals(text.DeclaringAssembly, corlib) ||
@@ -358,17 +360,20 @@ internal static class X64LiteralConcatProof
             !(corlib.PublicKeyToken ?? []).SequenceEqual(corlib.DefaultPublicKeyToken ?? []) ||
             concat.DeclaringType != text || concat.Name != "Concat" ||
             concat.Name != concat.DefaultName || !concat.IsStatic || concat.IsVirtual ||
-            concat.Parameters.Count != 2 || concat.GenericParameters.Count != 0 ||
+            concat.Parameters.Count != argumentCount ||
+            concat.GenericParameters.Count != 0 ||
             concat.OverrideReturnType != null || !ReferenceEquals(concat.ReturnType, text) ||
             concat.Attributes != concat.DefaultAttributes ||
             concat.ImplAttributes != concat.DefaultImplAttributes ||
-            concat.Definition is not { GenericContainer: null, parameterCount: 2,
+            concat.Definition is not { GenericContainer: null,
                 RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_STRING,
-                    NumMods: 0, Byref: 0, Pinned: 0 }, InternalParameterData: [var first, var second] } ||
-            first.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_STRING,
-                NumMods: 0, Byref: 0, Pinned: 0 } ||
-            second.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_STRING,
-                NumMods: 0, Byref: 0, Pinned: 0 } ||
+                    NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
+            definition.parameterCount != argumentCount ||
+            definition.InternalParameterData is not { } rawParameters ||
+            rawParameters.Length != argumentCount ||
+            rawParameters.Any(parameter => parameter.RawType is not
+                { Type: Il2CppTypeEnum.IL2CPP_TYPE_STRING,
+                    NumMods: 0, Byref: 0, Pinned: 0 }) ||
             concat.Parameters.Any(parameter => parameter.IsRef ||
                 !ReferenceEquals(parameter.ParameterType, text) ||
                 !ReferenceEquals(parameter.DefaultParameterType, text) ||
