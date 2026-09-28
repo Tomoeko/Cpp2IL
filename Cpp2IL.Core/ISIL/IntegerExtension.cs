@@ -19,7 +19,9 @@ internal readonly record struct IntegerExtension(int SourceBits, int ResultBits,
 
     public bool HasCanonicalTypes(Instruction instruction, ApplicationAnalysisContext app) =>
         instruction.Operands is [LocalVariable destination, LocalVariable source, _, _, _] &&
-        StorageBits(source.Type, app.SystemTypes) >= SourceBits &&
+        (StorageBits(source.Type, app.SystemTypes) >= SourceBits ||
+         SourceBits == 8 && ResultBits == 32 && !Signed &&
+         ReferenceEquals(source.Type, app.SystemTypes.SystemBooleanType)) &&
         StorageBits(destination.Type, app.SystemTypes) == ResultBits;
 
     public static bool IsPureAndValid(Instruction instruction) =>

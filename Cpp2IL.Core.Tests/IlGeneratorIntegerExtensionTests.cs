@@ -99,6 +99,39 @@ public partial class IlGeneratorParameterTests
         Assert.That(runtime.Type.GetMethod("TwoExtensions")!.Invoke(null, [0x1234567800000080L]), Is.EqualTo(0xFFFFFF80UL));
     }
 
+    [Test]
+    public void IntegerExtensionAdmitsCanonicalBooleanLowByteTruncation()
+    {
+        var types = _app.SystemTypes;
+        var (context, definition, parameters) = CreateMethod("BooleanLowByte", types.SystemUInt32Type,
+            [types.SystemBooleanType]);
+        var result = new LocalVariable("lowByte", new Register(820, "lowByte"), types.SystemUInt32Type);
+        Emit(context, definition,
+        [
+            new(0, OpCode.IntegerExtend, result, parameters[0], Imm(8), Imm(32), Imm(0)),
+            new(1, OpCode.Return, result),
+        ]);
+        using var runtime = Load();
+        Assert.That(runtime.Type.GetMethod("BooleanLowByte")!.Invoke(null, [false]), Is.EqualTo(0U));
+        Assert.That(runtime.Type.GetMethod("BooleanLowByte")!.Invoke(null, [true]), Is.EqualTo(1U));
+    }
+
+    [TestCase(8, 32, 1)]
+    [TestCase(8, 64, 0)]
+    [TestCase(16, 32, 0)]
+    public void IntegerExtensionRejectsOtherBooleanWidthOrSignClaims(int sourceBits, int resultBits, int signed)
+    {
+        var types = _app.SystemTypes;
+        var resultType = resultBits == 32 ? types.SystemUInt32Type : types.SystemUInt64Type;
+        var (context, definition, parameters) = CreateMethod("InvalidBooleanExtension", resultType,
+            [types.SystemBooleanType]);
+        var result = new LocalVariable("result", new Register(821, "result"), resultType);
+        Assert.That(() => Emit(context, definition,
+            [new(0, OpCode.IntegerExtend, result, parameters[0], Imm(sourceBits), Imm(resultBits), Imm(signed)),
+                new(1, OpCode.Return, result)]),
+            Throws.TypeOf<DecompilerException>().With.Message.Contains("Integer extension"));
+    }
+
     [TestCase("boolean-source")]
     [TestCase("char-source")]
     [TestCase("float-source")]

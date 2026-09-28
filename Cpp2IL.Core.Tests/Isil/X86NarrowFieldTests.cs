@@ -24,7 +24,6 @@ public class X86NarrowFieldTests
 
     [TestCase("80791001")] // nonzero literal
     [TestCase("80F900")] // partial register CMP
-    [TestCase("84DB")] // volatile load/barrier is followed by TEST BL,BL
     [TestCase("6683791001")] // word memory CMP with nonzero immediate8to16
     [TestCase("668179100001")] // word memory CMP with nonzero immediate16
     [TestCase("6683F900")] // partial-register word CMP

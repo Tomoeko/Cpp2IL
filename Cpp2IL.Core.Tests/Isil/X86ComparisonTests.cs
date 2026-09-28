@@ -69,13 +69,44 @@ public class X86ComparisonTests
 
     [TestCase("38D1")] // cmp cl, dl
     [TestCase("6639D1")] // cmp cx, dx
-    [TestCase("84C9")] // test cl, cl
+    [TestCase("84D8")] // test al, bl; two distinct low-byte inputs
+    [TestCase("84E4")] // test ah, ah; the high byte is not the low byte of rax
+    [TestCase("4084E4")] // test spl, spl; stack-pointer alias is not admitted
+    [TestCase("4084ED")] // test bpl, bpl; frame-pointer alias is not admitted
     [TestCase("F30F5FC1")] // maxss xmm0, xmm1
     [TestCase("F30F5DC1")] // minss xmm0, xmm1
     [TestCase("0F4703")] // cmova eax, [rbx] reads memory even when not selected
     public void UnsupportedWidthOrFloatingSemanticsAreExplicit(string bytes)
     {
         Assert.That(Lift(Convert.FromHexString(bytes)).Single().OpCode, Is.EqualTo(OpCode.NotImplemented));
+    }
+
+    [TestCase("84C0")] // test al, al
+    [TestCase("84C9")] // test cl, cl
+    [TestCase("84D2")] // test dl, dl
+    [TestCase("84DB")] // test bl, bl
+    public void LowByteSelfTestUsesOnlyTheNativeByteAndKeepsOtherFlagsUnresolved(string bytes)
+    {
+        var nativeTest = Lift(Convert.FromHexString(bytes));
+        Assert.That(nativeTest[0].OpCode, Is.EqualTo(OpCode.IntegerExtend));
+        Assert.That(nativeTest[0].Operands.Skip(2).OfType<Immediate>().Select(x => x.Value),
+            Is.EqualTo(new long[] { 8, 32, 0 }));
+        Assert.That(nativeTest.Single(x => x.Destination is Register { Name: "ZF" }).OpCode,
+            Is.EqualTo(OpCode.CheckEqual));
+        foreach (var flag in new[] { "CF", "OF" })
+            Assert.That(nativeTest.Single(x => x.Destination is Register r && r.Name == flag).OpCode,
+                Is.EqualTo(OpCode.Move), flag);
+        foreach (var flag in new[] { "SF", "PF" })
+            Assert.That(nativeTest.Single(x => x.Destination is Register r && r.Name == flag).OpCode,
+                Is.EqualTo(OpCode.UnresolvedValue), flag);
+
+        if (bytes == "84D2")
+        {
+            var code = nativeTest.Concat(Lift([0x74, 0])).ToList(); // je short +0
+            foreach (var parent in new long[] { 0, 1, 0x100, 0x101, 0x1234567800000000, long.MinValue, -256, -255 })
+                Assert.That(Evaluate(code, "branch", 0, parent), Is.EqualTo((parent & 0xFF) == 0),
+                    $"full parent register {parent:X16}");
+        }
     }
 
     private static List<Instruction> Lift(byte[] bytes)
@@ -116,6 +147,21 @@ public class X86ComparisonTests
             }
             if (instruction.OpCode == OpCode.Nop)
                 continue;
+            if (instruction.OpCode == OpCode.IntegerExtend)
+            {
+                var source = Read(instruction.Operands[1]);
+                var sourceBits = (int)((Immediate)instruction.Operands[2]).Value;
+                var resultBits = (int)((Immediate)instruction.Operands[3]).Value;
+                var signed = ((Immediate)instruction.Operands[4]).Value != 0;
+                var mask = (1L << sourceBits) - 1;
+                var extended = source & mask;
+                if (signed && (extended & (1L << (sourceBits - 1))) != 0)
+                    extended |= ~mask;
+                if (resultBits == 32)
+                    extended = unchecked((int)extended);
+                values[((Register)instruction.Destination!).Name] = extended;
+                continue;
+            }
             if (instruction.OpCode == OpCode.ConditionalJump)
             {
                 var taken = Read(instruction.Operands[1]) != 0;

@@ -1076,6 +1076,24 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Test:
             case Mnemonic.Cmp:
                 operandSize = (instruction.Op0Kind == OpKind.Register ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize()) * 8;
+                if (instruction.Mnemonic == Mnemonic.Test && operandSize == 8 &&
+                    instruction.CodeSize == CodeSize.Code64 && instruction.Op0Kind == OpKind.Register &&
+                    instruction.Op1Kind == OpKind.Register && instruction.Op0Register == instruction.Op1Register &&
+                    instruction.Op0Register is Register.AL or Register.BL or Register.CL or Register.DL or
+                        Register.SIL or Register.DIL or Register.R8L or Register.R9L or Register.R10L or Register.R11L or
+                        Register.R12L or Register.R13L or Register.R14L or Register.R15L &&
+                    instruction.SegmentPrefix == Register.None && !instruction.HasLockPrefix &&
+                    !instruction.HasRepPrefix && !instruction.HasRepnePrefix)
+                {
+                    // The native instruction tests only the low byte, even when the enclosing
+                    // register has nonzero high bits. Keep other TEST flag results on the common
+                    // clobber path until they have their own width-aware proof.
+                    var lowByte = new ISIL.Register(null, "COMPARE_LOW_BYTE");
+                    Add(instruction.IP, ISIL.OpCode.IntegerExtend, lowByte, ConvertOperand(instruction, 0),
+                        Imm(8), Imm(32), Imm(0));
+                    Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"), lowByte, Imm(0)).IntegerBitWidth = 32;
+                    break;
+                }
                 var narrowZero = operandSize == 8 && instruction.Op1Kind == OpKind.Immediate8 && instruction.Immediate8 == 0 ||
                                  operandSize == 16 && (instruction.Op1Kind == OpKind.Immediate8to16 && instruction.Immediate8to16 == 0 ||
                                                        instruction.Op1Kind == OpKind.Immediate16 && instruction.Immediate16 == 0);

@@ -18,12 +18,15 @@ internal static partial class X64GuardedFieldCallProof
     // The direct tail jump can share its native address with unrelated methods. The
     // receiver field's original class and unchanged signature must select one binding.
     private static Evidence? FindZeroArgumentInt32(MethodAnalysisContext method)
-        => FindZeroArgumentScalar(method, Il2CppTypeEnum.IL2CPP_TYPE_I4);
+        => FindZeroArgumentTail(method, Il2CppTypeEnum.IL2CPP_TYPE_I4);
 
     private static Evidence? FindZeroArgumentBoolean(MethodAnalysisContext method)
-        => FindZeroArgumentScalar(method, Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN);
+        => FindZeroArgumentTail(method, Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN);
 
-    private static Evidence? FindZeroArgumentScalar(MethodAnalysisContext method,
+    private static Evidence? FindZeroArgumentClass(MethodAnalysisContext method)
+        => FindZeroArgumentTail(method, Il2CppTypeEnum.IL2CPP_TYPE_CLASS);
+
+    private static Evidence? FindZeroArgumentTail(MethodAnalysisContext method,
         Il2CppTypeEnum returnType)
     {
         var app = method.AppContext;
@@ -41,10 +44,12 @@ internal static partial class X64GuardedFieldCallProof
             declaredReturnType != returnType ||
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
-            !ReferenceEquals(method.ReturnType,
-                returnType == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
-                    ? app.SystemTypes.SystemBooleanType
-                    : app.SystemTypes.SystemInt32Type) ||
+            !(returnType == Il2CppTypeEnum.IL2CPP_TYPE_CLASS
+                ? NullCheckedCall.IsReferenceClass(method.ReturnType)
+                : ReferenceEquals(method.ReturnType,
+                    returnType == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
+                        ? app.SystemTypes.SystemBooleanType
+                        : app.SystemTypes.SystemInt32Type)) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
             (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
@@ -68,6 +73,7 @@ internal static partial class X64GuardedFieldCallProof
         method.EnsureRawBytes();
         var native = X86Utils.Iterate(method).ToArray();
         if (native.Length != 8 || native[0].IP != start ||
+            (returnType == Il2CppTypeEnum.IL2CPP_TYPE_CLASS && method.RawBytes.Length != 29) ||
             native[^1].NextIP != start + (ulong)method.RawBytes.Length ||
             native[^1].NextIP > region.End || region.End - native[^1].NextIP > 16 ||
             Enumerable.Range(1, method.RawBytes.Length - 1).Any(offset =>

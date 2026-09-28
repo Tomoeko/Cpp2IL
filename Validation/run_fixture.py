@@ -2,6 +2,7 @@
 """Compile/build a synthetic or recovered fixture in an isolated exact-version project."""
 
 import argparse
+from contextlib import contextmanager
 import alias_ambiguity
 import array_access
 import array_sequence
@@ -72,6 +73,7 @@ import metadata_forwarding
 import metadata_accessor
 import loop_calls
 import narrow_array
+import narrow_test_arithmetic
 import nested_boolean_store
 import nested_boolean_getter
 import nested_flag_setter
@@ -92,6 +94,7 @@ import xmm_ref_mutation
 import word_array
 import word_fields
 import zero_arg_field_call
+import reference_tail_call
 import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
@@ -205,6 +208,7 @@ PROFILES = {
     "metadata-accessor": {"assembly": "MetadataAccessorFixture", "source": VALIDATION / "MetadataAccessorFixture", "methods": 6},
     "alias-ambiguity": {"assembly": "AliasAmbiguityFixture", "source": VALIDATION / "AliasAmbiguityFixture", "methods": 3},
     "boolean-parameter-branch": {"assembly": "BooleanParameterBranchFixture", "source": VALIDATION / "BooleanParameterBranchFixture", "methods": 3},
+    "narrow-test-arithmetic": {"assembly": "NarrowTestArithmeticFixture", "source": VALIDATION / "NarrowTestArithmeticFixture", "methods": 1},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "dense-switch": {"assembly": "DenseSwitchFixture", "source": VALIDATION / "DenseSwitchFixture", "methods": 2},
     "composed-array": {"assembly": "ComposedArrayFixture", "source": VALIDATION / "ComposedArrayFixture", "methods": 6},
@@ -214,6 +218,7 @@ PROFILES = {
     "inherited-field-guard": {"assembly": "InheritedFieldGuardFixture",
                               "source": VALIDATION / "InheritedFieldGuardFixture", "methods": 3},
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 8},
+    "reference-tail-call": {"assembly": "ReferenceTailCallFixture", "source": VALIDATION / "ReferenceTailCallFixture", "methods": 2},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
     "call-result-boolean-store": {"assembly": "CallResultBooleanStoreFixture",
@@ -292,6 +297,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return alias_ambiguity.verify(path, stage, VERSION)
     if profile == "boolean-parameter-branch":
         return boolean_parameter_branch.verify(path, stage, VERSION)
+    if profile == "narrow-test-arithmetic":
+        return narrow_test_arithmetic.verify(path, stage, VERSION)
     if profile == "catch-divide":
         return catch_divide.verify(path, stage, VERSION)
     if profile == "exception-regions":
@@ -448,6 +455,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return inherited_field_guard.verify(path, stage, VERSION)
     if profile == "zero-arg-field-call":
         return zero_arg_field_call.verify(path, stage, VERSION)
+    if profile == "reference-tail-call":
+        return reference_tail_call.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":
         return boolean_tail_field_call.verify(path, stage, VERSION)
     if profile == "call-result-boolean-store":
@@ -813,6 +822,26 @@ def run_process(command, environment, log, timeout, cwd=None):
             "seconds": round(time.monotonic() - started, 3)}
 
 
+@contextmanager
+def wine_editor_slot(enabled):
+    if not enabled or os.name == "nt":
+        yield 0.0
+        return
+
+    import fcntl
+
+    # The supplied Windows editor shares one Wine prefix across fixture runs.
+    # A process lock also releases the slot when a validation process exits early.
+    lock_path = ROOT / "Files" / "windows-unity-editor.lock"
+    with lock_path.open("a+b") as lock:
+        waiting_since = time.monotonic()
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield round(time.monotonic() - waiting_since, 3)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def isolate_player(player, destination):
     def excluded(_directory, names):
         return [name for name in names if "BackUpThisFolder" in name or "BurstDebugInformation" in name
@@ -1148,7 +1177,9 @@ def main():
 
         def editor_stage(method, label):
             command = common + ["-executeMethod", method, "-logFile", target_path(run_dir / (label + "-editor.log"))]
-            outcome = run_process(command, environment, run_dir / (label + "-process.log"), args.timeout)
+            with wine_editor_slot(bool(args.wine)) as queue_seconds:
+                outcome = run_process(command, environment, run_dir / (label + "-process.log"), args.timeout)
+            outcome["editorQueueSeconds"] = queue_seconds
             receipt["commands"].append(outcome)
             write_json(receipt_path, receipt)
             return outcome
