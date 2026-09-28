@@ -70,12 +70,32 @@ internal static class X64FixedReferenceArrayReadProof
                 return null;
 
             var fields = owner.Fields.Where(field => !field.IsStatic &&
-                field.Offset == (long)fieldOffset &&
-                field.BackingData?.Field.RawFieldType is
-                    { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
-                        NumMods: 0, Byref: 0, Pinned: 0 }).ToArray();
+                field.Offset == (long)fieldOffset).ToArray();
+            if (fields.Length == 0 && owner.BaseType is
+                { IsGenericInstance: false,
+                    Definition: { GenericContainer: null,
+                        RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                            NumMods: 0, Byref: 0, Pinned: 0 } } } baseType &&
+                baseType.GenericParameters.Count == 0 &&
+                baseType.Name == baseType.DefaultName &&
+                baseType.Namespace == baseType.DefaultNamespace &&
+                baseType.Attributes == baseType.DefaultAttributes &&
+                ReferenceEquals(baseType.BaseType, baseType.DefaultBaseType))
+            {
+                // A derived getter may directly read a public array declared by
+                // its immediate ordinary base. Keep the field owner's metadata
+                // identity and prove the complete receiver layout below.
+                fields = baseType.Fields.Where(field => !field.IsStatic &&
+                    field.Offset == (long)fieldOffset &&
+                    field.Visibility == FieldAttributes.Public &&
+                    ReferenceEquals(field.DeclaringType, baseType) &&
+                    !owner.Fields.Any(owned => owned.Name == field.Name)).ToArray();
+            }
             if (fields is not [{ } arrayField] ||
                 arrayField.Name != arrayField.DefaultName ||
+                arrayField.BackingData?.Field.RawFieldType is not
+                    { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
+                        NumMods: 0, Byref: 0, Pinned: 0 } ||
                 arrayField.FieldType is not SzArrayTypeAnalysisContext
                     { ElementType: var element } ||
                 !ReferenceEquals(element, method.ReturnType))

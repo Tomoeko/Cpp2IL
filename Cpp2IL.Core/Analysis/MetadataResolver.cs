@@ -231,10 +231,18 @@ public static class MetadataResolver
             if (!method.AppContext.MethodsByAddress.TryGetValue(target.UnsignedValue, out var candidates) || candidates.Count < 2)
                 continue;
 
+            var convention = method.AppContext.InstructionSet.CallingConventionResolver;
+            if (BindInertObjectConstructorTailCall(method, instruction,
+                    target.UnsignedValue, candidates))
+            {
+                changed = true;
+                continue;
+            }
+
             // A hidden return buffer changes the receiver's native argument
             // slot. RCX alone cannot select between those candidate ABIs.
             if (instruction.DeferredCallReturns != null &&
-                method.AppContext.InstructionSet.CallingConventionResolver is { } convention &&
+                convention != null &&
                 candidates.Any(convention.ReturnsViaHiddenBuffer))
                 continue;
 
@@ -302,6 +310,43 @@ public static class MetadataResolver
         }
 
         return changed;
+    }
+
+    // Copy and constant propagation can expose the literal null MethodInfo and
+    // original receiver after the type/field fixpoint. Revisit only this complete
+    // native constructor proof before raw call slots are trimmed.
+    public static bool ResolveProvedInertObjectConstructorTailCalls(
+        MethodAnalysisContext method)
+    {
+        if (method.Name != ".ctor" || method.ControlFlowGraph == null)
+            return false;
+
+        var changed = false;
+        foreach (var instruction in method.ControlFlowGraph.Instructions)
+        {
+            if (!instruction.IsCall || instruction.Operands[0] is not Immediate target ||
+                !method.AppContext.MethodsByAddress.TryGetValue(
+                    target.UnsignedValue, out var aliases) || aliases.Count < 2)
+                continue;
+            changed |= BindInertObjectConstructorTailCall(method, instruction,
+                target.UnsignedValue, aliases);
+        }
+        return changed;
+    }
+
+    private static bool BindInertObjectConstructorTailCall(
+        MethodAnalysisContext method, Instruction instruction, ulong target,
+        IReadOnlyList<MethodAnalysisContext> aliases)
+    {
+        if (method.Name != ".ctor" || instruction.DeferredCallReturns == null ||
+            method.AppContext.InstructionSet.CallingConventionResolver is not
+                { } convention ||
+            X64InertObjectConstructorTailCallProof.Find(method, instruction,
+                target, aliases) is not { } baseConstructor)
+            return false;
+        instruction.SetOperand(0, baseConstructor);
+        convention.RemapRawArguments(instruction, baseConstructor);
+        return true;
     }
 
     // The receiver ('this') of a call is the first integer-slot argument: operand 1 for CallVoid

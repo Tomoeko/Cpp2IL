@@ -428,6 +428,8 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
 
         LocalVariables.PropagateLateSignedIntegerTypes(this);
 
+        MetadataResolver.ResolveProvedInertObjectConstructorTailCalls(this);
+
         InternalCallGuardRemover.Run(this);
         KeyFunctionRecovery.Run(this);
 

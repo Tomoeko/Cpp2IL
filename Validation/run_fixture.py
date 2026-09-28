@@ -26,6 +26,7 @@ import constructed_base_boolean_array
 import float_forward_store
 import nested_single_getter
 import fixed_reference_array
+import inherited_reference_array_read
 import fixed_scalar_array
 import array_element_store
 import field_guard
@@ -97,6 +98,7 @@ import generic_dispatch
 import guarded_sink
 import folded_state_constructor
 import folded_literal_constructor
+import shared_inert_constructor
 import shared_abi
 import constructor_thunk_chain
 
@@ -121,6 +123,8 @@ PROFILES = {
     "float-forward-store": {"assembly": "FloatForwardStoreFixture", "source": VALIDATION / "FloatForwardStoreFixture", "methods": 5},
     "nested-single-getter": {"assembly": "NestedSingleGetterFixture", "source": VALIDATION / "NestedSingleGetterFixture", "methods": 3},
     "fixed-reference-array": {"assembly": "FixedReferenceArrayFixture", "source": VALIDATION / "FixedReferenceArrayFixture", "methods": 5},
+    "inherited-reference-array-read": {"assembly": "InheritedReferenceArrayReadFixture",
+                                       "source": VALIDATION / "InheritedReferenceArrayReadFixture", "methods": 6},
     "fixed-scalar-array": {"assembly": "FixedScalarArrayFixture", "source": VALIDATION / "FixedScalarArrayFixture", "methods": 3},
     "shared-abi": {"assembly": "SharedAbiFixture", "source": VALIDATION / "SharedAbiFixture", "methods": 15},
     "array-element-store": {"assembly": "ArrayElementStoreFixture", "source": VALIDATION / "ArrayElementStoreFixture", "methods": 4},
@@ -136,6 +140,7 @@ PROFILES = {
     "guarded-sink": {"assembly": "GuardedSinkFixture", "source": VALIDATION / "GuardedSinkFixture", "methods": 3},
     "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
     "folded-literal-constructor": {"assembly": "FoldedLiteralConstructorFixture", "source": VALIDATION / "FoldedLiteralConstructorFixture", "methods": 3},
+    "shared-inert-constructor": {"assembly": "SharedInertConstructorFixture", "source": VALIDATION / "SharedInertConstructorFixture", "methods": 2},
     "constructor-thunk-chain": {"assembly": "ConstructorThunkChainFixture", "source": VALIDATION / "ConstructorThunkChainFixture", "methods": 7},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 10},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
@@ -293,6 +298,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return folded_state_constructor.verify(path, stage, VERSION)
     if profile == "folded-literal-constructor":
         return folded_literal_constructor.verify(path, stage, VERSION)
+    if profile == "shared-inert-constructor":
+        return shared_inert_constructor.verify(path, stage, VERSION)
     if profile == "constructor-thunk-chain":
         return constructor_thunk_chain.verify(path, stage, VERSION)
     if profile == "array-call":
@@ -319,6 +326,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return nested_single_getter.verify(path, stage, VERSION)
     if profile == "fixed-reference-array":
         return fixed_reference_array.verify(path, stage, VERSION)
+    if profile == "inherited-reference-array-read":
+        return inherited_reference_array_read.verify(path, stage, VERSION)
     if profile == "field-boolean-array-read":
         return field_boolean_array_read.verify(path, stage, VERSION)
     if profile == "range-array-read":
