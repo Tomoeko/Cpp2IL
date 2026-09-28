@@ -68,6 +68,7 @@ import nested_boolean_store
 import nested_boolean_getter
 import nested_flag_setter
 import reference_null
+import reference_field_null
 import reference_store
 import runtime_cast_concat
 import static_literal_concat
@@ -84,6 +85,7 @@ import word_fields
 import zero_arg_field_call
 import boolean_tail_field_call
 import call_result_boolean_store
+import call_result_tail_guard
 import unsealed_zero_store
 import virtual_string_call
 import virtual_tail_dispatch
@@ -140,6 +142,7 @@ PROFILES = {
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
     "native-int-field": {"assembly": "NativeIntFieldFixture", "source": VALIDATION / "NativeIntFieldFixture", "methods": 3},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
+    "reference-field-null": {"assembly": "ReferenceFieldNullFixture", "source": VALIDATION / "ReferenceFieldNullFixture", "methods": 12},
     "sequential-null-guards": {"assembly": "SequentialNullGuardFixture", "source": VALIDATION / "SequentialNullGuardFixture", "methods": 3},
     "call-result-null-guards": {"assembly": "CallResultNullGuardFixture", "source": VALIDATION / "CallResultNullGuardFixture", "methods": 13},
     "reference-store": {"assembly": "ReferenceStoreFixture", "source": VALIDATION / "ReferenceStoreFixture", "methods": 2},
@@ -177,6 +180,8 @@ PROFILES = {
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
     "call-result-boolean-store": {"assembly": "CallResultBooleanStoreFixture",
                                   "source": VALIDATION / "CallResultBooleanStoreFixture", "methods": 6},
+    "call-result-tail-guard": {"assembly": "CallResultTailGuardFixture",
+                               "source": VALIDATION / "CallResultTailGuardFixture", "methods": 5},
     "unsealed-zero-store": {"assembly": "UnsealedZeroStoreFixture",
                             "source": VALIDATION / "UnsealedZeroStoreFixture", "methods": 3},
     "forwarded-argument": {"assembly": "ForwardedArgumentFixture", "source": VALIDATION / "ForwardedArgumentFixture", "methods": 4},
@@ -311,6 +316,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_int_field.verify(path, stage, VERSION)
     if profile == "reference-null":
         return reference_null.verify(path, stage, VERSION)
+    if profile == "reference-field-null":
+        return reference_field_null.verify(path, stage, VERSION)
     if profile == "sequential-null-guards":
         return sequential_null_guards.verify(path, stage, VERSION)
     if profile == "call-result-null-guards":
@@ -369,6 +376,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return boolean_tail_field_call.verify(path, stage, VERSION)
     if profile == "call-result-boolean-store":
         return call_result_boolean_store.verify(path, stage, VERSION)
+    if profile == "call-result-tail-guard":
+        return call_result_tail_guard.verify(path, stage, VERSION)
     if profile == "unsealed-zero-store":
         return unsealed_zero_store.verify(path, stage, VERSION)
     if profile == "forwarded-argument":

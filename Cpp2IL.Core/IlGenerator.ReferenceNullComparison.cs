@@ -1,5 +1,6 @@
 using System.Linq;
 using AsmResolver.DotNet;
+using AsmResolver.DotNet.Signatures;
 using AsmResolver.PE.DotNet.Cil;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Graphs;
@@ -22,6 +23,30 @@ public static partial class IlGenerator
         MethodDefinition method, EmissionLocals locals)
     {
         var context = locals.Context;
+        if (X64ReferenceFieldNullComparisonProof.TryIdentify(context, comparison) is { } field)
+        {
+            // C# may bind a typed `field == null` to an overloaded operator. The
+            // native CMP establishes object identity, so retain that meaning in
+            // both IL and source regenerated from the IL.
+            var module = method.DeclaringModule!;
+            var corLib = module.CorLibTypeFactory.CorLibScope;
+            var objectType = corLib.CreateTypeReference("System", "Object");
+            var referenceEquals = objectType.CreateMemberReference("ReferenceEquals",
+                MethodSignature.CreateStatic(module.CorLibTypeFactory.Boolean,
+                    [objectType.ToTypeSignature(false), objectType.ToTypeSignature(false)]));
+            var bodyInstructions = method.CilMethodBody!.Instructions;
+            LoadOperand(field.Value, method, locals);
+            bodyInstructions.Add(CilOpCodes.Ldnull);
+            bodyInstructions.Add(CilOpCodes.Call, referenceEquals);
+            if (!field.IsNull)
+            {
+                bodyInstructions.Add(CilOpCodes.Ldc_I4_0);
+                bodyInstructions.Add(CilOpCodes.Ceq);
+            }
+            StoreToOperand(comparison.Operands[0], method, locals);
+            return true;
+        }
+
         if (!IsReferenceNullComparisonShape(comparison,
                 context.AppContext.SystemTypes.SystemBooleanType, out var reference) ||
             context.ControlFlowGraph is not { } graph ||

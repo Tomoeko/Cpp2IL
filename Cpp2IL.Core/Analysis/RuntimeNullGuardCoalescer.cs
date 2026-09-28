@@ -351,6 +351,7 @@ internal static class RuntimeNullGuardCoalescer
             fieldAccess = null;
             storedValue = null;
             var seen = new HashSet<Block> { predecessor };
+            var pendingTailArgumentSetup = false;
             while (true)
             {
                 if (entry == graph.EntryBlock || entry == graph.ExitBlock || !seen.Add(entry) ||
@@ -375,8 +376,9 @@ internal static class RuntimeNullGuardCoalescer
                         var targetBound = requireNativeFieldBinding &&
                             originKind == ReceiverOrigin.DirectCallResult
                                 ? CallResultNullGuardProof.HasBoundTarget(method,
-                                    receiver, origin!, instruction, target)
-                                : provesNativeTarget(target);
+                                    receiver, origin!, instruction, target,
+                                    requireTail: pendingTailArgumentSetup)
+                                : !pendingTailArgumentSetup && provesNativeTarget(target);
                         if (!targetBound ||
                             !ReferenceEquals(target.AppContext, method.AppContext) ||
                             !ReferenceEquals(calledReceiver, receiver) ||
@@ -423,6 +425,22 @@ internal static class RuntimeNullGuardCoalescer
                     }
                     if (instruction.OpCode == OpCode.Nop && instruction.IntegerBitWidth == 0 && instruction.Operands.Count == 0)
                         continue;
+                    // The exact terminal-tail proof later binds this one lifted LEA
+                    // to its native integer argument. An unproved setup cannot
+                    // broaden the ordinary direct-call guard path.
+                    if (!pendingTailArgumentSetup && requireNativeFieldBinding &&
+                        instruction is { OpCode: OpCode.Add, IntegerBitWidth: 32,
+                            CallSemantics: CallSemantics.Direct,
+                            Operands: [LocalVariable tailDestination,
+                                Immediate { Value: 0 }, Immediate { Value: >= 0 and <= 127 }] } &&
+                        ReferenceEquals(tailDestination.Type, method.AppContext.SystemTypes.SystemInt32Type) &&
+                        !escapedSlots.Contains(tailDestination.Register.Number) &&
+                        !method.ParameterLocals.Contains(tailDestination) &&
+                        instruction.NativeAddress != null)
+                    {
+                        pendingTailArgumentSetup = true;
+                        continue;
+                    }
                     if (instruction is { OpCode: OpCode.Jump, IntegerBitWidth: 0, Operands: [Block targetBlock] } &&
                         ReferenceEquals(instruction, entry.Instructions[^1]) && entry.Successors.Count == 1 &&
                         ReferenceEquals(entry.Successors[0], targetBlock))

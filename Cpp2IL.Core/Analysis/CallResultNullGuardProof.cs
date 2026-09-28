@@ -21,7 +21,8 @@ namespace Cpp2IL.Core.Analysis;
 internal static class CallResultNullGuardProof
 {
     internal static bool HasBoundTarget(MethodAnalysisContext caller, LocalVariable result,
-        Instruction origin, Instruction guardedCall, MethodAnalysisContext target)
+        Instruction origin, Instruction guardedCall, MethodAnalysisContext target,
+        bool requireTail = false)
     {
         if (origin is not { OpCode: OpCode.Call, IntegerBitWidth: 0 } ||
             !ReferenceEquals(origin.Destination, result) ||
@@ -31,7 +32,12 @@ internal static class CallResultNullGuardProof
             !HasDirectNativeCall(caller, origin, producer) ||
             !HasUnambiguousTarget(producer, producerReceiver.Type) ||
             !ReferenceEquals(target.AppContext, caller.AppContext) ||
-            !HasDirectNativeCall(caller, guardedCall, target) ||
+            !(requireTail
+                ? CallResultTailNullGuardProof.HasBoundTarget(caller, result, origin,
+                    guardedCall, producer, producerReceiver, target)
+                : HasDirectNativeCall(caller, guardedCall, target) ||
+                  CallResultTailNullGuardProof.HasBoundTarget(caller, result, origin,
+                    guardedCall, producer, producerReceiver, target)) ||
             !HasUnambiguousTarget(target, result.Type))
             return false;
 
