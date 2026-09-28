@@ -11,9 +11,11 @@ namespace Cpp2IL.Core.Tests.Isil;
 
 public class X86FlagClobberTests
 {
-    [TestCase("83C101")] // add ecx, 1
-    [TestCase("83E901")] // sub ecx, 1
     [TestCase("21D1")] // and ecx, edx
+    [TestCase("830101")] // add dword ptr [rcx], 1; memory width/effects are unproved
+    [TestCase("832901")] // sub dword ptr [rcx], 1
+    [TestCase("6683E901")] // sub cx, 1; partial-register semantics are unproved
+    [TestCase("4883EC28")] // sub rsp, 0x28; modeled only as a stack shift
     [TestCase("09D1")] // or ecx, edx
     [TestCase("31D1")] // xor ecx, edx
     [TestCase("D1E9")] // shr ecx, 1
@@ -26,12 +28,45 @@ public class X86FlagClobberTests
         Assert.That(UnresolvedFlags(graph), Does.Contain("ZF"));
     }
 
+    [TestCase("83C101")] // add ecx, 1
+    [TestCase("83E901")] // sub ecx, 1
+    [TestCase("4883C101")] // add rcx, 1
+    [TestCase("4883E901")] // sub rcx, 1
+    public void ArithmeticZeroFlagComesFromTheUpdatedRegister(string operation)
+    {
+        var graph = Analyze("83F800" + operation + "0F94C0");
+        Assert.That(UnresolvedFlags(graph), Does.Not.Contain("ZF"));
+        Assert.That(graph.Instructions.Any(instruction =>
+            instruction.OpCode == OpCode.CheckEqual &&
+            instruction.Operands[1] is LocalVariable
+                { Register.Name: "rcx" }), Is.True,
+            "The final condition must depend on the arithmetic destination, not the earlier EAX comparison.");
+    }
+
     [Test]
-    public void BranchRetainsUnresolvedFlagDefinition()
+    public void BranchUsesArithmeticZeroFlagDefinition()
     {
         var graph = Analyze("83F80083C10174019090"); // cmp eax,0; add ecx,1; jz final-nop; nop; nop
-        Assert.That(UnresolvedFlags(graph), Does.Contain("ZF"));
+        Assert.That(UnresolvedFlags(graph), Does.Not.Contain("ZF"));
+        Assert.That(graph.Instructions.Any(instruction =>
+            instruction.NativeAddress == 3 &&
+            instruction.OpCode == OpCode.CheckEqual &&
+            instruction.Destination is LocalVariable
+                { Register.Name: "ZF" }), Is.True);
         Assert.That(graph.Instructions.Any(i => i.OpCode == OpCode.ConditionalJump), Is.True);
+    }
+
+    [Test]
+    public void SubtractionWithAliasedMemorySourceReadsItOnlyOnce()
+    {
+        var graph = Analyze("482B090F94C0"); // sub rcx,[rcx]; setz al
+        Assert.That(UnresolvedFlags(graph), Does.Not.Contain("ZF"));
+        Assert.That(graph.Instructions.Count(instruction =>
+            instruction.Operands.Skip(1).Any(operand => operand is MemoryOperand)), Is.EqualTo(1));
+        Assert.That(graph.Instructions.Any(instruction =>
+            instruction.OpCode == OpCode.CheckEqual &&
+            instruction.Operands is [_, LocalVariable { Register.Name: "rcx" }, Immediate { Value: 0 }]),
+            Is.True, "The zero test must use the result instead of rereading memory through the updated RCX.");
     }
 
     [TestCase("FFC1")] // inc ecx preserves carry

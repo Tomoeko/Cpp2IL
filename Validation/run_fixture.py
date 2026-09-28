@@ -82,6 +82,7 @@ import runtime_cast_concat
 import static_literal_concat
 import throw_only
 import scalar_truncation
+import arithmetic_zero_flag
 import sequential_null_guards
 import call_result_null_guard
 import static_word_getter
@@ -237,6 +238,8 @@ PROFILES = {
     "struct-forward-call": {"assembly": "StructForwardCallFixture", "source": VALIDATION / "StructForwardCallFixture", "methods": 5},
     "struct-static-forward-call": {"assembly": "StructStaticForwardCallFixture", "source": VALIDATION / "StructStaticForwardCallFixture", "methods": 6},
     "scalar-truncation": {"assembly": "ScalarTruncationFixture", "source": VALIDATION / "ScalarTruncationFixture", "methods": 2},
+    "arithmetic-zero-flag": {"assembly": "ArithmeticZeroFlagFixture",
+                             "source": VALIDATION / "ArithmeticZeroFlagFixture", "methods": 4},
     "loop-calls": {"assembly": "LoopCallFixture", "source": VALIDATION / "LoopCallFixture", "methods": 4},
     "word-fields": {"assembly": "WordFieldFixture", "source": VALIDATION / "WordFieldFixture", "methods": 4},
     "integer-extensions": {"assembly": "IntegerExtensionFixture", "source": VALIDATION / "IntegerExtensionFixture", "methods": 12},
@@ -471,6 +474,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return struct_static_forward_call.verify(path, stage, VERSION)
     if profile == "scalar-truncation":
         return scalar_truncation.verify(path, stage, VERSION)
+    if profile == "arithmetic-zero-flag":
+        return arithmetic_zero_flag.verify(path, stage, VERSION)
     if profile == "loop-calls":
         return loop_calls.verify(path, stage, VERSION)
     if profile == "word-fields":

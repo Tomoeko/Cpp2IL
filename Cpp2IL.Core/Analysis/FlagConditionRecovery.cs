@@ -154,8 +154,12 @@ public static class FlagConditionRecovery
         comparison = default;
         if (Get(local, definitions) is not { OpCode: OpCode.CheckEqual, Operands: [_, LocalVariable difference, Immediate { Value: 0 }] } flag ||
             Get(difference, definitions) is not { OpCode: OpCode.Subtract, Operands: [_, var left, var right] } subtraction ||
-            flag.IntegerBitWidth != subtraction.IntegerBitWidth)
+            flag.IntegerBitWidth != subtraction.IntegerBitWidth ||
+            right is MemoryOperand)
             return false;
+        // The subtraction has already read its source. Rewriting a register SUB's zero
+        // flag into a comparison against a memory source would read that memory again,
+        // possibly through a base register changed by the subtraction itself.
         comparison = new(OpCode.CheckEqual, left, right, subtraction.IntegerBitWidth);
         return true;
     }

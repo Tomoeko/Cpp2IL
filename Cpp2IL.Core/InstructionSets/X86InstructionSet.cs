@@ -910,7 +910,20 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     ? instruction.Op0Register.GetSize()
                     : instruction.MemorySize.GetSize()) * 8;
                 if (nativeWidth is 32 or 64)
+                {
                     arithmetic.IntegerBitWidth = nativeWidth;
+                    if (instruction.Op0Kind == OpKind.Register)
+                    {
+                        // A 32-bit register write zero-extends on x64, and a 64-bit
+                        // write retains its full result. In either case the native
+                        // zero flag is exactly the zero test of the new register.
+                        // Memory and narrow destinations need separate read-width
+                        // and partial-register proofs.
+                        Add(instruction.IP, ISIL.OpCode.CheckEqual,
+                            new ISIL.Register(null, "ZF"), left, Imm(0))
+                            .IntegerBitWidth = nativeWidth;
+                    }
+                }
 
                 break;
             case Mnemonic.Addss:

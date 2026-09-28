@@ -186,9 +186,12 @@ public class Instruction : IOperand
         var sources = OpCode switch
         {
             OpCode.Move or OpCode.ConditionalJump
-                or OpCode.ShiftStack or OpCode.Not or OpCode.Negate
+                or OpCode.Not or OpCode.Negate
                 or OpCode.Newobj
                 => [_operands[1]],
+
+            // Stack movement has one amount operand, not a destination and source pair.
+            OpCode.ShiftStack => [_operands[0]],
 
             OpCode.Box => [_operands[2]],
 
