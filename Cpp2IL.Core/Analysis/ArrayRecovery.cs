@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 
@@ -48,6 +49,14 @@ public static class ArrayRecovery
                     instruction.SetOperand(i, new ArrayLength(array));
                     continue;
                 }
+
+                // A type's physical size alone cannot turn an arbitrary native
+                // load into an enum read. Require the proved read site, array
+                // field, index and four-byte operation before admitting it.
+                if (arrayType.ElementType.IsEnumType &&
+                    !X86FieldArrayAccessProof.IsProvedEnumRead(method, instruction,
+                        i, memory, array, arrayType.ElementType))
+                    continue;
 
                 if (ElementIndex(memory, arrayType, pointerSize) is { } index)
                     instruction.SetOperand(i, new ArrayAccess(array, index));
@@ -185,6 +194,9 @@ public static class ArrayRecovery
     {
         if (!elementType.IsValueType)
             return pointerSize;
+
+        if (Enum32StorageProof.IsUnchanged(elementType))
+            return 4;
 
         return elementType.FullName switch
         {

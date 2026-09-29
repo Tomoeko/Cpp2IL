@@ -24,13 +24,7 @@ internal static class CallResultNullGuardProof
         Instruction origin, Instruction guardedCall, MethodAnalysisContext target,
         bool requireTail = false)
     {
-        if (origin is not { OpCode: OpCode.Call, IntegerBitWidth: 0 } ||
-            !ReferenceEquals(origin.Destination, result) ||
-            !TryGetProducer(origin, out var producer, out var producerReceiver) ||
-            !ReferenceEquals(producer.AppContext, caller.AppContext) ||
-            !ReferenceEquals(producer.ReturnType, result.Type) ||
-            !HasDirectNativeCall(caller, origin, producer) ||
-            !HasUnambiguousTarget(producer, producerReceiver.Type) ||
+        if (!TryBindProducer(caller, result, origin, out var producer, out var producerReceiver) ||
             !ReferenceEquals(target.AppContext, caller.AppContext) ||
             !(requireTail
                 ? CallResultTailNullGuardProof.HasBoundTarget(caller, result, origin,
@@ -50,6 +44,25 @@ internal static class CallResultNullGuardProof
             !HasUnambiguousTarget(target, result.Type))
             return false;
 
+        return true;
+    }
+
+    internal static bool HasBoundProducer(MethodAnalysisContext caller, LocalVariable result,
+        Instruction origin) => TryBindProducer(caller, result, origin, out _, out _);
+
+    private static bool TryBindProducer(MethodAnalysisContext caller, LocalVariable result,
+        Instruction origin, out MethodAnalysisContext producer, out LocalVariable receiver)
+    {
+        producer = null!;
+        receiver = null!;
+        if (origin is not { OpCode: OpCode.Call, IntegerBitWidth: 0 } ||
+            !ReferenceEquals(origin.Destination, result) ||
+            !TryGetProducer(origin, out producer, out receiver) ||
+            !ReferenceEquals(producer.AppContext, caller.AppContext) ||
+            !ReferenceEquals(producer.ReturnType, result.Type) ||
+            !HasDirectNativeCall(caller, origin, producer) ||
+            !HasUnambiguousTarget(producer, receiver.Type))
+            return false;
         return true;
     }
 

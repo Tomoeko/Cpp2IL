@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Utils;
 using Iced.Intel;
 using LibCpp2IL.BinaryStructures;
 using LibCpp2IL.PE;
@@ -11,12 +12,17 @@ using LibCpp2IL.PE;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Closed exact-profile access to an Int32[] held in an ordinary instance field.
+/// Closed exact-profile access to an Int32[] or a four-byte enum array held in
+/// an ordinary instance field. Enum elements are read without changing identity
+/// or the signedness of their underlying type; enum stores remain unproved.
 /// The field read precedes the array null and bounds exits, so the emitted ldfld
 /// also preserves the native owner-null failure and evaluation order.
 /// </summary>
 internal static class X86FieldArrayAccessProof
 {
+    private const string EnumReadEvidenceKey = "X86FieldArrayAccessProof.EnumRead";
+    private const int ArrayDataOffset = 0x20;
+    private const int ElementSize = 4;
     internal enum AccessKind { ReadFirst, ReadFixed, ReadAt, WriteAt }
 
     internal sealed record Shape(AccessKind Kind, int FieldOffset, int NullCallIndex,
@@ -30,10 +36,7 @@ internal static class X86FieldArrayAccessProof
         var array = new ISIL.Register(null, "field_array_value");
         var field = new ISIL.MemoryOperand(new ISIL.Register(null, "rcx"), null,
             evidence.Field.Offset);
-        var fixedRead = evidence.Shape.Kind is AccessKind.ReadFirst or AccessKind.ReadFixed;
-        var element = new ISIL.MemoryOperand(array,
-            fixedRead ? null : new ISIL.Register(null, "rdx"),
-            0x20 + (fixedRead ? evidence.Shape.FixedIndex * 4 : 0), fixedRead ? 0 : 4);
+        var element = ElementMemory(evidence.Shape, array, new ISIL.Register(null, "rdx"));
         if (evidence.Shape.Kind == AccessKind.WriteAt)
             return
             [
@@ -43,15 +46,77 @@ internal static class X86FieldArrayAccessProof
             ];
 
         var result = new ISIL.Register(null, "field_array_read_result");
+        if (method.ReturnType.IsEnumType)
+            method.PutExtraData(EnumReadEvidenceKey, evidence);
         return
         [
-            new(0, ISIL.OpCode.Move, array, field),
-            new(1, ISIL.OpCode.Move, result, element),
+            new(0, ISIL.OpCode.Move, array, field) { NativeAddress = evidence.FieldReadAddress },
+            new(1, ISIL.OpCode.Move, result, element)
+                { NativeAddress = evidence.ElementReadAddress, IntegerBitWidth = 32 },
             new(2, ISIL.OpCode.Return, result),
         ];
     }
 
-    internal sealed record Evidence(Shape Shape, FieldAnalysisContext Field);
+    internal sealed record Evidence(Shape Shape, FieldAnalysisContext Field,
+        ulong FieldReadAddress, ulong ElementReadAddress);
+
+    internal static Evidence? GetEnumReadEvidence(MethodAnalysisContext method) =>
+        method.GetExtraData<Evidence>(EnumReadEvidenceKey);
+
+    internal static ISIL.MemoryOperand ElementMemory(Shape shape, ISIL.IOperand array,
+        ISIL.IOperand? index)
+    {
+        var fixedRead = shape.Kind is AccessKind.ReadFirst or AccessKind.ReadFixed;
+        return new ISIL.MemoryOperand(array, fixedRead ? null : index,
+            ArrayDataOffset + (fixedRead ? shape.FixedIndex * ElementSize : 0),
+            fixedRead ? 0 : ElementSize);
+    }
+
+    internal static bool IsProvedEnumRead(MethodAnalysisContext method,
+        ISIL.Instruction instruction, int operandIndex, ISIL.MemoryOperand memory,
+        ISIL.LocalVariable array, TypeAnalysisContext element)
+    {
+        if (operandIndex != 1 || instruction.OpCode != ISIL.OpCode.Move ||
+            instruction.IntegerBitWidth != 32 ||
+            !ReferenceEquals(element, method.ReturnType) ||
+            !Enum32StorageProof.IsUnchanged(element) ||
+            GetEnumReadEvidence(method) is not { } recorded ||
+            instruction.NativeAddress != recorded.ElementReadAddress ||
+            method.ControlFlowGraph is not { } graph ||
+            !graph.Instructions.Contains(instruction) ||
+            Find(method, X86Utils.Iterate(method).ToArray()) is not { } current ||
+            current != recorded)
+            return false;
+
+        var definitions = graph.Instructions.Where(candidate =>
+            ReferenceEquals(candidate.Destination, array)).ToArray();
+        if (definitions is not [{ OpCode: ISIL.OpCode.Move,
+                NativeAddress: var fieldAddress,
+                Operands: [_, ISIL.FieldReference source] }] ||
+            fieldAddress != current.FieldReadAddress ||
+            !ReferenceEquals(source.Field, current.Field) ||
+            source.Offset != current.Field.Offset || !source.Local.IsThis ||
+            !method.ParameterLocals.Contains(source.Local) ||
+            method.ParameterLocals.Count(local => local.IsThis) != 1 ||
+            source.Local.Register.Version != -1 ||
+            method.ParameterOperands.FirstOrDefault() is not ISIL.Register receiver ||
+            source.Local.Register.Number != receiver.Number ||
+            !ReferenceEquals(source.Local.Type, method.DeclaringType))
+            return false;
+
+        if (current.Shape.Kind is AccessKind.ReadFirst or AccessKind.ReadFixed)
+            return memory.Index == null && memory.Scale == 0 &&
+                   memory.Addend == ArrayDataOffset + current.Shape.FixedIndex * ElementSize;
+        return current.Shape.Kind == AccessKind.ReadAt && memory.Addend == ArrayDataOffset &&
+               memory.Scale == ElementSize && memory.Index is ISIL.LocalVariable index &&
+               method.ParameterLocals.Contains(index) &&
+               method.ParameterLocals.Count(local =>
+                   LocalVariables.GetIncomingParameterIndex(method, local) == 0) == 1 &&
+               LocalVariables.GetIncomingParameterIndex(method, index) == 0 &&
+               ReferenceEquals(index.Type, method.AppContext.SystemTypes.SystemInt32Type) &&
+               index.Register.Number == new ISIL.Register(null, "rdx").Number &&
+               index.Register.Version == -1;
+    }
 
     internal static Evidence? Find(MethodAnalysisContext method, IReadOnlyList<Instruction> body)
     {
@@ -91,7 +156,8 @@ internal static class X86FieldArrayAccessProof
             matched.BackingData?.Field.RawFieldType is not
                 { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY, NumMods: 0, Byref: 0, Pinned: 0 } ||
             matched.FieldType is not SzArrayTypeAnalysisContext { ElementType: var element } ||
-            !ReferenceEquals(element, method.AppContext.SystemTypes.SystemInt32Type) ||
+            !ReferenceEquals(element, shape.Kind == AccessKind.WriteAt
+                ? method.AppContext.SystemTypes.SystemInt32Type : method.ReturnType) ||
             !NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(new ISIL.FieldReference(
                 matched, new ISIL.LocalVariable("proved-owner", new ISIL.Register(null, "rcx"), owner),
                 shape.FieldOffset)) ||
@@ -113,7 +179,8 @@ internal static class X86FieldArrayAccessProof
                 }) != null)
             return null;
 
-        return new Evidence(shape, matched);
+        return new Evidence(shape, matched, body[1].IP,
+            body[shape.Kind is AccessKind.ReadFirst or AccessKind.ReadFixed ? 6 : 7].IP);
     }
 
     private static bool MatchesSignature(MethodAnalysisContext method, AccessKind kind)
@@ -130,8 +197,7 @@ internal static class X86FieldArrayAccessProof
             method.Definition!.RawReturnType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawReturn ||
             (kind == AccessKind.WriteAt
                 ? !method.IsVoid || rawReturn.Type != Il2CppTypeEnum.IL2CPP_TYPE_VOID
-                : !ReferenceEquals(method.ReturnType, app.SystemTypes.SystemInt32Type) ||
-                  rawReturn.Type != Il2CppTypeEnum.IL2CPP_TYPE_I4))
+                : !MatchesReadElement(method, rawReturn.Type)))
             return false;
 
         for (var index = 0; index < expectedParameters; index++)
@@ -148,6 +214,13 @@ internal static class X86FieldArrayAccessProof
         }
         return true;
     }
+
+    private static bool MatchesReadElement(MethodAnalysisContext method, Il2CppTypeEnum rawReturn) =>
+        ReferenceEquals(method.ReturnType, method.DefaultReturnType) &&
+        (ReferenceEquals(method.ReturnType, method.AppContext.SystemTypes.SystemInt32Type) &&
+         rawReturn == Il2CppTypeEnum.IL2CPP_TYPE_I4 ||
+         rawReturn == Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE &&
+         Enum32StorageProof.IsUnchanged(method.ReturnType));
 
     internal static Shape? TryProveShape(IReadOnlyList<Instruction> body)
     {
@@ -186,7 +259,7 @@ internal static class X86FieldArrayAccessProof
                 body[6].Code != Code.Mov_r32_rm32 ||
                 body[6].Op0Kind != OpKind.Register || body[6].Op0Register != Register.EAX ||
                 !Memory(body[6], 1, Register.RAX, Register.None, 1,
-                    0x20 + fixedIndex * 4, 4) ||
+                    (ulong)ArrayDataOffset + fixedIndex * ElementSize, ElementSize) ||
                 fixedIndex != 0 &&
                 (body[3].Code != Code.Je_rel8_64 ||
                  body[4].Code != Code.Cmp_rm32_imm8 ||
@@ -210,11 +283,11 @@ internal static class X86FieldArrayAccessProof
         var isWrite = arrayRegister == Register.R9;
         if (isWrite
             ? access.Code != Code.Mov_rm32_r32 ||
-              !Memory(access, 0, Register.R9, Register.RAX, 4, 0x20, 4) ||
+              !Memory(access, 0, Register.R9, Register.RAX, ElementSize, ArrayDataOffset, ElementSize) ||
               access.Op1Kind != OpKind.Register || access.Op1Register != Register.R8D
             : access.Code != Code.Mov_r32_rm32 ||
               access.Op0Kind != OpKind.Register || access.Op0Register != Register.EAX ||
-              !Memory(access, 1, Register.R8, Register.RAX, 4, 0x20, 4))
+              !Memory(access, 1, Register.R8, Register.RAX, ElementSize, ArrayDataOffset, ElementSize))
             return null;
         return SuccessAndExits(body, 8, 9, 10, 11, 12)
             ? new Shape(isWrite ? AccessKind.WriteAt : AccessKind.ReadAt, fieldOffset, 10, 12)

@@ -18,6 +18,9 @@ from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_proces
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
+    "boolean-composition",
+    "boolean-literal-store",
+    "enum-field-array",
     "parameter-class-test",
     "catch-divide", "exception-regions", "explicit-class-cast", "array-access", "array-sequence", "field-array", "field-boolean-array", "field-boolean-array-read", "range-array-read", "constructed-base-boolean-array", "narrow-array", "float-array", "word-array", "reference-array", "boolean-getter", "boolean-getter-metadata", "virtual-string-call", "generic-dispatch", "guarded-sink", "folded-state-constructor", "folded-literal-constructor", "shared-inert-constructor", "float-initializer-constructor", "scalar-wrapper", "scalar-wrapper-cctor", "constructor-thunk-chain", "boolean-parameter-branch", "narrow-test-arithmetic", "byte-mask-parameter", "byte-mask-one", "array-call",
     "enum-passthrough", "static-field-getter", "static-word-getter", "reference-field", "native-int-field", "reference-null", "reference-field-null", "sequential-null-guards", "call-result-null-guards",

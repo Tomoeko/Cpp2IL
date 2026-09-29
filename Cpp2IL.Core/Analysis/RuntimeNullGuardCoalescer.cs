@@ -66,6 +66,14 @@ internal static class RuntimeNullGuardCoalescer
             LocalVariable local => ReferenceEquals(local.Type, ValueType) &&
                                    method.ParameterLocals.Contains(local) &&
                                    UnchangedParameter(method, local, ValueType),
+            Immediate { Value: 0 or 1 } literal when
+                ReferenceEquals(ValueType, method.AppContext.SystemTypes.SystemBooleanType) =>
+                (!RequireNativeBinding && UnchangedParameter(method, Receiver, Receiver.Type!) ||
+                 BooleanLiteralFieldStoreProof.IsValidFor(method, Operation, Access, literal)) ||
+                literal.Value == 0 &&
+                method.GetExtraData<X86GuardedZeroStoreProof.Proof>(
+                    X86GuardedZeroStoreProof.EvidenceKey) is { StoreWidth: 1 } byteProof &&
+                ReferenceEquals(byteProof.Field, Field) && ValidFieldReceiver(method, byteProof.ReceiverField),
             Immediate { Value: 0 } =>
                 method.GetExtraData<X86GuardedZeroStoreProof.Proof>(
                     X86GuardedZeroStoreProof.EvidenceKey) is { } proof &&
@@ -104,14 +112,9 @@ internal static class RuntimeNullGuardCoalescer
                 return true;
             if (local.IsThis)
                 return !method.IsStatic && ReferenceEquals(method.DeclaringType, type);
-            var skipThis = method.IsStatic ? 0 : 1;
-            var matches = Enumerable.Range(0, method.Parameters.Count).Where(index =>
-                index + skipThis < method.ParameterOperands.Count &&
-                method.ParameterOperands[index + skipThis] is Register register &&
-                register.Number == local.Register.Number && local.Register.Version == -1).ToArray();
-            if (matches.Length != 1)
+            if (LocalVariables.GetIncomingParameterIndex(method, local) is not { } index)
                 return false;
-            var parameter = method.Parameters[matches[0]];
+            var parameter = method.Parameters[index];
             return !parameter.IsRef && ReferenceEquals(parameter.ParameterType, type) &&
                    ReferenceEquals(parameter.DefaultParameterType, type);
         }
@@ -415,7 +418,12 @@ internal static class RuntimeNullGuardCoalescer
                          method.ParameterLocals.Contains(parameterValue) &&
                          Available(parameterValue, entry, instruction) ||
                          value is Immediate { Value: 0 } &&
-                         HasProvedNativeZeroStore(method, writeAccess)) &&
+                         HasProvedNativeZeroStore(method, writeAccess) ||
+                         value is Immediate { Value: 0 or 1 } literal &&
+                         ReferenceEquals(writeAccess.Field.FieldType,
+                             method.AppContext.SystemTypes.SystemBooleanType) &&
+                         (!requireNativeFieldBinding ||
+                          BooleanLiteralFieldStoreProof.IsValidFor(method, instruction, writeAccess, literal))) &&
                         provesNativeField(writeAccess))
                     {
                         operation = instruction;
@@ -699,7 +707,8 @@ internal static class RuntimeNullGuardCoalescer
         var proved64BitRead = IsProved64BitFieldReadType(field.FieldType);
         var nativeInt = X64Guarded64BitFieldReadProof.IsSupportedNativeIntType(field.FieldType);
         if (width == 8 && !HasProvedNativeZeroStore(method, access) &&
-            !HasProvedNativeBooleanFieldRead(method, access))
+            !HasProvedNativeBooleanFieldRead(method, access) &&
+            !HasProvedNativeBooleanLiteralStore(method, access))
             return false;
         return field.Name == field.DefaultName &&
                owner.Fields.Contains(field) && NullCheckedCall.IsReferenceClass(owner) &&
@@ -749,6 +758,12 @@ internal static class RuntimeNullGuardCoalescer
                current.LoadIp == proof.LoadIp &&
                current.ReceiverRegister == proof.ReceiverRegister;
     }
+
+    private static bool HasProvedNativeBooleanLiteralStore(MethodAnalysisContext method,
+        FieldReference access) => method.ControlFlowGraph!.Instructions.Any(operation =>
+        operation.Operands is [FieldReference stored, Immediate { Value: 0 or 1 } literal] &&
+        ReferenceEquals(stored, access) &&
+        BooleanLiteralFieldStoreProof.IsValidFor(method, operation, access, literal));
 
     internal static bool HasOutputOptions(MethodAnalysisContext method)
     {

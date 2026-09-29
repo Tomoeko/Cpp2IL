@@ -128,19 +128,10 @@ internal static class X64OwnerIndexedEnumArrayReadProof
                         NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
-            method.ReturnType is not
-                { Definition: { GenericContainer: null,
-                    RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE,
-                        NumMods: 0, Byref: 0, Pinned: 0 } } } element ||
-            !element.IsEnumType || element.IsGenericInstance ||
-            element.GenericParameters.Count != 0 ||
-            element.OverrideEnumUnderlyingType != null ||
+            method.ReturnType is not { } element ||
+            !Enum32StorageProof.IsUnchanged(element) ||
             !ReferenceEquals(element.EnumUnderlyingType,
                 app.SystemTypes.SystemInt32Type) ||
-            !ReferenceEquals(element.BaseType, element.DefaultBaseType) ||
-            element.Name != element.DefaultName ||
-            element.Namespace != element.DefaultNamespace ||
-            element.Attributes != element.DefaultAttributes ||
             !ReferenceEquals(method.ReturnType, method.DefaultReturnType))
             return false;
 

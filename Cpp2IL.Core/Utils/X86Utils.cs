@@ -1,9 +1,11 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Cpp2IL.Core.Extensions;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Logging;
 using Cpp2IL.Core.Model.Contexts;
 using Iced.Intel;
@@ -110,44 +112,32 @@ public static class X86Utils
 
         var span = rawBinary.Slice((int)rawAddr, (int)(lastPos - rawAddr + 1));
 
-        if (TryFindJumpTableStart(span, ptr, virtStartNextFunc, out var startIndex, out var jumpTableElements))
-        {
-            // TODO: Figure out what to do with jumpTableElements, how do we handle returning it from this function?
-            // we might need to return the address it was found at in TryFindJumpTableStart function too
-            // Should clean up the way we handle the bytes array too
-            /*
-            foreach (var element in jumpTableElements)
-                //Logger.InfoNewline($"Jump table element: 0x{element:x8}.");
-            */
-            return new BinarySlice(binary, (int)rawAddr, startIndex);
-        }
-
-        return new BinarySlice(binary, (int)rawAddr, span.Length);
+        var length = EstimateMethodBodyLength(span, ptr, virtStartNextFunc,
+            X86RuntimeNullThrowProof.IsSupportedProfile(appContext));
+        return new BinarySlice(binary, (int)rawAddr, length);
     }
 
-    private static bool TryFindJumpTableStart(ReadOnlySpan<byte> methodBytes, ulong methodPtr, ulong nextMethodPtr, out int startIndex, out List<ulong> jumpTableElements)
+    internal static int EstimateMethodBodyLength(ReadOnlySpan<byte> methodBytes,
+        ulong methodPtr, ulong nextMethodPtr, bool requiresProvedCodeDataBoundary)
     {
-        bool foundTable = false;
-        startIndex = 0;
-        jumpTableElements = [];
-        for (int i = (int)(methodPtr % 4); i < methodBytes.Length; i += 4)
+        // An immediate or displacement can have the same bits as an in-body
+        // RVA. The target's closed switch proof reads its table directly from
+        // the PE image and owns that code/data boundary. Keep all estimated
+        // bytes here; ordinary decoding and CFG coverage still reject unknown
+        // indirect branches and unproved fallthrough.
+        if (requiresProvedCodeDataBoundary)
+            return methodBytes.Length;
+
+        // Retain the legacy estimate for other profiles. Never read a partial
+        // four-byte entry or bytes beyond this method's declared span.
+        for (var i = (int)(methodPtr % 4); i <= methodBytes.Length - 4; i += 4)
         {
-            var result = (ulong)methodBytes.ReadUInt(i);
-            var possibleJumpAddress = result + 0x180000000; // image base
+            var rva = BinaryPrimitives.ReadUInt32LittleEndian(methodBytes.Slice(i, 4));
+            var possibleJumpAddress = rva + 0x180000000UL;
             if (possibleJumpAddress > methodPtr && possibleJumpAddress < nextMethodPtr)
-            {
-                // Sound the alarms, we've more than likely ran into a jump table  
-                if (!foundTable)
-                {
-                    startIndex = i;
-                    foundTable = true;
-                }
-
-                jumpTableElements.Add(result);
-            }
+                return i;
         }
-
-        return foundTable;
+        return methodBytes.Length;
     }
 
     public static InstructionList GetMethodBodyAtVirtAddressNew(ulong addr, bool peek, ApplicationAnalysisContext appContext, int peekLength = DefaultPeekLength) => GetMethodBodyAtVirtAddressNew(addr, peek, appContext, out _, peekLength);

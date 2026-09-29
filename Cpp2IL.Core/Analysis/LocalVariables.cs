@@ -450,7 +450,10 @@ public static class LocalVariables
                 case OpCode.Divide or OpCode.Modulo or OpCode.DivideUnsigned or OpCode.ModuloUnsigned:
                     changed |= PropagateArithmetic(instruction, method) || PropagateIntegerResult(instruction, method);
                     break;
-                case OpCode.And or OpCode.Or or OpCode.Xor or OpCode.Not or OpCode.Negate
+                case OpCode.And or OpCode.Or or OpCode.Xor:
+                    changed |= PropagateBooleanResult(instruction, method) || PropagateIntegerResult(instruction, method);
+                    break;
+                case OpCode.Not or OpCode.Negate
                     or OpCode.ShiftLeft or OpCode.ShiftRight or OpCode.ShiftRightUnsigned:
                     changed |= PropagateIntegerResult(instruction, method);
                     break;
@@ -801,6 +804,25 @@ public static class LocalVariables
             if (GetIncomingParameterIndex(method, local) is { } index)
                 local.Type = method.Parameters[index].ParameterType;
         }
+    }
+
+    // Logical flag composition stays Boolean when each input is an established
+    // Boolean value or the literal 0/1. A native-width annotation or any other
+    // representation still belongs to integer/partial-register recovery.
+    private static bool PropagateBooleanResult(Instruction instruction, MethodAnalysisContext method)
+    {
+        if (instruction.IntegerBitWidth != 0 ||
+            instruction.Operands is not [LocalVariable { Type: null } destination, var left, var right])
+            return false;
+
+        var booleanType = method.AppContext.SystemTypes.SystemBooleanType;
+        bool IsBoolean(IOperand operand) => operand is LocalVariable { Type: { } type } &&
+                                            ReferenceEquals(type, booleanType);
+        bool IsBooleanValue(IOperand operand) => IsBoolean(operand) || operand is Immediate { Value: 0 or 1 };
+
+        return (IsBoolean(left) || IsBoolean(right)) &&
+               IsBooleanValue(left) && IsBooleanValue(right) &&
+               SetTypeIfUnknown(destination, booleanType);
     }
 
     // ParameterOperands preserves [this?, declared parameters..., MethodInfo].

@@ -21,6 +21,7 @@ import reference_array
 import range_array_read
 import exception_regions
 import field_array
+import enum_field_array
 import field_boolean_array
 import field_boolean_array_read
 import constructed_base_boolean_array
@@ -50,6 +51,8 @@ import byte_fields
 import byte_mask_parameter
 import byte_mask_one
 import boolean_getter
+import boolean_composition
+import boolean_literal_store
 import boolean_getter_metadata
 import byte_threshold
 import composed_array
@@ -134,6 +137,7 @@ PROFILES = {
     "exception-regions": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "ExceptionRegionFixture", "methods": 2},
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
     "array-sequence": {"assembly": "ArraySequenceFixture", "source": VALIDATION / "ArraySequenceFixture", "methods": 2},
+    "enum-field-array": {"assembly": "EnumFieldArrayFixture", "source": VALIDATION / "EnumFieldArrayFixture", "methods": 8},
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "field-boolean-array": {"assembly": "BooleanFieldArrayFixture", "source": VALIDATION / "BooleanFieldArrayFixture", "methods": 3},
     "field-boolean-array-read": {"assembly": "FieldBooleanArrayReadFixture", "source": VALIDATION / "FieldBooleanArrayReadFixture", "methods": 4},
@@ -161,6 +165,8 @@ PROFILES = {
     "float-array": {"assembly": "FloatArrayFixture", "source": VALIDATION / "FloatArrayFixture", "methods": 2},
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
     "reference-array": {"assembly": "ReferenceArrayFixture", "source": VALIDATION / "ReferenceArrayFixture", "methods": 3},
+    "boolean-literal-store": {"assembly": "BooleanLiteralStoreFixture", "source": VALIDATION / "BooleanLiteralStoreFixture", "methods": 6},
+    "boolean-composition": {"assembly": "BooleanCompositionFixture", "source": VALIDATION / "BooleanCompositionFixture", "methods": 3},
     "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 5},
     "boolean-getter-metadata": {"assembly": "BooleanGetterMetadataFixture", "source": VALIDATION / "BooleanGetterMetadataFixture", "methods": 11},
     "virtual-string-call": {"assembly": "VirtualStringCallFixture", "source": VALIDATION / "VirtualStringCallFixture", "methods": 5},
@@ -325,6 +331,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return array_access.verify(path, stage, VERSION)
     if profile == "array-sequence":
         return array_sequence.verify(path, stage, VERSION)
+    if profile == "enum-field-array":
+        return enum_field_array.verify(path, stage, VERSION)
     if profile == "field-array":
         return field_array.verify(path, stage, VERSION)
     if profile == "field-boolean-array":
@@ -345,6 +353,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return word_array.verify(path, stage, VERSION)
     if profile == "reference-array":
         return reference_array.verify(path, stage, VERSION)
+    if profile == "boolean-literal-store":
+        return boolean_literal_store.verify(path, stage, VERSION)
+    if profile == "boolean-composition":
+        return boolean_composition.verify(path, stage, VERSION)
     if profile == "boolean-getter":
         return boolean_getter.verify(path, stage, VERSION)
     if profile == "boolean-getter-metadata":

@@ -348,7 +348,7 @@ internal static class X64InlinedBooleanSetterProof
         }
     }
 
-    private static bool HasNativeCallerStore(MethodAnalysisContext caller,
+    internal static bool HasNativeCallerStore(MethodAnalysisContext caller,
         PE pe, X64UnwindProof.Index unwind, ulong address,
         FieldReference access, bool value)
     {
