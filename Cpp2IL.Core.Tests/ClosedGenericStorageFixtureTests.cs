@@ -40,6 +40,7 @@ public class ClosedGenericStorageFixtureTests
             var methods = assembly.Types.SelectMany(type => type.Methods).ToArray();
             Assert.That(methods, Has.Length.EqualTo(6));
             CheckArrayElementIdentity(app, assembly);
+            CheckCanonicalPrimitiveSizes(app, assembly);
             CheckEnumBackingRecursion(app);
             foreach (var owner in assembly.Types.Where(type => type.Name is "IntState" or "LongState"))
             {
@@ -113,6 +114,40 @@ public class ClosedGenericStorageFixtureTests
             new ArrayTypeAnalysisContext(original, 3)), Is.False);
         Assert.That(GenericInstanceFieldLayout.SameReferenceArgument(new SzArrayTypeAnalysisContext(new SzArrayTypeAnalysisContext(other)),
             new SzArrayTypeAnalysisContext(canonical)), Is.False);
+    }
+
+    private static void CheckCanonicalPrimitiveSizes(ApplicationAnalysisContext app,
+        AssemblyAnalysisContext assembly)
+    {
+        var system = app.SystemTypes;
+        foreach (var (type, expected) in new[]
+                 {
+                     (system.SystemBooleanType, (1L, 1L)),
+                     (system.SystemCharType, (2L, 2L)),
+                     (system.SystemInt32Type, (4L, 4L)),
+                     (system.SystemDoubleType, (8L, 8L)),
+                     (system.SystemIntPtrType, (8L, 8L)),
+                 })
+            Assert.That(GenericInstanceFieldLayout.GetSizeAndAlignment(type, 8),
+                Is.EqualTo(expected), type.FullName);
+
+        var counterfeit = assembly.Types.Single(type =>
+            type.IsValueType && type.GenericParameters.Count == 1);
+        var name = counterfeit.OverrideName;
+        var @namespace = counterfeit.OverrideNamespace;
+        try
+        {
+            counterfeit.OverrideName = "Int32";
+            counterfeit.OverrideNamespace = "System";
+            Assert.That(counterfeit.FullName, Is.EqualTo("System.Int32"));
+            Assert.That(GenericInstanceFieldLayout.GetSizeAndAlignment(counterfeit, 8),
+                Is.Null, "a matching full name does not prove primitive storage");
+        }
+        finally
+        {
+            counterfeit.OverrideName = name;
+            counterfeit.OverrideNamespace = @namespace;
+        }
     }
 
     private static void CheckEnumBackingRecursion(ApplicationAnalysisContext app)

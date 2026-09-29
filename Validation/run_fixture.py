@@ -25,6 +25,7 @@ import field_array
 import enum_field_array
 import field_boolean_array
 import field_boolean_array_read
+import fixed_boolean_conjunction
 import constructed_base_boolean_array
 import float_forward_store
 import nested_single_getter
@@ -53,6 +54,8 @@ import byte_mask_parameter
 import byte_mask_one
 import boolean_getter
 import boolean_composition
+import conditional_boolean_store
+import conditional_generic_boolean_store
 import boolean_literal_store
 import parameter_boolean_array_store
 import scalar_field_comparison
@@ -146,6 +149,7 @@ import guarded_sink
 import folded_state_constructor
 import folded_literal_constructor
 import shared_inert_constructor
+import empty_object_constructor
 import float_initializer_constructor
 import scalar_wrapper
 import scalar_wrapper_cctor
@@ -168,6 +172,8 @@ PROFILES = {
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "field-boolean-array": {"assembly": "BooleanFieldArrayFixture", "source": VALIDATION / "BooleanFieldArrayFixture", "methods": 3},
     "field-boolean-array-read": {"assembly": "FieldBooleanArrayReadFixture", "source": VALIDATION / "FieldBooleanArrayReadFixture", "methods": 4},
+    "fixed-boolean-conjunction": {"assembly": "FixedBooleanConjunctionFixture",
+                                  "source": VALIDATION / "FixedBooleanConjunctionFixture", "methods": 2},
     "range-array-read": {"assembly": "RangeArrayReadFixture", "source": VALIDATION / "RangeArrayReadFixture", "methods": 4},
     "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
@@ -198,6 +204,11 @@ PROFILES = {
     "scalar-field-comparison": {"assembly": "ScalarFieldComparisonFixture", "source": VALIDATION / "ScalarFieldComparisonFixture", "methods": 3},
     "parameter-boolean-array-store": {"assembly": "ParameterBooleanArrayStoreFixture", "source": VALIDATION / "ParameterBooleanArrayStoreFixture", "methods": 10},
     "boolean-composition": {"assembly": "BooleanCompositionFixture", "source": VALIDATION / "BooleanCompositionFixture", "methods": 3},
+    "conditional-boolean-store": {"assembly": "ConditionalBooleanStoreFixture",
+                                  "source": VALIDATION / "ConditionalBooleanStoreFixture", "methods": 3},
+    "conditional-generic-boolean-store": {"assembly": "ConditionalGenericBooleanStoreFixture",
+                                          "source": VALIDATION / "ConditionalGenericBooleanStoreFixture",
+                                          "methods": 4},
     "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 5},
     "boolean-getter-metadata": {"assembly": "BooleanGetterMetadataFixture", "source": VALIDATION / "BooleanGetterMetadataFixture", "methods": 11},
     "virtual-string-call": {"assembly": "VirtualStringCallFixture", "source": VALIDATION / "VirtualStringCallFixture", "methods": 5},
@@ -237,6 +248,7 @@ PROFILES = {
     "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
     "folded-literal-constructor": {"assembly": "FoldedLiteralConstructorFixture", "source": VALIDATION / "FoldedLiteralConstructorFixture", "methods": 3},
     "shared-inert-constructor": {"assembly": "SharedInertConstructorFixture", "source": VALIDATION / "SharedInertConstructorFixture", "methods": 2},
+    "empty-object-constructor": {"assembly": "EmptyObjectConstructorFixture", "source": VALIDATION / "EmptyObjectConstructorFixture", "methods": 2},
     "float-initializer-constructor": {"assembly": "FloatInitializerConstructorFixture",
                                       "source": VALIDATION / "FloatInitializerConstructorFixture", "methods": 1},
     "scalar-wrapper": {"assembly": "ScalarWrapperFixture",
@@ -437,6 +449,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return parameter_boolean_array_store.verify(path, stage, VERSION)
     if profile == "boolean-composition":
         return boolean_composition.verify(path, stage, VERSION)
+    if profile == "conditional-boolean-store":
+        return conditional_boolean_store.verify(path, stage, VERSION)
+    if profile == "conditional-generic-boolean-store":
+        return conditional_generic_boolean_store.verify(path, stage, VERSION)
     if profile == "boolean-getter":
         return boolean_getter.verify(path, stage, VERSION)
     if profile == "boolean-getter-metadata":
@@ -453,6 +469,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return folded_literal_constructor.verify(path, stage, VERSION)
     if profile == "shared-inert-constructor":
         return shared_inert_constructor.verify(path, stage, VERSION)
+    if profile == "empty-object-constructor":
+        return empty_object_constructor.verify(path, stage, VERSION)
     if profile == "float-initializer-constructor":
         return float_initializer_constructor.verify(path, stage, VERSION)
     if profile == "scalar-wrapper":
@@ -497,6 +515,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return inherited_reference_array_read.verify(path, stage, VERSION)
     if profile == "field-boolean-array-read":
         return field_boolean_array_read.verify(path, stage, VERSION)
+    if profile == "fixed-boolean-conjunction":
+        return fixed_boolean_conjunction.verify(path, stage, VERSION)
     if profile == "range-array-read":
         return range_array_read.verify(path, stage, VERSION)
     if profile == "fixed-scalar-array":

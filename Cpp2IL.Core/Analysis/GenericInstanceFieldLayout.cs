@@ -78,15 +78,30 @@ public static class GenericInstanceFieldLayout
         if (fieldType.IsEnumType)
             return GetEnumStorage(fieldType);
 
-        return fieldType.FullName switch
-        {
-            "System.Boolean" or "System.Byte" or "System.SByte" => (1, 1),
-            "System.Int16" or "System.UInt16" or "System.Char" => (2, 2),
-            "System.Int32" or "System.UInt32" or "System.Single" => (4, 4),
-            "System.Int64" or "System.UInt64" or "System.Double" => (8, 8),
-            "System.IntPtr" or "System.UIntPtr" => (pointerSize, pointerSize),
-            _ => null // an arbitrary struct needs its own layout computed, bail rather than guess
-        };
+        // A value type from another assembly can use a framework-looking name.
+        // Only the application's canonical primitive contexts establish these
+        // storage widths; arbitrary structs still need an independent layout.
+        var system = fieldType.AppContext.SystemTypes;
+        if (ReferenceEquals(fieldType, system.SystemBooleanType) ||
+            ReferenceEquals(fieldType, system.SystemByteType) ||
+            ReferenceEquals(fieldType, system.SystemSByteType))
+            return (1, 1);
+        if (ReferenceEquals(fieldType, system.SystemInt16Type) ||
+            ReferenceEquals(fieldType, system.SystemUInt16Type) ||
+            ReferenceEquals(fieldType, system.SystemCharType))
+            return (2, 2);
+        if (ReferenceEquals(fieldType, system.SystemInt32Type) ||
+            ReferenceEquals(fieldType, system.SystemUInt32Type) ||
+            ReferenceEquals(fieldType, system.SystemSingleType))
+            return (4, 4);
+        if (ReferenceEquals(fieldType, system.SystemInt64Type) ||
+            ReferenceEquals(fieldType, system.SystemUInt64Type) ||
+            ReferenceEquals(fieldType, system.SystemDoubleType))
+            return (8, 8);
+        if (ReferenceEquals(fieldType, system.SystemIntPtrType) ||
+            ReferenceEquals(fieldType, system.SystemUIntPtrType))
+            return (pointerSize, pointerSize);
+        return null;
     }
 
     // Preserve the existing closed reference-substitution path. A raw VAR in an

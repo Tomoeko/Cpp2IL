@@ -19,6 +19,9 @@ from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_proces
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "boolean-composition",
+    "conditional-boolean-store",
+    "conditional-generic-boolean-store",
+    "fixed-boolean-conjunction",
     "boolean-literal-store",
     "parameter-boolean-array-store",
     "scalar-field-comparison",
@@ -42,6 +45,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "open-generic-prefix-operations",
     "array-read-increment",
     "object-reference-store",
+    "empty-object-constructor",
     "string-reference-store",
     "nested-literal-store",
     "enum-field-array",

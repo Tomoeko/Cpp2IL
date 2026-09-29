@@ -237,6 +237,14 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64ConditionalGenericBooleanStoreRecovery.TryGenerate(methodContext,
+                    methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Conditional constructed-generic Boolean and Int32 field stores emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64StructStaticConstructorRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
@@ -399,6 +407,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
                     "Guarded Boolean-array field read IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
+            if (X64FixedBooleanConjunctionRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Ordered short-circuit Boolean-array conjunction IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 
