@@ -125,6 +125,8 @@ internal static partial class X64ClassCastLookupProof
                 shape.Flag - shape.TypeInfoSlot < 8 ||
                 !X64MetadataStaticGetterProof.FileBackedWritableData(pe, unwind,
                     shape.TypeInfoSlot, 8) ||
+                !X64PeOnceFlagProof.IsUnrelocatedRange(pe, unwind,
+                    shape.TypeInfoSlot, 8) ||
                 !X64PeOnceFlagProof.IsInitiallyZero(pe, unwind, shape.Flag) ||
                 shape.Initializer != app.GetOrCreateKeyFunctionAddresses()
                     .il2cpp_codegen_initialize_runtime_metadata ||
@@ -177,8 +179,18 @@ internal static partial class X64ClassCastLookupProof
 
     // Pure native predicate supports negative mutation tests without altered binaries.
     internal static Shape? TryProveShape(IReadOnlyList<NativeInstruction> body)
+        => TryProveReferenceClassTest(body, parameterOrigin: false);
+
+    // The parameter form retains RCX in RBX and shares the same depth/table test.
+    // Its metadata/ABI binding belongs to X64ParameterClassTestProof.
+    internal static Shape? TryProveParameterShape(IReadOnlyList<NativeInstruction> body)
+        => TryProveReferenceClassTest(body, parameterOrigin: true);
+
+    private static Shape? TryProveReferenceClassTest(IReadOnlyList<NativeInstruction> body,
+        bool parameterOrigin)
     {
-        if (body.Count is not (37 or 38) || body.Any(instruction => instruction.IsInvalid ||
+        if ((parameterOrigin ? body.Count != 36 : body.Count is not (37 or 38)) ||
+            body.Any(instruction => instruction.IsInvalid ||
                 instruction.CodeSize != CodeSize.Code64 || instruction.HasLockPrefix ||
                 instruction.HasRepPrefix || instruction.HasRepnePrefix ||
                 instruction.SegmentPrefix != NativeRegister.None) ||
@@ -189,29 +201,36 @@ internal static partial class X64ClassCastLookupProof
         var targetVariant = body.Count == 38;
         var classRegister = targetVariant ? NativeRegister.R9 : NativeRegister.RAX;
         var depthRegister = targetVariant ? NativeRegister.AL : NativeRegister.CL;
-        var hierarchyIndex = targetVariant ? 21 : 20;
-        var successIndex = targetVariant ? 24 : 23;
-        var failureIndex = targetVariant ? 31 : 30;
+        var testIndex = parameterOrigin ? 8 : 9;
+        var sourceRegister = parameterOrigin ? NativeRegister.RBX : NativeRegister.RDX;
+        var targetRegister = parameterOrigin ? NativeRegister.RDX : NativeRegister.R8;
+        var shift = parameterOrigin ? 1 : 0;
+        var hierarchyIndex = (targetVariant ? 21 : 20) - shift;
+        var successIndex = (targetVariant ? 24 : 23) - shift;
+        var failureIndex = (targetVariant ? 31 : 30) - shift;
+        var fieldOffset = 0;
         if (!PushRbx(body[0]) || !Stack(body[1], Mnemonic.Sub) ||
             !RipCompareZero(body[2]) ||
             !Move(body[3], NativeRegister.RBX, NativeRegister.RCX) ||
             !Branch(body[4], Code.Jne_rel8_64, body[8].IP) ||
             !RipLea(body[5], NativeRegister.RCX) || !DirectCall(body[6]) ||
             !RipStoreOne(body[7], body[2].IPRelativeMemoryAddress) ||
-            !ReferenceFieldLoad(body[8], out var fieldOffset) ||
-            !SelfTest(body[9], NativeRegister.RDX) ||
-            !Branch(body[10], Code.Jne_rel8_64, body[15].IP) ||
-            !ZeroEax(body[11]) || !ReturnEpilog(body, 12) ||
-            !RipLoad(body[15], NativeRegister.R8, body[5].IPRelativeMemoryAddress) ||
-            !ObjectClassLoad(body[16], classRegister) ||
-            !TargetDepthLoad(body[17], targetVariant ? NativeRegister.EAX : NativeRegister.ECX) ||
-            !ClassDepthCompare(body[18], classRegister, depthRegister) ||
-            !Branch(body[19], Code.Jb_rel8_64, body[failureIndex].IP) ||
+            !parameterOrigin && !ReferenceFieldLoad(body[8], out fieldOffset) ||
+            !SelfTest(body[testIndex], sourceRegister) ||
+            !Branch(body[testIndex + 1], Code.Jne_rel8_64, body[15 - shift].IP) ||
+            !ZeroEax(body[testIndex + 2]) || !ReturnEpilog(body, testIndex + 3) ||
+            !RipLoad(body[15 - shift], targetRegister, body[5].IPRelativeMemoryAddress) ||
+            !ObjectClassLoad(body[16 - shift], classRegister, sourceRegister) ||
+            !TargetDepthLoad(body[17 - shift],
+                targetVariant ? NativeRegister.EAX : NativeRegister.ECX, targetRegister) ||
+            !ClassDepthCompare(body[18 - shift], classRegister, depthRegister) ||
+            !Branch(body[19 - shift], Code.Jb_rel8_64, body[failureIndex].IP) ||
             targetVariant && !SecondZeroExtend(body[20]) ||
             !HierarchyLoad(body[hierarchyIndex], classRegister) ||
-            !HierarchyCompare(body[hierarchyIndex + 1]) ||
+            !HierarchyCompare(body[hierarchyIndex + 1], targetRegister) ||
             !Branch(body[hierarchyIndex + 2], Code.Jne_rel8_64, body[failureIndex].IP) ||
-            !SuccessReturn(body, successIndex) || !FailureReturn(body, failureIndex))
+            !SuccessReturn(body, successIndex, sourceRegister) ||
+            !FailureReturn(body, failureIndex, sourceRegister))
             return null;
 
         return new Shape(fieldOffset, body[2].IPRelativeMemoryAddress,
@@ -382,8 +401,9 @@ internal static partial class X64ClassCastLookupProof
         instruction.MemorySize.GetSize() == 8 &&
         instruction.IPRelativeMemoryAddress == address;
 
-    private static bool ObjectClassLoad(NativeInstruction instruction, NativeRegister destination) =>
-        MemoryLoad(instruction, destination, NativeRegister.RDX, 0);
+    private static bool ObjectClassLoad(NativeInstruction instruction,
+        NativeRegister destination, NativeRegister source) =>
+        MemoryLoad(instruction, destination, source, 0);
 
     private static bool HierarchyLoad(NativeInstruction instruction, NativeRegister classRegister) =>
         MemoryLoad(instruction, NativeRegister.RAX, classRegister,
@@ -398,10 +418,10 @@ internal static partial class X64ClassCastLookupProof
         instruction.MemorySize.GetSize() == 8;
 
     private static bool TargetDepthLoad(NativeInstruction instruction,
-        NativeRegister destination) =>
+        NativeRegister destination, NativeRegister target) =>
         instruction.Code == Code.Movzx_r32_rm8 && instruction.Op0Kind == OpKind.Register &&
         instruction.Op0Register == destination && instruction.Op1Kind == OpKind.Memory &&
-        instruction.MemoryBase == NativeRegister.R8 &&
+        instruction.MemoryBase == target &&
         instruction.MemoryIndex == NativeRegister.None &&
         instruction.MemoryDisplacement64 ==
             Il2CppClassLayout.TypeHierarchyDepthOffset64 &&
@@ -423,14 +443,14 @@ internal static partial class X64ClassCastLookupProof
         instruction.Op0Register == NativeRegister.ECX &&
         instruction.Op1Kind == OpKind.Register && instruction.Op1Register == NativeRegister.AL;
 
-    private static bool HierarchyCompare(NativeInstruction instruction) =>
+    private static bool HierarchyCompare(NativeInstruction instruction, NativeRegister target) =>
         instruction.Code == Code.Cmp_rm64_r64 && instruction.Op0Kind == OpKind.Memory &&
         instruction.MemoryBase == NativeRegister.RAX &&
         instruction.MemoryIndex == NativeRegister.RCX &&
         instruction.MemoryIndexScale == 8 &&
         instruction.MemoryDisplacement64 == unchecked((ulong)-8) &&
         instruction.MemorySize.GetSize() == 8 &&
-        instruction.Op1Kind == OpKind.Register && instruction.Op1Register == NativeRegister.R8;
+        instruction.Op1Kind == OpKind.Register && instruction.Op1Register == target;
 
     private static bool ZeroEax(NativeInstruction instruction) =>
         instruction.Code == Code.Xor_r32_rm32 &&
@@ -445,24 +465,26 @@ internal static partial class X64ClassCastLookupProof
         body[start + 1].Op0Register == NativeRegister.RBX &&
         body[start + 2].Code == Code.Retnq && body[start + 2].OpCount == 0;
 
-    private static bool SuccessReturn(IReadOnlyList<NativeInstruction> body, int start) =>
+    private static bool SuccessReturn(IReadOnlyList<NativeInstruction> body, int start,
+        NativeRegister source) =>
         ZeroEax(body[start]) &&
         body[start + 1].Code == Code.Mov_r8_imm8 &&
         body[start + 1].Op0Kind == OpKind.Register &&
         body[start + 1].Op0Register == NativeRegister.CL &&
         body[start + 1].Op1Kind == OpKind.Immediate8 &&
         body[start + 1].Immediate8 == 1 &&
-        TestCl(body[start + 2]) && CmovOriginal(body[start + 3]) &&
+        TestCl(body[start + 2]) && CmovOriginal(body[start + 3], source) &&
         ReturnEpilog(body, start + 4);
 
-    private static bool FailureReturn(IReadOnlyList<NativeInstruction> body, int start) =>
+    private static bool FailureReturn(IReadOnlyList<NativeInstruction> body, int start,
+        NativeRegister source) =>
         ZeroEax(body[start]) &&
         body[start + 1].Code == Code.Xor_r8_rm8 &&
         body[start + 1].Op0Kind == OpKind.Register &&
         body[start + 1].Op1Kind == OpKind.Register &&
         body[start + 1].Op0Register == NativeRegister.CL &&
         body[start + 1].Op1Register == NativeRegister.CL &&
-        TestCl(body[start + 2]) && CmovOriginal(body[start + 3]) &&
+        TestCl(body[start + 2]) && CmovOriginal(body[start + 3], source) &&
         ReturnEpilog(body, start + 4);
 
     private static bool TestCl(NativeInstruction instruction) =>
@@ -471,9 +493,9 @@ internal static partial class X64ClassCastLookupProof
         instruction.Op0Register == NativeRegister.CL &&
         instruction.Op1Register == NativeRegister.CL;
 
-    private static bool CmovOriginal(NativeInstruction instruction) =>
+    private static bool CmovOriginal(NativeInstruction instruction, NativeRegister source) =>
         instruction.Code == Code.Cmovne_r64_rm64 &&
         instruction.Op0Kind == OpKind.Register && instruction.Op1Kind == OpKind.Register &&
         instruction.Op0Register == NativeRegister.RAX &&
-        instruction.Op1Register == NativeRegister.RDX;
+        instruction.Op1Register == source;
 }

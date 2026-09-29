@@ -63,15 +63,10 @@ public static partial class IlGenerator
                     continue;
                 }
 
-                var offset = context.IsStatic ? 0 : 1;
-                var matches = Enumerable.Range(0, context.Parameters.Count).Where(index =>
-                    index + offset < context.ParameterOperands.Count &&
-                    context.ParameterOperands[index + offset] is Register register &&
-                    local.Register.Number == register.Number && local.Register.Version == -1).ToArray();
-                if (matches.Length != 1)
+                if (LocalVariables.GetIncomingParameterIndex(context, local) is not { } index)
                     throw new DecompilerException("Managed parameter cannot be mapped to a unique native argument");
-                Parameters.Add(local, definition.Parameters[matches[0]]);
-                ParameterContexts.Add(local, context.Parameters[matches[0]]);
+                Parameters.Add(local, definition.Parameters[index]);
+                ParameterContexts.Add(local, context.Parameters[index]);
             }
         }
     }

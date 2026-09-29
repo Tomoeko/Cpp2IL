@@ -88,6 +88,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return staticLiteralConcat; // The literal guard, initializer, and static Concat tail are bound together.
         if (X64BooleanParameterTailBranchProof.TryLift(context, nativeInstructions) is { } booleanTailBranch)
             return booleanTailBranch; // Complete frame-free Boolean branch with two uniquely bound tail targets.
+        if (X64ByteMaskBooleanParameterProof.TryLift(context, nativeInstructions) is { } byteMaskBoolean)
+            return byteMaskBoolean; // Complete Boolean leaf proves the second argument's low-byte mask.
+        if (X64ScalarZeroReturnProof.TryLift(context, nativeInstructions) is { } scalarZero)
+            return scalarZero; // The complete leaf clears all XMM0 bits before a scalar return.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
         if (X64ReferencePropertySetterProof.TryLift(context, nativeInstructions) is { } propertyStore)

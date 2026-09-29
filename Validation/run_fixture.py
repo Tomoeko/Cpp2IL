@@ -48,6 +48,7 @@ import time
 
 import byte_fields
 import byte_mask_parameter
+import byte_mask_one
 import boolean_getter
 import boolean_getter_metadata
 import byte_threshold
@@ -86,6 +87,7 @@ import runtime_cast_concat
 import static_literal_concat
 import throw_only
 import scalar_truncation
+import scalar_zero_return
 import arithmetic_zero_flag
 import sequential_null_guards
 import call_result_null_guard
@@ -98,6 +100,8 @@ import word_fields
 import zero_arg_field_call
 import reference_tail_call
 import enum_return_tail
+import explicit_class_cast
+import parameter_class_test
 import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
@@ -213,6 +217,7 @@ PROFILES = {
     "boolean-parameter-branch": {"assembly": "BooleanParameterBranchFixture", "source": VALIDATION / "BooleanParameterBranchFixture", "methods": 3},
     "narrow-test-arithmetic": {"assembly": "NarrowTestArithmeticFixture", "source": VALIDATION / "NarrowTestArithmeticFixture", "methods": 1},
     "byte-mask-parameter": {"assembly": "ByteMaskParameterFixture", "source": VALIDATION / "ByteMaskParameterFixture", "methods": 6},
+    "byte-mask-one": {"assembly": "ByteMaskOneFixture", "source": VALIDATION / "ByteMaskOneFixture", "methods": 1},
     "byte-threshold": {"assembly": "ByteThresholdFixture", "source": VALIDATION / "ByteThresholdFixture", "methods": 2},
     "dense-switch": {"assembly": "DenseSwitchFixture", "source": VALIDATION / "DenseSwitchFixture", "methods": 2},
     "composed-array": {"assembly": "ComposedArrayFixture", "source": VALIDATION / "ComposedArrayFixture", "methods": 6},
@@ -224,6 +229,8 @@ PROFILES = {
     "zero-arg-field-call": {"assembly": "ZeroArgFieldCallFixture", "source": VALIDATION / "ZeroArgFieldCallFixture", "methods": 8},
     "reference-tail-call": {"assembly": "ReferenceTailCallFixture", "source": VALIDATION / "ReferenceTailCallFixture", "methods": 2},
     "enum-return-tail": {"assembly": "EnumReturnTailFixture", "source": VALIDATION / "EnumReturnTailFixture", "methods": 4},
+    "explicit-class-cast": {"assembly": "ExplicitClassCastFixture", "source": VALIDATION / "ExplicitClassCastFixture", "methods": 1},
+    "parameter-class-test": {"assembly": "ParameterClassTestFixture", "source": VALIDATION / "ParameterClassTestFixture", "methods": 1},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
     "call-result-boolean-store": {"assembly": "CallResultBooleanStoreFixture",
@@ -248,6 +255,7 @@ PROFILES = {
     "struct-forward-call": {"assembly": "StructForwardCallFixture", "source": VALIDATION / "StructForwardCallFixture", "methods": 5},
     "struct-static-forward-call": {"assembly": "StructStaticForwardCallFixture", "source": VALIDATION / "StructStaticForwardCallFixture", "methods": 6},
     "scalar-truncation": {"assembly": "ScalarTruncationFixture", "source": VALIDATION / "ScalarTruncationFixture", "methods": 2},
+    "scalar-zero-return": {"assembly": "ScalarZeroReturnFixture", "source": VALIDATION / "ScalarZeroReturnFixture", "methods": 2},
     "arithmetic-zero-flag": {"assembly": "ArithmeticZeroFlagFixture",
                              "source": VALIDATION / "ArithmeticZeroFlagFixture", "methods": 4},
     "loop-calls": {"assembly": "LoopCallFixture", "source": VALIDATION / "LoopCallFixture", "methods": 4},
@@ -307,6 +315,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return narrow_test_arithmetic.verify(path, stage, VERSION)
     if profile == "byte-mask-parameter":
         return byte_mask_parameter.verify(path, stage, VERSION)
+    if profile == "byte-mask-one":
+        return byte_mask_one.verify(path, stage, VERSION)
     if profile == "catch-divide":
         return catch_divide.verify(path, stage, VERSION)
     if profile == "exception-regions":
@@ -467,6 +477,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return reference_tail_call.verify(path, stage, VERSION)
     if profile == "enum-return-tail":
         return enum_return_tail.verify(path, stage, VERSION)
+    if profile == "explicit-class-cast":
+        return explicit_class_cast.verify(path, stage, VERSION)
+    if profile == "parameter-class-test":
+        return parameter_class_test.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":
         return boolean_tail_field_call.verify(path, stage, VERSION)
     if profile == "call-result-boolean-store":
@@ -493,6 +507,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return struct_static_forward_call.verify(path, stage, VERSION)
     if profile == "scalar-truncation":
         return scalar_truncation.verify(path, stage, VERSION)
+    if profile == "scalar-zero-return":
+        return scalar_zero_return.verify(path, stage, VERSION)
     if profile == "arithmetic-zero-flag":
         return arithmetic_zero_flag.verify(path, stage, VERSION)
     if profile == "loop-calls":

@@ -71,9 +71,9 @@ public static class LocalVariables
         var retValIndex = 0;
         foreach (var instruction in instructions)
         {
-            if (instruction.OpCode != OpCode.Return || instruction.Operands.Count != 1) continue;
-
-            var returnLocal = (LocalVariable)instruction.Sources[0];
+            if (instruction.OpCode != OpCode.Return || instruction.Operands.Count != 1 ||
+                instruction.Operands[0] is not LocalVariable returnLocal)
+                continue;
 
             returnLocal.Name = $"returnVal{retValIndex + 1}";
             returnLocal.IsReturn = true;
@@ -793,19 +793,39 @@ public static class LocalVariables
         if (method.Parameters.Count == 0)
             return;
 
-        // Normal params
-        var paramIndex = 0;
+        // Some incoming parameters are never used and therefore have no SSA
+        // local. Match each remaining local to its original ABI slot instead
+        // of compressing the parameter list around those missing locals.
         foreach (var local in method.ParameterLocals)
         {
-            if (local.IsThis || local.IsMethodInfo)
-                continue;
-
-            if (paramIndex >= method.Parameters.Count)
-                break;
-
-            local.Type = method.Parameters[paramIndex].ParameterType;
-            paramIndex++;
+            if (GetIncomingParameterIndex(method, local) is { } index)
+                local.Type = method.Parameters[index].ParameterType;
         }
+    }
+
+    // ParameterOperands preserves [this?, declared parameters..., MethodInfo].
+    // StackAnalyzer turns incoming stack slots into registers before locals are
+    // created, so both register and stack parameters use the same SSA identity.
+    internal static int? GetIncomingParameterIndex(MethodAnalysisContext method, LocalVariable local)
+    {
+        if (local.IsThis || local.IsMethodInfo || local.Register.Version != -1)
+            return null;
+
+        var operandOffset = method.IsStatic ? 0 : 1;
+        int? match = null;
+        for (var index = 0; index < method.Parameters.Count; index++)
+        {
+            var operandIndex = index + operandOffset;
+            if (operandIndex >= method.ParameterOperands.Count)
+                break;
+            if (method.ParameterOperands[operandIndex] is not Register register ||
+                register.Number != local.Register.Number)
+                continue;
+            if (match != null)
+                return null;
+            match = index;
+        }
+        return match;
     }
 
     private static void PropagateFromReturn(MethodAnalysisContext method)
