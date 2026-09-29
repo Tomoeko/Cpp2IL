@@ -181,6 +181,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64NullableDelegateFieldTailRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Nullable delegate field tail IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64VirtualTailDispatchRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
@@ -453,6 +460,14 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
                     "Array-element Boolean store IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
+            if (X64FieldParameterBooleanArrayStoreRecovery.TryGenerate(methodContext,
+                    methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Field-backed Boolean-array parameter store IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 

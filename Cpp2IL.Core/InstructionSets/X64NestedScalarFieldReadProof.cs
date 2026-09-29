@@ -16,7 +16,8 @@ using ManagedRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Proves an instance Boolean, Int32 or Single read through one reference field.
+/// Proves an instance Boolean, Int32 or Single read, or unsigned Byte-to-Int32
+/// widening, through one reference field.
 /// Its complete native body has a terminal, proved runtime null throw for a
 /// missing child; the managed second field read retains that exception.
 /// </summary>
@@ -105,7 +106,8 @@ internal static class X64NestedScalarFieldReadProof
             !Test(body[2], NativeRegister.RAX) ||
             body[3].Mnemonic != Mnemonic.Je || body[3].Op0Kind != OpKind.NearBranch64 ||
             body[3].NearBranchTarget != body[7].IP ||
-            !ScalarLoad(body[4], rawReturn.Type, out var valueOffset) ||
+            !ScalarLoad(body[4], rawReturn.Type, out var valueOffset,
+                out var rawFieldType) ||
             !Stack(body[5], Mnemonic.Add) ||
             body[6].Code != Code.Retnq || body[6].OpCount != 0 ||
             body[7].Code != Code.Call_rel32_64 || body[7].Op0Kind != OpKind.NearBranch64 ||
@@ -132,10 +134,12 @@ internal static class X64NestedScalarFieldReadProof
 
         var values = child.Fields.Where(field => !field.IsStatic &&
             field.Offset == (long)valueOffset &&
-            ReferenceEquals(field.FieldType, method.ReturnType) &&
             field.BackingData?.Field.RawFieldType is
                 { NumMods: 0, Byref: 0, Pinned: 0 } rawField &&
-            rawField.Type == rawReturn.Type).ToArray();
+            rawField.Type == rawFieldType &&
+            ReferenceEquals(field.FieldType,
+                rawFieldType == Il2CppTypeEnum.IL2CPP_TYPE_U1
+                    ? app.SystemTypes.SystemByteType : method.ReturnType)).ToArray();
         if (values is not [{ } valueField] || valueField.Name != valueField.DefaultName ||
             !ReferenceEquals(child, owner) &&
             (valueField.Visibility != FieldAttributes.Public ||
@@ -145,10 +149,11 @@ internal static class X64NestedScalarFieldReadProof
             new ManagedRegister(null, "proved-child"), child);
         var valueReference = new FieldReference(valueField, childLocal,
             (int)valueOffset);
-        if (rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4
+        if (rawFieldType == Il2CppTypeEnum.IL2CPP_TYPE_R4
                 ? !NarrowFieldEqualityProof.HasUnchangedSingleFieldLayout(valueReference)
                 : !NarrowFieldEqualityProof.HasUnchangedFieldLayout(valueReference,
-                    rawReturn.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32))
+                    rawFieldType is Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN or
+                        Il2CppTypeEnum.IL2CPP_TYPE_U1 ? 8 : 32))
             return null;
 
         return new Evidence(receiverField, valueField);
@@ -219,12 +224,16 @@ internal static class X64NestedScalarFieldReadProof
         instruction.Op0Register == register && instruction.Op1Kind == OpKind.Register &&
         instruction.Op1Register == register;
 
-    private static bool ScalarLoad(NativeInstruction instruction, Il2CppTypeEnum type,
-        out ulong offset)
+    private static bool ScalarLoad(NativeInstruction instruction, Il2CppTypeEnum returnType,
+        out ulong offset, out Il2CppTypeEnum fieldType)
     {
         offset = instruction.MemoryDisplacement64;
-        var floating = type == Il2CppTypeEnum.IL2CPP_TYPE_R4;
-        return instruction.Code == (type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN
+        fieldType = returnType == Il2CppTypeEnum.IL2CPP_TYPE_I4 &&
+                    instruction.Code == Code.Movzx_r32_rm8
+            ? Il2CppTypeEnum.IL2CPP_TYPE_U1 : returnType;
+        var floating = fieldType == Il2CppTypeEnum.IL2CPP_TYPE_R4;
+        return instruction.Code == (fieldType is Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN or
+                   Il2CppTypeEnum.IL2CPP_TYPE_U1
                    ? Code.Movzx_r32_rm8 : floating
                        ? Code.Movss_xmm_xmmm32 : Code.Mov_r32_rm32) &&
                instruction.Op0Kind == OpKind.Register &&
@@ -233,7 +242,8 @@ internal static class X64NestedScalarFieldReadProof
                instruction.MemoryBase == NativeRegister.RAX &&
                instruction.MemoryIndex == NativeRegister.None &&
                instruction.MemorySize.GetSize() ==
-                   (type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 1 : 4) &&
+                   (fieldType is Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN or
+                       Il2CppTypeEnum.IL2CPP_TYPE_U1 ? 1 : 4) &&
                offset <= int.MaxValue;
     }
 }

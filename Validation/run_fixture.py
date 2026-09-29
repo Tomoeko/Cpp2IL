@@ -96,6 +96,7 @@ import nested_flag_setter
 import reference_null
 import reference_field_null
 import wide_reference_null
+import field_parameter_boolean_array_store
 import reference_store
 import object_reference_store
 import string_reference_store
@@ -136,6 +137,9 @@ import dynamic_virtual_dispatch
 import open_generic_early_field
 import open_generic_prefix_operations
 import nested_literal_store
+import nested_byte_field_read
+import call_before_capture_boolean_store
+import nullable_delegate_field_tail
 import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
@@ -175,6 +179,9 @@ PROFILES = {
     "enum-field-array": {"assembly": "EnumFieldArrayFixture", "source": VALIDATION / "EnumFieldArrayFixture", "methods": 8},
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
     "field-boolean-array": {"assembly": "BooleanFieldArrayFixture", "source": VALIDATION / "BooleanFieldArrayFixture", "methods": 3},
+    "field-parameter-boolean-array-store": {
+        "assembly": "FieldParameterBooleanArrayStoreFixture",
+        "source": VALIDATION / "FieldParameterBooleanArrayStoreFixture", "methods": 2},
     "field-boolean-array-read": {"assembly": "FieldBooleanArrayReadFixture", "source": VALIDATION / "FieldBooleanArrayReadFixture", "methods": 4},
     "fixed-boolean-conjunction": {"assembly": "FixedBooleanConjunctionFixture",
                                   "source": VALIDATION / "FixedBooleanConjunctionFixture", "methods": 2},
@@ -333,6 +340,15 @@ PROFILES = {
     "guarded-array-length": {"assembly": "GuardedArrayLengthFixture", "source": VALIDATION / "GuardedArrayLengthFixture", "methods": 6},
     "narrow-scalar-getter": {"assembly": "NarrowScalarGetterFixture", "source": VALIDATION / "NarrowScalarGetterFixture", "methods": 8},
     "nested-literal-store": {"assembly": "NestedLiteralStoreFixture", "source": VALIDATION / "NestedLiteralStoreFixture", "methods": 9},
+    "call-before-capture-boolean-store": {
+        "assembly": "CallBeforeCaptureBooleanStoreFixture",
+        "source": VALIDATION / "CallBeforeCaptureBooleanStoreFixture", "methods": 5},
+    "nullable-delegate-field-tail": {
+        "assembly": "NullableDelegateFieldTailFixture",
+        "source": VALIDATION / "NullableDelegateFieldTailFixture", "methods": 4},
+    "nested-byte-field-read": {
+        "assembly": "NestedByteFieldReadFixture",
+        "source": VALIDATION / "NestedByteFieldReadFixture", "methods": 3},
     "parameter-class-test": {"assembly": "ParameterClassTestFixture", "source": VALIDATION / "ParameterClassTestFixture", "methods": 1},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
@@ -436,6 +452,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return field_array.verify(path, stage, VERSION)
     if profile == "field-boolean-array":
         return field_boolean_array.verify(path, stage, VERSION)
+    if profile == "field-parameter-boolean-array-store":
+        return field_parameter_boolean_array_store.verify(path, stage, VERSION)
     if profile == "constructed-base-boolean-array":
         return constructed_base_boolean_array.verify(path, stage, VERSION)
     if profile == "narrow-array":
@@ -654,6 +672,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return ordered_generic_tail_field.verify(path, stage, VERSION)
     if profile == "nested-literal-store":
         return nested_literal_store.verify(path, stage, VERSION)
+    if profile == "call-before-capture-boolean-store":
+        return call_before_capture_boolean_store.verify(path, stage, VERSION)
+    if profile == "nullable-delegate-field-tail":
+        return nullable_delegate_field_tail.verify(path, stage, VERSION)
+    if profile == "nested-byte-field-read":
+        return nested_byte_field_read.verify(path, stage, VERSION)
     if profile == "parameter-class-test":
         return parameter_class_test.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":

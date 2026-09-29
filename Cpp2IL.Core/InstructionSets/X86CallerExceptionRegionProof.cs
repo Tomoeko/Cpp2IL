@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Cpp2IL.Core.Model.Contexts;
 using Iced.Intel;
 using LibCpp2IL;
@@ -39,11 +40,35 @@ internal static class X86CallerExceptionRegionProof
                 index.ClassifySpan, tailIp);
     }
 
+    // A guarded leaf can place its null-path RET immediately after an indirect
+    // tail jump. The jump is terminal in control flow even though it is not
+    // the last byte in the decoded body. Its return must be the proved branch
+    // target and remain independently reachable through the ordinary check.
+    internal static string? CheckProvedGuardedTerminalIndirectBranch(
+        MethodAnalysisContext context, IReadOnlyList<Instruction> body,
+        ulong tailIp, ulong returnIp)
+    {
+        if (body.Count < 3 || body[^2].IP != tailIp ||
+            body[^2].NextIP != returnIp || body[^1].IP != returnIp ||
+            !IsPlainReturn(body[^1]) ||
+            !body.Any(instruction =>
+                instruction.FlowControl == FlowControl.ConditionalBranch &&
+                instruction.Op0Kind == OpKind.NearBranch64 &&
+                instruction.NearBranchTarget == returnIp))
+            return Reject("the guarded indirect exit has no proved return path");
+        var index = X64UnwindProof.ForApplication(context.AppContext);
+        return index == null
+            ? Reject("the native unwind directory is malformed or unavailable")
+            : Check(body, context.UnderlyingPointer, new HashSet<ulong>(),
+                index.ClassifySpan, tailIp, returnIp);
+    }
+
     // The classifier is independently responsible for PE bounds, unwind format and handler
     // flags. This overload isolates native reachability and leaf-frame rules in regressions.
     internal static string? Check(IReadOnlyList<Instruction> body, ulong entry, ISet<ulong> provedNoReturnCallIPs,
         Func<ulong, ulong, X64UnwindProof.SpanClassification> classify,
-        ulong? provedTerminalIndirectBranchIp = null)
+        ulong? provedTerminalIndirectBranchIp = null,
+        ulong? provedGuardedReturnIp = null)
     {
         if (body.Count == 0 || body[0].IP != entry)
             return Reject("the decoded entry is missing");
@@ -138,7 +163,9 @@ internal static class X86CallerExceptionRegionProof
                     break;
                 case FlowControl.IndirectBranch:
                     if (address != provedTerminalIndirectBranchIp ||
-                        instruction.NextIP != end || instruction.Op0Kind != OpKind.Memory)
+                        instruction.Op0Kind != OpKind.Memory ||
+                        instruction.NextIP != end &&
+                        instruction.NextIP != provedGuardedReturnIp)
                         return Reject("native control flow has an unproved exit");
                     break;
                 default:
