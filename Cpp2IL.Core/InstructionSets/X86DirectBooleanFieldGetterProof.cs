@@ -68,10 +68,9 @@ internal static class X86DirectBooleanFieldGetterProof
             owner.Name != owner.DefaultName || owner.OverrideNamespace != null ||
             owner.GenericParameters.Count != 0 || owner.Attributes != owner.DefaultAttributes ||
             !ReferenceEquals(owner.BaseType, owner.DefaultBaseType) ||
-            owner.Definition is not { HasCctor: false, PackingSizeIsDefault: true,
+            owner.Definition is not { PackingSizeIsDefault: true,
                 ClassSizeIsDefault: true, RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
                     NumMods: 0, Byref: 0, Pinned: 0 } } ||
-            owner.Methods.Any(candidate => candidate.Name == ".cctor") ||
             method.Definition is not { GenericContainer: null, parameterCount: 0,
                 RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
                     NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
@@ -95,6 +94,14 @@ internal static class X86DirectBooleanFieldGetterProof
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,
                 requireUniqueBinding: false) ||
             method.UnderlyingPointer == 0 || body[0].IP != method.UnderlyingPointer)
+            return null;
+
+        // Class initialization is a separate managed body. Its presence does not
+        // change this instance field's layout or the complete getter leaf, but
+        // the metadata and modeled declaration must still agree about it.
+        var classConstructorCount = owner.Methods.Count(candidate => candidate.Name == ".cctor");
+        if (classConstructorCount > 1 ||
+            owner.Definition!.HasCctor != (classConstructorCount == 1))
             return null;
 
         if (!finalInterface || method.RawBytes.Length == 0)

@@ -447,6 +447,14 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64FieldPlusOneReferenceArrayReadRecovery.TryGenerate(methodContext,
+                    methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Field-plus-one reference-array getter IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64NestedArrayCallRecovery.TryGenerate(methodContext,
                     methodDefinition))
             {

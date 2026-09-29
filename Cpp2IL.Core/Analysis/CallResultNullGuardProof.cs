@@ -30,6 +30,9 @@ internal static class CallResultNullGuardProof
                 ? CallResultTailNullGuardProof.HasBoundTarget(caller, result, origin,
                     guardedCall, producer, producerReceiver, target)
                 : HasDirectNativeCall(caller, guardedCall, target) ||
+                  CallResultStringTailNullGuardProof.HasBoundTarget(caller,
+                    result, origin, guardedCall, producer, producerReceiver,
+                    target) ||
                   CallResultTailNullGuardProof.HasBoundTarget(caller, result, origin,
                     guardedCall, producer, producerReceiver, target) ||
                   CallResultFalseTailNullGuardProof.HasBoundTarget(caller,

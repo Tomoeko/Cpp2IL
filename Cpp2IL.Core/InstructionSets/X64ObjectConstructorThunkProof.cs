@@ -119,15 +119,17 @@ internal static class X64ObjectConstructorThunkProof
         }
 
         // A native span estimate can run past this leaf into the next function.
-        // Accept only an ordinary single-constructor Object child, with byte-exact trap
-        // padding followed by a different handler-free unwind entry. The later function
-        // must never be treated as part of the managed constructor.
+        // Accept only an ordinary Object child with one instance constructor,
+        // byte-exact trap padding, and a different handler-free unwind entry.
+        // A separate class constructor remains its own managed body, and the
+        // later native function cannot become part of this instance constructor.
         var constructors = owner.Methods.Where(candidate => candidate.Name == ".ctor")
             .ToArray();
+        var classConstructorCount = owner.Methods.Count(candidate => candidate.Name == ".cctor");
         if (!ReferenceEquals(owner.BaseType, app.SystemTypes.SystemObjectType) ||
             owner.InterfaceContexts.Count != 0 ||
-            owner.Definition?.HasCctor == true ||
-            owner.Methods.Any(candidate => candidate.Name == ".cctor") ||
+            classConstructorCount > 1 ||
+            owner.Definition?.HasCctor != (classConstructorCount == 1) ||
             constructors is not [var soleConstructor] ||
             !ReferenceEquals(soleConstructor, method) ||
             !app.MethodsByAddress.TryGetValue(start, out var entryAliases) ||

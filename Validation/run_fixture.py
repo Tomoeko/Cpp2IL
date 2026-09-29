@@ -141,6 +141,9 @@ import nested_byte_field_read
 import array_element_argument_tail
 import final_override_boolean_getter
 import false_boolean_virtual_tail
+import call_result_string_tail
+import cctor_boolean_getter
+import field_plus_one_reference_array
 import call_before_capture_boolean_store
 import nullable_delegate_field_tail
 import boolean_tail_field_call
@@ -362,6 +365,15 @@ PROFILES = {
     "false-boolean-virtual-tail": {
         "assembly": "FalseBooleanVirtualTailFixture",
         "source": VALIDATION / "FalseBooleanVirtualTailFixture", "methods": 3},
+    "call-result-string-tail": {
+        "assembly": "CallResultStringTailFixture",
+        "source": VALIDATION / "CallResultStringTailFixture", "methods": 5},
+    "cctor-boolean-getter": {
+        "assembly": "CctorBooleanGetterFixture",
+        "source": VALIDATION / "CctorBooleanGetterFixture", "methods": 3},
+    "field-plus-one-reference-array": {
+        "assembly": "FieldPlusOneReferenceArrayFixture",
+        "source": VALIDATION / "FieldPlusOneReferenceArrayFixture", "methods": 5},
     "parameter-class-test": {"assembly": "ParameterClassTestFixture", "source": VALIDATION / "ParameterClassTestFixture", "methods": 1},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
@@ -697,6 +709,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return final_override_boolean_getter.verify(path, stage, VERSION)
     if profile == "false-boolean-virtual-tail":
         return false_boolean_virtual_tail.verify(path, stage, VERSION)
+    if profile == "call-result-string-tail":
+        return call_result_string_tail.verify(path, stage, VERSION)
+    if profile == "cctor-boolean-getter":
+        return cctor_boolean_getter.verify(path, stage, VERSION)
+    if profile == "field-plus-one-reference-array":
+        return field_plus_one_reference_array.verify(path, stage, VERSION)
     if profile == "parameter-class-test":
         return parameter_class_test.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":
