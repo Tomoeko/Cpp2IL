@@ -15,7 +15,7 @@ namespace Cpp2IL.Core;
 public static partial class IlGenerator
 {
     /// <summary>
-    /// A native pointer-sized zero test of an unchanged managed reference parameter has the
+    /// A native pointer-sized zero test of a proved managed reference has the
     /// same truth value as a managed reference/null comparison. It must not enter
     /// integer arithmetic emission: a class or array has no integer stack width.
     /// </summary>
@@ -50,21 +50,29 @@ public static partial class IlGenerator
         if (!IsReferenceNullComparisonShape(comparison,
                 context.AppContext.SystemTypes.SystemBooleanType, out var reference) ||
             context.ControlFlowGraph is not { } graph ||
-            !graph.Instructions.Contains(comparison) ||
-            !locals.Parameters.ContainsKey(reference) ||
-            !HasUnchangedParameterStorage(graph, reference) ||
-            // ValidateCallSemantics already revalidated every probe before GenerateIl
-            // changes branch operands from blocks to instruction labels.
-            !(context.NullArmFieldProbes.Any(probe =>
-                  ReferenceEquals(probe.Comparison, comparison)) ||
-              X86RuntimeNullThrowProof.IsSupportedProfile(context.AppContext) &&
-              RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context,
-                  requireUniqueBinding: false) &&
-              (RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context) ||
-               X86ReferenceNullReturnProof.IsApplicable(context,
-                   X86Utils.Iterate(context).ToArray())) &&
-              UnchangedReferenceParameter(context, locals, reference, reference.Type!)))
+            !graph.Instructions.Contains(comparison))
             return false;
+
+        // The array-length preflight also authenticates a captured array's
+        // retained null arm. Its private ldlen probe must run before any setup
+        // field read, so this native reference comparison remains in the IL.
+        if (!ArrayLengthReadRecovery.HasRecordedNullProbeComparison(context, comparison, reference))
+        {
+            if (!locals.Parameters.ContainsKey(reference) ||
+                !HasUnchangedParameterStorage(graph, reference))
+                return false;
+
+            // The preflight revalidated every retained probe before emission.
+            var retainedFieldProbe = context.NullArmFieldProbes.Any(probe =>
+                ReferenceEquals(probe.Comparison, comparison));
+            var unchangedParameter = X86RuntimeNullThrowProof.IsSupportedProfile(context.AppContext) &&
+                RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context, requireUniqueBinding: false) &&
+                (RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context) ||
+                 X86ReferenceNullReturnProof.IsApplicable(context, X86Utils.Iterate(context).ToArray())) &&
+                UnchangedReferenceParameter(context, locals, reference, reference.Type!);
+            if (!retainedFieldProbe && !unchangedParameter)
+                return false;
+        }
 
         var instructions = method.CilMethodBody!.Instructions;
         LoadOperand(reference, method, locals);

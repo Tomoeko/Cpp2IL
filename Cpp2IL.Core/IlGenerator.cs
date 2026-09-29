@@ -76,8 +76,10 @@ public static partial class IlGenerator
         ValidateCallSemantics(context);
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
+        ValidateArrayLengthReads(context);
         ValidateComposedReferenceFieldStore(context);
         ValidateReferenceFieldAddressStores(context);
+        ValidateNarrowScalarFieldGetters(context);
         ValidateEnumFieldArrayReads(context);
         ValidateParameterBooleanArrayStores(context);
         ValidateFloatingFieldReads(context);
@@ -577,9 +579,9 @@ public static partial class IlGenerator
             case OpCode.Xor:
                 if (instruction.OpCode is OpCode.DivideUnsigned or OpCode.ModuloUnsigned && instruction.IntegerBitWidth is not (32 or 64))
                     throw new DecompilerException("Unsigned division requires an established 32/64-bit native width");
-                if (instruction.OpCode == OpCode.Add && instruction.IntegerBitWidth is 32 or 64 &&
+                if (instruction.OpCode is OpCode.Add or OpCode.Subtract && instruction.IntegerBitWidth is 32 or 64 &&
                     IntegerStackWidth(DestinationType(instruction.Operands[0])) != instruction.IntegerBitWidth)
-                    throw new DecompilerException("Native Add destination width does not match its recovered managed type");
+                    throw new DecompilerException($"Native {instruction.OpCode} destination width does not match its recovered managed type");
                 if (instruction.OpCode is OpCode.Divide or OpCode.Modulo or OpCode.DivideUnsigned or OpCode.ModuloUnsigned &&
                     instruction.IntegerBitWidth != 0 && IntegerStackWidth(DestinationType(instruction.Operands[0])) != instruction.IntegerBitWidth)
                     throw new DecompilerException("Native division destination width does not match its recovered managed type");
@@ -817,6 +819,15 @@ public static partial class IlGenerator
         EmissionLocals locals,
         TypeAnalysisContext? expectedType = null)
     {
+        // Native register aliases do not establish a managed conversion. A
+        // 32-bit write clears its parent's upper bits, while a signed managed
+        // widening may fill them. Keep that projection unresolved until an
+        // explicit, proved extension establishes the required stack value.
+        var expectedWidth = IntegerStackWidth(expectedType);
+        var operandWidth = operand is ArrayLength ? 32 : IntegerStackWidth(DestinationType(operand));
+        if (expectedWidth != 0 && operandWidth != 0 && expectedWidth != operandWidth)
+            throw new DecompilerException("Managed integer operand width requires an explicit proved conversion");
+
         var instructions = method.CilMethodBody!.Instructions;
 
         var module = method.DeclaringModule!;

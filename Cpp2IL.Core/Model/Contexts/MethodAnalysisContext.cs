@@ -426,6 +426,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         for (var i = 0; i < 8 && ConstantFolder.Run(this); i++)
             SsaSimplifier.Run(this);
 
+        ArrayLengthReadRecovery.Run(this);
         LocalVariables.PropagateLateSignedIntegerTypes(this);
 
         MetadataResolver.ResolveProvedInertObjectConstructorTailCalls(this);
@@ -472,6 +473,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         DeadCodeEliminator.Run(this);
 
         ReferenceFieldAddressStoreRecovery.Run(this);
+        NarrowScalarFieldGetterRecovery.Run(this);
 
         LocalVariables.RemoveUnused(this);
     }

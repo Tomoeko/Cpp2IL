@@ -19,9 +19,8 @@ public static class ArrayRecovery
         "il2cpp_array_new_specific",
     ];
 
-    // Il2CppArray is {Il2CppObject obj; void* bounds; il2cpp_array_size_t max_length;} then the elements, on all versions(?)
-    private static long LengthOffset(int pointerSize) => 3L * pointerSize;
-    private static long ElementsOffset(int pointerSize) => 4L * pointerSize;
+    private static long LengthOffset(int pointerSize) => Il2CppArrayUtils.GetLengthOffset(pointerSize);
+    private static long ElementsOffset(int pointerSize) => Il2CppArrayUtils.GetFirstItemOffset(pointerSize);
 
     public static void Run(MethodAnalysisContext method)
     {

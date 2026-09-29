@@ -7,7 +7,16 @@ namespace Cpp2IL.Core;
 
 public static class Il2CppArrayUtils
 {
-    public static uint GetFirstItemOffset(Il2CppBinary binary) => (uint)(binary.is32Bit ? 0x10 : 0x20);
+    public static uint GetFirstItemOffset(Il2CppBinary binary) =>
+        (uint)GetFirstItemOffset(binary.is32Bit ? 4 : 8);
+
+    // max_length occupies a native-sized slot. The consumed instruction, rather
+    // than this offset, establishes the width of a managed length operation.
+    public static uint GetLengthOffset(Il2CppBinary binary) =>
+        (uint)GetLengthOffset(binary.is32Bit ? 4 : 8);
+
+    internal static long GetLengthOffset(int pointerSize) => 3L * pointerSize;
+    internal static long GetFirstItemOffset(int pointerSize) => 4L * pointerSize;
     //32-bit:
     //0x0: klass ptr
     //0x4: monitor ptr
@@ -17,10 +26,10 @@ public static class Il2CppArrayUtils
 
     public static readonly List<UsefulOffset> UsefulOffsets =
     [
-        new UsefulOffset("length", 0xC, typeof(int), true),
+        new UsefulOffset("length", (uint)GetLengthOffset(4), typeof(int), true),
 
         //64-bit offsets:
-        new UsefulOffset("length", 0x18, typeof(int), false)
+        new UsefulOffset("length", (uint)GetLengthOffset(8), typeof(int), false)
     ];
 
     public static string? GetOffsetName(uint offset, Il2CppBinary binary)

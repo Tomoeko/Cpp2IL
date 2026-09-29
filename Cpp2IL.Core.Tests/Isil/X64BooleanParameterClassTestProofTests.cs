@@ -193,6 +193,16 @@ public class X64BooleanParameterClassTestProofTests
             }
             finally { method.OverrideReturnType = null; }
             var aliases = app.MethodsByAddress[method.UnderlyingPointer];
+            var originalBytes = method.RawBytes;
+            try
+            {
+                var changedBytes = originalBytes.AsSpan().ToArray();
+                changedBytes[0] ^= 1;
+                method.RawBytes = new BinarySlice(changedBytes);
+                AssertRejected(method, body, definition,
+                    "Final emission cannot refresh away a changed nonempty native prefix.");
+            }
+            finally { method.RawBytes = originalBytes; }
             aliases.Add(method);
             try { AssertRejected(method, body, definition, "Ambiguous native ownership must prevent emission."); }
             finally { aliases.RemoveAt(aliases.Count - 1); }

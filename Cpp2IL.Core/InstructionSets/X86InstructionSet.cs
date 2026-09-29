@@ -102,6 +102,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return byteThreshold; // The complete leaf proves one unsigned byte-field predicate.
         if (X86DirectBooleanFieldGetterProof.TryLift(context, nativeInstructions) is { } booleanGetter)
             return booleanGetter; // The complete leaf binds a byte read to this method's own Boolean field.
+        if (X64NarrowScalarFieldGetterProof.TryLift(context) is { } narrowScalarGetter)
+            return narrowScalarGetter; // Complete byref-this leaf binds narrow storage and return signedness.
         if (X86ScalarArrayAccessProof.TryLift(context, nativeInstructions) is { } arrayAccess)
             return arrayAccess; // Both helper exits and the complete file-backed caller unwind region are proved.
         if (X86FieldArrayAccessProof.TryLift(context, nativeInstructions) is { } fieldArrayAccess)
@@ -987,10 +989,28 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 }
             // The following pair of instructions does not update the Carry Flag (CF):
             case Mnemonic.Dec:
-                Add(instruction.IP, ISIL.OpCode.Subtract, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), Imm(1));
-                break;
             case Mnemonic.Inc:
-                Add(instruction.IP, ISIL.OpCode.Add, ConvertOperand(instruction, 0), ConvertOperand(instruction, 0), Imm(1));
+                var increment = instruction.Mnemonic == Mnemonic.Inc;
+                var steppedOperand = ConvertOperand(instruction, 0);
+                var step = Add(instruction.IP, increment ? ISIL.OpCode.Add : ISIL.OpCode.Subtract,
+                    steppedOperand, steppedOperand, Imm(1));
+                if (instruction.Op0Kind == OpKind.Register && instruction.Op0Register.GetSize() is 4 or 8)
+                {
+                    var stepWidth = instruction.Op0Register.GetSize() * 8;
+                    step.IntegerBitWidth = stepWidth;
+                    Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"),
+                        steppedOperand, Imm(0)).IntegerBitWidth = stepWidth;
+                    Add(instruction.IP, ISIL.OpCode.CheckLess, new ISIL.Register(null, "SF"),
+                        steppedOperand, Imm(0)).IntegerBitWidth = stepWidth;
+                    // A unit step overflows exactly at the signed result boundary.
+                    var overflowResult = stepWidth == 32
+                        ? (increment ? int.MinValue : int.MaxValue)
+                        : (increment ? long.MinValue : long.MaxValue);
+                    Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "OF"),
+                        steppedOperand, Imm(overflowResult)).IntegerBitWidth = stepWidth;
+                    // The shared flag clobber pass keeps parity and auxiliary
+                    // carry unresolved; unused definitions are removed by DCE.
+                }
                 break;
 
             case Mnemonic.Call:

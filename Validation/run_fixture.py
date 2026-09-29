@@ -110,6 +110,9 @@ import enum_return_tail
 import explicit_class_cast
 import parameter_class_test
 import boolean_parameter_class_test
+import sealed_parameter_class_test
+import guarded_array_length
+import narrow_scalar_getter
 import nested_literal_store
 import boolean_tail_field_call
 import call_result_boolean_store
@@ -247,6 +250,9 @@ PROFILES = {
     "enum-return-tail": {"assembly": "EnumReturnTailFixture", "source": VALIDATION / "EnumReturnTailFixture", "methods": 4},
     "explicit-class-cast": {"assembly": "ExplicitClassCastFixture", "source": VALIDATION / "ExplicitClassCastFixture", "methods": 1},
     "boolean-parameter-class-test": {"assembly": "BooleanParameterClassTestFixture", "source": VALIDATION / "BooleanParameterClassTestFixture", "methods": 1},
+    "sealed-parameter-class-test": {"assembly": "SealedParameterClassTestFixture", "source": VALIDATION / "SealedParameterClassTestFixture", "methods": 2},
+    "guarded-array-length": {"assembly": "GuardedArrayLengthFixture", "source": VALIDATION / "GuardedArrayLengthFixture", "methods": 6},
+    "narrow-scalar-getter": {"assembly": "NarrowScalarGetterFixture", "source": VALIDATION / "NarrowScalarGetterFixture", "methods": 8},
     "nested-literal-store": {"assembly": "NestedLiteralStoreFixture", "source": VALIDATION / "NestedLiteralStoreFixture", "methods": 9},
     "parameter-class-test": {"assembly": "ParameterClassTestFixture", "source": VALIDATION / "ParameterClassTestFixture", "methods": 1},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
@@ -513,6 +519,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return explicit_class_cast.verify(path, stage, VERSION)
     if profile == "boolean-parameter-class-test":
         return boolean_parameter_class_test.verify(path, stage, VERSION)
+    if profile == "sealed-parameter-class-test":
+        return sealed_parameter_class_test.verify(path, stage, VERSION)
+    if profile == "guarded-array-length":
+        return guarded_array_length.verify(path, stage, VERSION)
+    if profile == "narrow-scalar-getter":
+        return narrow_scalar_getter.verify(path, stage, VERSION)
     if profile == "nested-literal-store":
         return nested_literal_store.verify(path, stage, VERSION)
     if profile == "parameter-class-test":

@@ -52,7 +52,8 @@ internal static class X64BooleanParameterClassTestProof
                 X86CallerExceptionRegionProof.Check(method, body, new HashSet<ulong>()) != null)
                 return null;
 
-            method.EnsureRawBytes();
+            if (method.RawBytes.Length == 0)
+                method.EnsureRawBytes();
             var length = checked((int)(body[^1].NextIP - start));
             if (method.RawBytes.Length < length ||
                 !X64AncestorConstructorThunkProof.FileBackedExecutable(pe, unwind,

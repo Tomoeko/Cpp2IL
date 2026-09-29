@@ -3,7 +3,9 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Linq;
 using AssetRipper.Primitives;
+using AsmResolver.DotNet;
 using Cpp2IL.Core.InstructionSets;
+using Cpp2IL.Core.OutputFormats;
 using Cpp2IL.Core.Utils;
 using Iced.Intel;
 using LibCpp2IL.PE;
@@ -207,6 +209,23 @@ public class X64ParameterClassTestProofTests
                 Assert.That(X64ParameterClassTestProof.Find(method, native), Is.Null);
             }
             finally { app.MethodsByAddress.Remove(interior); }
+
+            _ = new AsmResolverDllOutputFormatEmpty().BuildAssemblies(app);
+            var definition = method.GetExtraData<MethodDefinition>("AsmResolverMethod")!;
+            Assert.That(X64ParameterClassTestRecovery.TryGenerate(method, definition), Is.True);
+            var originalBytes = method.RawBytes;
+            try
+            {
+                var changedBytes = originalBytes.AsSpan().ToArray();
+                changedBytes[0] ^= 1;
+                method.RawBytes = new BinarySlice(changedBytes);
+                Assert.That(X64ParameterClassTestProof.Find(method, native), Is.Null,
+                    "A nonempty changed cache must be checked against current player bytes.");
+                Assert.That(X64ParameterClassTestRecovery.TryGenerate(method, definition), Is.False,
+                    "Final emission cannot refresh away a changed nonempty native prefix.");
+            }
+            finally { method.RawBytes = originalBytes; }
+            Assert.That(X64ParameterClassTestRecovery.TryGenerate(method, definition), Is.True);
 
             var changed = File.ReadAllBytes(binary);
             var offset = checked((int)((PE)app.Binary).MapVirtualAddressToRaw(

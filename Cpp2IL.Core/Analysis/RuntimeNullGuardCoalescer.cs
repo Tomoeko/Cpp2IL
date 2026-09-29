@@ -280,7 +280,9 @@ internal static class RuntimeNullGuardCoalescer
                     OpCode: OpCode.CheckEqual or OpCode.CheckNotEqual, IntegerBitWidth: 64,
                     CallSemantics: CallSemantics.Direct, Operands.Count: 3,
                 } comparison || !TryReceiver(comparison, out var receiver) ||
-                receiver.Type == null || !NullCheckedCall.IsReferenceClass(receiver.Type) ||
+                receiver.Type == null ||
+                (!NullCheckedCall.IsReferenceClass(receiver.Type) &&
+                 !ArrayLengthReadRecovery.HasBoundReceiver(method, receiver)) ||
                 !Available(receiver, conditionDefinition.Block, comparison) ||
                 !Available(receiver, guard, branch) || escapedSlots.Contains(receiver.Register.Number))
                 continue;
@@ -290,12 +292,23 @@ internal static class RuntimeNullGuardCoalescer
             var callEntry = comparison.OpCode == OpCode.CheckEqual ? other : taken;
             if (!NullArmIsExclusive(nullEntry, guard) ||
                 !TryGuardedOperation(callEntry, guard, receiver, out var operation, out var fieldAccess,
-                    out var storedValue))
+                    out var storedValue, out var arrayLength))
                 continue;
 
             // Neither the operation nor its pure setup moves. The null input takes the same
-            // path, where callvirt or ldfld performs the receiver check.
-            if (fieldAccess == null)
+            // path, where the managed operation performs the receiver check.
+            if (arrayLength != null)
+            {
+                if (arrayLength.RequiresNullProbe)
+                {
+                    if (TryRetainArrayLengthNullArm(arrayLength, comparison, branch, guard, nullEntry, callEntry))
+                        return true;
+                    continue;
+                }
+                if (!ArrayLengthReadRecovery.RecordGuard(method, arrayLength, comparison, branch))
+                    continue;
+            }
+            else if (fieldAccess == null)
                 operation.CallSemantics = CallSemantics.NullCheckedInstance;
             else
                 method.NullCheckedFieldAccesses.Add(new FieldAccessEvidence(operation, fieldAccess, receiver,
@@ -351,11 +364,13 @@ internal static class RuntimeNullGuardCoalescer
         }
 
         bool TryGuardedOperation(Block entry, Block predecessor, LocalVariable receiver,
-            out Instruction operation, out FieldReference? fieldAccess, out IOperand? storedValue)
+            out Instruction operation, out FieldReference? fieldAccess, out IOperand? storedValue,
+            out ArrayLengthReadRecovery.Evidence? arrayLength)
         {
             operation = null!;
             fieldAccess = null;
             storedValue = null;
+            arrayLength = null;
             var seen = new HashSet<Block> { predecessor };
             var pendingTailArgumentSetup = false;
             while (true)
@@ -367,6 +382,18 @@ internal static class RuntimeNullGuardCoalescer
                 {
                     if (instruction.CallSemantics != CallSemantics.Direct)
                         return false;
+                    if (ArrayLengthReadRecovery.TryGetBoundRead(method, instruction, receiver) is { } length &&
+                        !pendingTailArgumentSetup &&
+                        OperandEffects.ReadLocals(instruction).All(local => Available(local, entry, instruction)))
+                    {
+                        operation = instruction;
+                        arrayLength = length;
+                        return true;
+                    }
+                    if (!pendingTailArgumentSetup &&
+                        ArrayLengthReadRecovery.HasBoundSetupRead(method, instruction, receiver) &&
+                        OperandEffects.ReadLocals(instruction).All(local => Available(local, entry, instruction)))
+                        continue; // This read stays behind the retained null-branch probe.
                     if (instruction.IsCall)
                     {
                         if (!NullCheckedCall.TryGet(instruction, out var target, out var calledReceiver))
@@ -470,6 +497,52 @@ internal static class RuntimeNullGuardCoalescer
                 predecessor = entry;
                 entry = entry.Successors[0];
             }
+        }
+
+        bool TryRetainArrayLengthNullArm(ArrayLengthReadRecovery.Evidence evidence,
+            Instruction comparison, Instruction branch, Block guard, Block nullEntry, Block normalArm)
+        {
+            if (comparison.OpCode != OpCode.CheckEqual ||
+                branch.Operands[0] is not Block taken || !ReferenceEquals(taken, nullEntry))
+                return false;
+            var terminal = nullEntry;
+            while (terminal.Instructions.Where(IsActiveInstruction).ToArray() is
+                   [{ OpCode: OpCode.Jump, Operands: [Block next] }])
+                terminal = next; // NullArmIsExclusive already authenticated this chain.
+            if (terminal.Instructions.Where(IsActiveInstruction).ToArray() is not
+                [{ OpCode: OpCode.RuntimeNullThrow, Operands: [RuntimeNullThrowEvidence helper] }])
+                return false;
+
+            var lastLocal = method.Locals.Concat(method.ParameterLocals)
+                .Select(local => local.Register.Number).Where(number => number >= 0).DefaultIfEmpty(0).Max();
+            if (lastLocal == int.MaxValue)
+                return false;
+            var destination = new LocalVariable("arrayLengthNullProbe",
+                new Register(lastLocal + 1, "arrayLengthNullProbe", 1),
+                method.AppContext.SystemTypes.SystemInt32Type);
+            var probe = new Instruction(-1, OpCode.Move, destination, new ArrayLength(evidence.Array))
+                { IntegerBitWidth = 32, NativeAddress = evidence.Native.NullCallAddress };
+            var probeBlock = graph.CreateSyntheticBlock(probe, new Instruction(-1, OpCode.Jump, normalArm));
+            var nullEdge = guard.Successors.IndexOf(nullEntry);
+            var oldPredecessor = nullEntry.Predecessors.IndexOf(guard);
+            branch.SetOperand(0, probeBlock);
+            guard.Successors[nullEdge] = probeBlock;
+            nullEntry.Predecessors.RemoveAt(oldPredecessor);
+            probeBlock.Predecessors.Add(guard);
+            probeBlock.Successors.Add(normalArm);
+            normalArm.Predecessors.Add(probeBlock);
+            method.Locals.Add(destination);
+            if (ArrayLengthReadRecovery.RecordNullArmProbe(method, evidence, comparison, branch,
+                    guard, probeBlock, normalArm, probe, helper))
+                return true;
+
+            branch.SetOperand(0, nullEntry);
+            guard.Successors[nullEdge] = nullEntry;
+            nullEntry.Predecessors.Insert(oldPredecessor, guard);
+            normalArm.Predecessors.Remove(probeBlock);
+            graph.Blocks.Remove(probeBlock);
+            method.Locals.Remove(destination);
+            return false;
         }
 
     }

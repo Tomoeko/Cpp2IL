@@ -65,7 +65,8 @@ internal static class X64ParameterClassTestProof
                     new HashSet<ulong>()) != null)
                 return null;
 
-            method.EnsureRawBytes();
+            if (method.RawBytes.Length == 0)
+                method.EnsureRawBytes();
             var length = checked((int)(body[^1].NextIP - start));
             if (method.RawBytes.Length < length ||
                 !X64AncestorConstructorThunkProof.FileBackedExecutable(pe,

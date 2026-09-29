@@ -584,5 +584,14 @@ public class ISILControlFlowGraph
         from.Successors.RemoveAll(successor => ReferenceEquals(successor, to));
     }
 
+    internal Block CreateSyntheticBlock(params Instruction[] instructions)
+    {
+        var block = new Block { ID = idCounter++ };
+        block.Instructions.AddRange(instructions);
+        block.CalculateBlockType();
+        AddBlock(block);
+        return block;
+    }
+
     protected void AddBlock(Block block) => Blocks.Add(block);
 }

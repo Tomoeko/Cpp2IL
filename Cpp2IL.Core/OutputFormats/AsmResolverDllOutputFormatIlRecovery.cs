@@ -308,6 +308,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64SealedParameterClassTestRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Sealed parameter class-test IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64BooleanParameterClassTestRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,

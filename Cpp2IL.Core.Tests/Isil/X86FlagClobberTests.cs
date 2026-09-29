@@ -20,8 +20,6 @@ public class X86FlagClobberTests
     [TestCase("31D1")] // xor ecx, edx
     [TestCase("D1E9")] // shr ecx, 1
     [TestCase("D1F9")] // sar ecx, 1
-    [TestCase("FFC1")] // inc ecx
-    [TestCase("FFC9")] // dec ecx
     public void OverwrittenZeroFlagCannotReuseEarlierComparison(string operation)
     {
         var graph = Analyze("83F800" + operation + "0F94C0"); // cmp eax,0; operation; setz al
@@ -32,6 +30,10 @@ public class X86FlagClobberTests
     [TestCase("83E901")] // sub ecx, 1
     [TestCase("4883C101")] // add rcx, 1
     [TestCase("4883E901")] // sub rcx, 1
+    [TestCase("FFC1")] // inc ecx
+    [TestCase("FFC9")] // dec ecx
+    [TestCase("48FFC1")] // inc rcx
+    [TestCase("48FFC9")] // dec rcx
     public void ArithmeticZeroFlagComesFromTheUpdatedRegister(string operation)
     {
         var graph = Analyze("83F800" + operation + "0F94C0");
