@@ -45,6 +45,10 @@ namespace RecoveryValidation
                         owner => owner.SetTrue(index));
                     Record(observations, scenario, "set-false", index,
                         owner => owner.SetFalse(index));
+                    Record(observations, scenario, "set-param-false", index,
+                        owner => owner.SetAt(index, false));
+                    Record(observations, scenario, "set-param-true", index,
+                        owner => owner.SetAt(index, true));
                     RecordRead(observations, scenario, index);
                 }
             }

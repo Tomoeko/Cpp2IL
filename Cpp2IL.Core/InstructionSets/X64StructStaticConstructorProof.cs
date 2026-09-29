@@ -15,10 +15,11 @@ using NativeRegister = Iced.Intel.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Proves a complete exact-target struct static constructor that increments one
-/// external Int32 static field and stores an Int32 and negative zero to its own
-/// static fields. The compiler metadata guard is checked as part of the complete
-/// native body; it is not treated as a general narrow comparison.
+/// Proves a complete exact-target static constructor on a bounded struct or
+/// static class. It increments one external Int32 static field and stores an
+/// Int32 and negative zero to its own static fields. The compiler metadata
+/// guard is checked as part of the complete native body; it is not treated as
+/// a general narrow comparison.
 /// </summary>
 internal static class X64StructStaticConstructorProof
 {
@@ -35,7 +36,7 @@ internal static class X64StructStaticConstructorProof
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
             !OrdinaryConstructor(method) ||
             method.DeclaringType is not { Definition: { GenericContainer: null } } owner ||
-            !OrdinaryStruct(owner) ||
+            !OrdinaryOwner(owner, method) ||
             method.Definition is not { GenericContainer: null, parameterCount: 0,
                 RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
                     NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
@@ -131,15 +132,12 @@ internal static class X64StructStaticConstructorProof
             !RipByteStoreOne(body[7]) ||
             body[7].IPRelativeMemoryAddress != body[1].IPRelativeMemoryAddress ||
             !RipPointerLoad(body[8], NativeRegister.RAX) ||
-            body[8].IPRelativeMemoryAddress != body[5].IPRelativeMemoryAddress ||
             !StaticFieldsPointer(body[9]) ||
             !DwordIncrement(body[10]) ||
             !RipPointerLoad(body[11], NativeRegister.RAX) ||
-            body[11].IPRelativeMemoryAddress != body[3].IPRelativeMemoryAddress ||
             !StaticFieldsPointer(body[12]) ||
             !DwordStore(body[13]) ||
             !RipPointerLoad(body[14], NativeRegister.RAX) ||
-            body[14].IPRelativeMemoryAddress != body[3].IPRelativeMemoryAddress ||
             !StaticFieldsPointer(body[15]) ||
             !DwordStore(body[16]) ||
             body[10].MemoryDisplacement64 > int.MaxValue ||
@@ -150,8 +148,21 @@ internal static class X64StructStaticConstructorProof
             body[18].Code != Code.Retnq || body[18].OpCount != 0)
             return null;
 
+        var witnessSlot = body[8].IPRelativeMemoryAddress;
+        var ownerSlot = body[11].IPRelativeMemoryAddress;
+        // Metadata helpers may initialize the two TypeInfo slots in either
+        // order. Both must be initialized before the first managed static
+        // access, and the witness and owner stores must use distinct slots.
+        if (ownerSlot == witnessSlot ||
+            body[14].IPRelativeMemoryAddress != ownerSlot ||
+            !((body[3].IPRelativeMemoryAddress == ownerSlot &&
+               body[5].IPRelativeMemoryAddress == witnessSlot) ||
+              (body[3].IPRelativeMemoryAddress == witnessSlot &&
+               body[5].IPRelativeMemoryAddress == ownerSlot)))
+            return null;
+
         return new Shape(body[1].IPRelativeMemoryAddress,
-            body[3].IPRelativeMemoryAddress, body[5].IPRelativeMemoryAddress,
+            ownerSlot, witnessSlot,
             body[4].NearBranchTarget, body[10].MemoryDisplacement64,
             body[13].MemoryDisplacement64, body[16].MemoryDisplacement64,
             unchecked((int)body[13].Immediate32), body[16].Immediate32);
@@ -168,7 +179,12 @@ internal static class X64StructStaticConstructorProof
         (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                                   MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) == 0;
 
-    private static bool OrdinaryStruct(TypeAnalysisContext owner)
+    private static bool OrdinaryOwner(TypeAnalysisContext owner,
+        MethodAnalysisContext constructor) =>
+        OrdinaryStruct(owner, constructor) || OrdinaryStaticClass(owner, constructor);
+
+    private static bool OrdinaryStruct(TypeAnalysisContext owner,
+        MethodAnalysisContext constructor)
     {
         if (!owner.IsValueType || owner.IsEnumType || owner.IsGenericInstance ||
             owner.GenericParameters.Count != 0 ||
@@ -181,6 +197,10 @@ internal static class X64StructStaticConstructorProof
                 RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE,
                     NumMods: 0, Byref: 0, Pinned: 0 } })
             return false;
+        if (owner.Methods.Count(method => method.Name == ".cctor") != 1 ||
+            !ReferenceEquals(owner.Methods.Single(method => method.Name == ".cctor"),
+                constructor))
+            return false;
         var instance = owner.Fields.Where(field => !field.IsStatic)
             .OrderBy(field => field.Offset).ToArray();
         return instance is [{ Offset: 0 }, { Offset: 4 }] &&
@@ -188,6 +208,27 @@ internal static class X64StructStaticConstructorProof
             instance.All(field => UnchangedField(field,
                 owner.AppContext.SystemTypes.SystemSingleType, Il2CppTypeEnum.IL2CPP_TYPE_R4, false));
     }
+
+    private static bool OrdinaryStaticClass(TypeAnalysisContext owner,
+        MethodAnalysisContext constructor) =>
+        !owner.IsValueType && !owner.IsInterface && !owner.IsGenericInstance &&
+        owner.GenericParameters.Count == 0 &&
+        owner.Name == owner.DefaultName && owner.Namespace == owner.DefaultNamespace &&
+        owner.Attributes == owner.DefaultAttributes &&
+        (owner.Attributes & (TypeAttributes.Abstract | TypeAttributes.Sealed |
+                             TypeAttributes.LayoutMask | TypeAttributes.BeforeFieldInit)) ==
+            (TypeAttributes.Abstract | TypeAttributes.Sealed |
+             TypeAttributes.AutoLayout) &&
+        ReferenceEquals(owner.BaseType, owner.DefaultBaseType) &&
+        ReferenceEquals(owner.BaseType, owner.AppContext.SystemTypes.SystemObjectType) &&
+        owner.Definition is { GenericContainer: null, HasCctor: true,
+            PackingSizeIsDefault: true, ClassSizeIsDefault: true,
+            RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                NumMods: 0, Byref: 0, Pinned: 0 } } &&
+        owner.Fields.All(field => field.IsStatic) &&
+        owner.Methods.Count(method => method.Name == ".cctor") == 1 &&
+        ReferenceEquals(owner.Methods.Single(method => method.Name == ".cctor"),
+            constructor);
 
     private static bool OrdinaryWitness(TypeAnalysisContext witness, TypeAnalysisContext owner) =>
         !ReferenceEquals(witness, owner) &&

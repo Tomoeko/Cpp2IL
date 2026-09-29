@@ -270,7 +270,7 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             if (X64StructStaticConstructorRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
-                    "Struct static constructor IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                    "Static constructor IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 

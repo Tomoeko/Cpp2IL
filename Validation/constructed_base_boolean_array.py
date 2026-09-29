@@ -11,6 +11,8 @@ def observations():
     for offset in range(0, len(stores), 2):
         true_store, false_store = stores[offset:offset + 2]
         expected.extend((true_store, false_store))
+        expected.append(dict(false_store, kind="set-param-false"))
+        expected.append(dict(true_store, kind="set-param-true"))
         before = true_store["before"]
         index = true_store["index"]
         exception = true_store["exception"]
@@ -36,6 +38,6 @@ def verify(path, stage, version):
     expected = observations()
     if report.get("observations") != expected:
         raise ValueError("Constructed-base Boolean-array behavior differs from the oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 5,
+    return {"status": "passed", "observations": len(expected), "methods": 6,
             "platform": report["platform"], "profile": "constructed-base-boolean-array",
-            "scope": "fieldless constructed base, Boolean reads and stores, null and bounds failures, aliasing"}
+            "scope": "fieldless constructed base, Boolean reads and literal/parameter stores, null and bounds failures, aliasing"}

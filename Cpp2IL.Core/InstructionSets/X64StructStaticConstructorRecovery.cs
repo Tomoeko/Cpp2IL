@@ -7,7 +7,7 @@ using Cpp2IL.Core.Utils.AsmResolver;
 
 namespace Cpp2IL.Core.InstructionSets;
 
-/// <summary>Emits only struct static constructors accepted by the complete native proof.</summary>
+/// <summary>Emits static constructors accepted by the complete native proof.</summary>
 internal static class X64StructStaticConstructorRecovery
 {
     internal static bool TryGenerate(MethodAnalysisContext method, MethodDefinition definition)

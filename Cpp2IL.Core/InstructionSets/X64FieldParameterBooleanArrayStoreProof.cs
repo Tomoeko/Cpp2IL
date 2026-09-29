@@ -66,7 +66,8 @@ internal static class X64FieldParameterBooleanArrayStoreProof
             var receiver = new LocalVariable("proved-owner",
                 new ManagedRegister(null, "rcx"), owner);
             var access = new FieldReference(arrayField, receiver, shape.FieldOffset);
-            return NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access)
+            return NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access) ||
+                   NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayoutWithFieldlessConstructedBase(access)
                 ? new Evidence(arrayField) : null;
         }
         catch (Exception exception) when (exception is ArgumentException or

@@ -242,7 +242,15 @@ internal static class X64ObjectConstructorThunkProof
         ReferenceEquals(owner.BaseType, owner.DefaultBaseType) &&
         owner.InterfaceContexts.Count == 0 &&
         owner.Methods.Count(candidate => candidate.Name == ".ctor") == 1 &&
-        owner.Methods.All(candidate => candidate.Name != ".cctor");
+        owner.Methods.All(candidate => candidate.Name != ".cctor") &&
+        // A fieldful generic definition may still have this exact empty thunk.
+        // Preserve its original fields, and reject injected or changed layout
+        // facts before binding a shared native address to this constructor.
+        owner.Fields.All(field => ReferenceEquals(field.DeclaringType, owner) &&
+            ReferenceEquals(field.BackingData?.Field.DeclaringType, owner.Definition) &&
+            field.Name == field.DefaultName &&
+            field.Attributes == field.DefaultAttributes &&
+            field.Offset == field.DefaultOffset && field.OverrideFieldType == null);
 
     private static bool FileBacked(PE pe, ulong start, ulong end)
     {

@@ -143,6 +143,7 @@ import final_override_boolean_getter
 import false_boolean_virtual_tail
 import call_result_string_tail
 import cctor_boolean_getter
+import side_effect_class_cctor
 import field_plus_one_reference_array
 import call_before_capture_boolean_store
 import nullable_delegate_field_tail
@@ -192,7 +193,7 @@ PROFILES = {
     "fixed-boolean-conjunction": {"assembly": "FixedBooleanConjunctionFixture",
                                   "source": VALIDATION / "FixedBooleanConjunctionFixture", "methods": 2},
     "range-array-read": {"assembly": "RangeArrayReadFixture", "source": VALIDATION / "RangeArrayReadFixture", "methods": 4},
-    "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 5},
+    "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 6},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 6},
     "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 4},
@@ -371,6 +372,9 @@ PROFILES = {
     "cctor-boolean-getter": {
         "assembly": "CctorBooleanGetterFixture",
         "source": VALIDATION / "CctorBooleanGetterFixture", "methods": 3},
+    "side-effect-class-cctor": {
+        "assembly": "SideEffectClassCctorFixture",
+        "source": VALIDATION / "SideEffectClassCctorFixture", "methods": 1},
     "field-plus-one-reference-array": {
         "assembly": "FieldPlusOneReferenceArrayFixture",
         "source": VALIDATION / "FieldPlusOneReferenceArrayFixture", "methods": 5},
@@ -713,6 +717,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return call_result_string_tail.verify(path, stage, VERSION)
     if profile == "cctor-boolean-getter":
         return cctor_boolean_getter.verify(path, stage, VERSION)
+    if profile == "side-effect-class-cctor":
+        return side_effect_class_cctor.verify(path, stage, VERSION)
     if profile == "field-plus-one-reference-array":
         return field_plus_one_reference_array.verify(path, stage, VERSION)
     if profile == "parameter-class-test":

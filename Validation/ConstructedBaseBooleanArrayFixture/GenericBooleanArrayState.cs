@@ -29,5 +29,11 @@ namespace ConstructedBaseBooleanArrayFixture
         {
             Values[index] = false;
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public void SetAt(int index, bool value)
+        {
+            Values[index] = value;
+        }
     }
 }

@@ -18,6 +18,58 @@ namespace Cpp2IL.Core.Tests;
 [NonParallelizable]
 public class X86ConstructedBaseBooleanArrayFixtureTests
 {
+    [Test]
+    public void ParameterStoreRequiresTheConstructedBaseToRemainFieldless()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_CONSTRUCTED_BASE_BOOLEAN_ARRAY_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_CONSTRUCTED_BASE_BOOLEAN_ARRAY_FIXTURE_INPUT to the neutral player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata",
+            "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var owner = app.GetAssemblyByName("ConstructedBaseBooleanArrayFixture")!
+                .Types.Single(type => type.Name == "GenericBooleanArrayState");
+            var constructed = (GenericInstanceTypeAnalysisContext)owner.BaseType!;
+            var method = owner.Methods.Single(candidate => candidate.Name == "SetAt");
+            var field = owner.Fields.Single(candidate => candidate.Name == "Values");
+            method.EnsureRawBytes();
+            var native = X86Utils.Iterate(method).ToArray();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(native, Has.Length.EqualTo(13));
+                Assert.That(X64FieldParameterBooleanArrayStoreProof
+                    .TryProveShape(native, (PE)app.Binary)?.FieldOffset, Is.EqualTo(field.Offset));
+                Assert.That(X64FieldParameterBooleanArrayStoreProof.Find(method)?.ArrayField,
+                    Is.SameAs(field));
+                Assert.That(native[3].NearBranchTarget, Is.EqualTo(native[10].IP));
+                Assert.That(native[5].NearBranchTarget, Is.EqualTo(native[12].IP));
+                Assert.That(native[7].Op1Register, Is.EqualTo(Iced.Intel.Register.R8L));
+            });
+
+            var injected = new InjectedFieldAnalysisContext("Blocked", app.SystemTypes.SystemInt32Type,
+                FieldAttributes.Public, constructed.GenericType, 16);
+            try
+            {
+                constructed.GenericType.Fields.Add(injected);
+                Assert.That(X64FieldParameterBooleanArrayStoreProof.Find(method), Is.Null);
+            }
+            finally { constructed.GenericType.Fields.Remove(injected); }
+
+            Assert.That(X64FieldParameterBooleanArrayStoreProof.Find(method)?.ArrayField,
+                Is.SameAs(field));
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
     [TestCase("SetTrue", true)]
     [TestCase("SetFalse", false)]
     public void FieldlessConstructedBaseRequiresUnchangedNonoverlappingLayout(string name, bool value)

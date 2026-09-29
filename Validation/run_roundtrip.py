@@ -59,6 +59,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "false-boolean-virtual-tail",
     "call-result-string-tail",
     "cctor-boolean-getter",
+    "side-effect-class-cctor",
     "field-plus-one-reference-array",
     "enum-field-array",
     "parameter-class-test",
