@@ -27,6 +27,13 @@ internal static class Enum32StorageProof
             !ReferenceEquals(element.BaseType, element.AppContext.SystemTypes.EnumType))
             return false;
 
+        // Reject unsupported raw descriptors before resolving wrappers, which
+        // can recurse through malformed or changed metadata.
+        if (definition.EnumUnderlyingType is not
+                { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4 or Il2CppTypeEnum.IL2CPP_TYPE_U4,
+                    NumMods: 0, Byref: 0, Pinned: 0 } rawUnderlying)
+            return false;
+
         var underlying = element.EnumUnderlyingType;
         var system = element.AppContext.SystemTypes;
         var rawKind = ReferenceEquals(underlying, system.SystemInt32Type)
@@ -35,8 +42,6 @@ internal static class Enum32StorageProof
                 ? Il2CppTypeEnum.IL2CPP_TYPE_U4 : Il2CppTypeEnum.IL2CPP_TYPE_END;
         if (rawKind == Il2CppTypeEnum.IL2CPP_TYPE_END ||
             !ReferenceEquals(underlying, element.DefaultEnumUnderlyingType) ||
-            definition.EnumUnderlyingType is not
-                { NumMods: 0, Byref: 0, Pinned: 0 } rawUnderlying ||
             rawUnderlying.Type != rawKind)
             return false;
 
@@ -52,9 +57,8 @@ internal static class Enum32StorageProof
                                     FieldAttributes.RTSpecialName) &&
                value.Offset == 0 && value.Offset == value.DefaultOffset &&
                value.OverrideFieldType == null &&
-               ReferenceEquals(value.FieldType, underlying) &&
                value.BackingData?.Field.RawFieldType is
                    { NumMods: 0, Byref: 0, Pinned: 0 } rawBacking &&
-               rawBacking.Type == rawKind;
+               rawBacking.Type == rawKind && ReferenceEquals(value.FieldType, underlying);
     }
 }

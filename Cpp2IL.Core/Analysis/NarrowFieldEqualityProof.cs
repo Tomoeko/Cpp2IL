@@ -116,6 +116,10 @@ internal static class NarrowFieldEqualityProof
     internal static bool HasUnchangedFieldLayout(FieldReference reference, int width)
         => HasUnchangedFieldLayout(reference, width, false);
 
+    internal static bool HasUnchangedEnum32FieldLayout(FieldReference reference)
+        => Enum32StorageProof.IsUnchanged(reference.Field.FieldType) &&
+           HasUnchangedFieldLayout(reference, 32, false, enumField: true);
+
     internal static bool HasUnchangedSingleFieldLayout(FieldReference reference)
         => reference.Field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4 &&
            HasUnchangedFieldLayout(reference, 32, false, false, true);
@@ -127,12 +131,12 @@ internal static class NarrowFieldEqualityProof
 
     private static bool HasUnchangedFieldLayout(FieldReference reference, int width,
         bool referenceField, bool allowFieldlessConstructedBase = false,
-        bool floatingField = false)
+        bool floatingField = false, bool enumField = false)
     {
         var field = reference.Field;
         var owner = field.DeclaringType;
         var receiver = reference.Local.Type;
-        if (field.IsStatic || field.Attributes != field.DefaultAttributes ||
+        if (width <= 0 || field.IsStatic || field.Attributes != field.DefaultAttributes ||
             (field.Attributes & (FieldAttributes.Literal | FieldAttributes.HasFieldMarshal)) != 0 ||
             field.BackingData?.Field.RawFieldType is not { NumMods: 0, Byref: 0, Pinned: 0 } ||
             // Resolving a metadata array type can create a new wrapper each time. The
@@ -141,6 +145,7 @@ internal static class NarrowFieldEqualityProof
             !(referenceField ||
               (floatingField && (width == 32 && field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4 ||
                                  width == 64 && field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R8)) ||
+              enumField && width == 32 && Enum32StorageProof.IsUnchanged(field.FieldType) ||
               HasExactStorageWidth(field.FieldType, width) ||
               width == owner.AppContext.Binary.PointerSizeBytes * 8 &&
               field.FieldType.Type is (Il2CppTypeEnum.IL2CPP_TYPE_I or
@@ -150,12 +155,15 @@ internal static class NarrowFieldEqualityProof
              !NullCheckedCall.HasUnchangedReferenceBase(receiver, owner)) ||
             owner.IsValueType || owner.IsEnumType ||
             owner is GenericInstanceTypeAnalysisContext || owner.GenericParameters.Count != 0 ||
-            owner.Definition is not { PackingSizeIsDefault: true, ClassSizeIsDefault: true } ||
+            owner.Definition is not { PackingSizeIsDefault: true, ClassSizeIsDefault: true } definition ||
+            !ReferenceEquals(field.BackingData?.Field.DeclaringType, definition) ||
+            (ulong)field.Offset + (ulong)(width / 8) > definition.RawSizes.instance_size ||
             owner.Attributes != owner.DefaultAttributes || (owner.Attributes & TypeAttributes.LayoutMask) == TypeAttributes.ExplicitLayout)
             return false;
 
         // A default layout is not permission to accept inconsistent or overlapping offsets.
-        // Include base fields and reject unknown extents instead of guessing their storage size.
+        // Include base fields. An unchanged field starting after the accessed
+        // span cannot overlap it; unknown earlier extents still fail closed.
         var visited = new HashSet<TypeAnalysisContext>();
         var sawConstructedBase = false;
         var reachedObject = false;
@@ -197,14 +205,24 @@ internal static class NarrowFieldEqualityProof
                  (!ReferenceEquals(type, owner.AppContext.SystemTypes.SystemObjectType) &&
                   type.Definition is not { PackingSizeIsDefault: true, ClassSizeIsDefault: true })))
                 return false;
-            foreach (var other in type.Fields.Where(f => !f.IsStatic && (f.Attributes & FieldAttributes.Literal) == 0))
+            foreach (var other in type.Fields)
             {
                 if (ReferenceEquals(other, field))
                     continue;
-                var size = StorageSize(other.FieldType, owner.AppContext.Binary.PointerSizeBytes);
-                if (other.Attributes != other.DefaultAttributes || other.OverrideFieldType != null ||
-                    other.Offset < 0 || other.Offset != other.DefaultOffset || size <= 0 ||
-                    StorageRangesOverlap(field.Offset, width / 8, other.Offset, size))
+                // A changed instance/static classification must not remove a
+                // neighbor from the overlap proof before its attributes are checked.
+                if (other.Attributes != other.DefaultAttributes)
+                    return false;
+                if (other.IsStatic || (other.Attributes & FieldAttributes.Literal) != 0)
+                    continue;
+                if (!ReferenceEquals(other.DeclaringType, type) ||
+                    !ReferenceEquals(other.BackingData?.Field.DeclaringType, type.Definition) ||
+                    other.BackingData?.Field.RawFieldType is not { NumMods: 0, Byref: 0, Pinned: 0 } ||
+                    (other.Attributes & FieldAttributes.HasFieldMarshal) != 0 ||
+                    other.Name != other.DefaultName || other.OverrideFieldType != null ||
+                    other.Offset < 2 * owner.AppContext.Binary.PointerSizeBytes || other.Offset != other.DefaultOffset ||
+                    !HasNonoverlappingStorage(field.Offset, width / 8, other.Offset,
+                        () => StorageSize(other.FieldType, owner.AppContext.Binary.PointerSizeBytes)))
                     return false;
             }
             type = type.BaseType;
@@ -242,6 +260,20 @@ internal static class NarrowFieldEqualityProof
 
     internal static bool StorageRangesOverlap(long firstOffset, long firstSize, long secondOffset, long secondSize)
         => firstOffset < secondOffset + secondSize && secondOffset < firstOffset + firstSize;
+
+    internal static bool HasNonoverlappingStorage(long offset, long size, long otherOffset,
+        Func<long> getOtherSize)
+    {
+        if (offset < 0 || size <= 0 || offset > long.MaxValue - size || otherOffset < 0)
+            return false;
+        // A field's storage extends forward from its independently authenticated
+        // start. Do not invent the size of a later constructed value-type field.
+        if (otherOffset >= offset + size)
+            return true;
+        var otherSize = getOtherSize();
+        return otherSize > 0 && otherOffset <= long.MaxValue - otherSize &&
+               !StorageRangesOverlap(offset, size, otherOffset, otherSize);
+    }
 
     private static long StorageSize(TypeAnalysisContext type, int pointerSize) => type.Type switch
     {

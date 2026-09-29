@@ -73,6 +73,7 @@ public static partial class IlGenerator
 
     public static void GenerateIl(MethodAnalysisContext context, MethodDefinition definition)
     {
+        ValidateGuardedScalarAccessors(context);
         ValidateCallSemantics(context);
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
@@ -84,6 +85,7 @@ public static partial class IlGenerator
         ValidateIntegerTruncations(context);
         ValidateWideFieldLow32Reads(context);
         ValidateSmallAggregateFieldGetters(context);
+        ValidateByRefIntegerSplits(context);
         ValidateEnumFieldArrayReads(context);
         ValidateParameterBooleanArrayStores(context);
         ValidateFloatingFieldReads(context);

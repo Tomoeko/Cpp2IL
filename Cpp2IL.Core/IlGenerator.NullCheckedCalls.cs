@@ -16,7 +16,8 @@ public static partial class IlGenerator
             if (instruction.CallSemantics == CallSemantics.Direct)
                 continue;
             if (instruction.CallSemantics != CallSemantics.NullCheckedInstance || !instruction.IsCall ||
-                !NullCheckedCall.TryGet(instruction, out var target, out _) ||
+                !(NullCheckedCall.TryGet(instruction, out var target, out _) ||
+                  GuardedScalarAccessorRecovery.TryGetBoundCall(context, instruction, out target)) ||
                 !ReferenceEquals(target.AppContext, context.AppContext))
                 throw new DecompilerException("Null-checked invocation marker requires a bound nonvirtual reference-instance call with unchanged signature and pure arguments");
         }

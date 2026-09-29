@@ -106,6 +106,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return wideFieldLow32; // Preserve the declared full-width field before its proved low32 conversion.
         if (X64SmallAggregateFieldGetterProof.TryLift(context) is { } smallAggregateGetter)
             return smallAggregateGetter; // Bind the original by-value aggregate bits to its single managed field.
+        if (X64ByRefIntegerSplitProof.TryLift(context) is { } byRefIntegerSplit)
+            return byRefIntegerSplit; // Bind both 32-bit stores and their order to the original byref arguments.
+        if (X64GuardedScalarAccessorProof.TryLift(context) is { } guardedScalarAccessor)
+            return guardedScalarAccessor; // Preserve the captured receiver and its proved accessible scalar accessor.
         if (X86DirectBooleanFieldGetterProof.TryLift(context, nativeInstructions) is { } booleanGetter)
             return booleanGetter; // The complete leaf binds a byte read to this method's own Boolean field.
         if (X64NarrowScalarFieldGetterProof.TryLift(context) is { } narrowScalarGetter)

@@ -226,5 +226,5 @@ public class StackAnalyzer
         }
     }
 
-    private static string NameForSlot(StackOffset offset) => offset.Offset < 0 ? $"stack_-{-(long)offset.Offset:X}" : $"stack_{offset.Offset:X}";
+    internal static string NameForSlot(StackOffset offset) => offset.Offset < 0 ? $"stack_-{-(long)offset.Offset:X}" : $"stack_{offset.Offset:X}";
 }

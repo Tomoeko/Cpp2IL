@@ -117,6 +117,9 @@ import final_interface_boolean_getter
 import integer_truncation
 import small_aggregate_getter
 import wide_field_low32
+import byref_integer_halves
+import guarded_scalar_accessor
+import ordered_generic_tail_field
 import nested_literal_store
 import boolean_tail_field_call
 import call_result_boolean_store
@@ -201,6 +204,12 @@ PROFILES = {
                                "source": VALIDATION / "SmallAggregateGetterFixture", "methods": 8},
     "wide-field-low32": {"assembly": "WideFieldLow32Fixture",
                          "source": VALIDATION / "WideFieldLow32Fixture", "methods": 6},
+    "byref-integer-halves": {"assembly": "ByRefIntegerHalvesFixture",
+                             "source": VALIDATION / "ByRefIntegerHalvesFixture", "methods": 7},
+    "guarded-scalar-accessor": {"assembly": "GuardedScalarAccessorFixture",
+                                "source": VALIDATION / "GuardedScalarAccessorFixture", "methods": 7},
+    "ordered-generic-tail-field": {"assembly": "OrderedGenericTailFieldFixture",
+                                  "source": VALIDATION / "OrderedGenericTailFieldFixture", "methods": 2},
     "guarded-sink": {"assembly": "GuardedSinkFixture", "source": VALIDATION / "GuardedSinkFixture", "methods": 3},
     "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
     "folded-literal-constructor": {"assembly": "FoldedLiteralConstructorFixture", "source": VALIDATION / "FoldedLiteralConstructorFixture", "methods": 3},
@@ -549,6 +558,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return small_aggregate_getter.verify(path, stage, VERSION)
     if profile == "wide-field-low32":
         return wide_field_low32.verify(path, stage, VERSION)
+    if profile == "byref-integer-halves":
+        return byref_integer_halves.verify(path, stage, VERSION)
+    if profile == "guarded-scalar-accessor":
+        return guarded_scalar_accessor.verify(path, stage, VERSION)
+    if profile == "ordered-generic-tail-field":
+        return ordered_generic_tail_field.verify(path, stage, VERSION)
     if profile == "nested-literal-store":
         return nested_literal_store.verify(path, stage, VERSION)
     if profile == "parameter-class-test":
