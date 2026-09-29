@@ -104,6 +104,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return byteThreshold; // The complete leaf proves one unsigned byte-field predicate.
         if (X64FinalInterfaceBooleanFieldGetterProof.TryLift(context) is { } finalInterfaceGetter)
             return finalInterfaceGetter; // Final interface slots and the complete own-field leaf are bound together.
+        if (X64FinalOverrideBooleanFieldGetterProof.TryLift(context) is { } finalOverrideGetter)
+            return finalOverrideGetter; // A final class override retains its proved base slot and own Boolean field.
         if (X64WideFieldLow32ReadProof.TryLift(context) is { } wideFieldLow32)
             return wideFieldLow32; // Preserve the declared full-width field before its proved low32 conversion.
         if (X64SmallAggregateFieldGetterProof.TryLift(context) is { } smallAggregateGetter)

@@ -86,6 +86,7 @@ public static partial class IlGenerator
         ValidateReferenceFieldAddressStores(context);
         ValidateNarrowScalarFieldGetters(context);
         ValidateFinalInterfaceBooleanFieldGetters(context);
+        ValidateFinalOverrideBooleanFieldGetters(context);
         ValidateIntegerTruncations(context);
         ValidateWideFieldLow32Reads(context);
         ValidateSmallAggregateFieldGetters(context);

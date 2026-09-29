@@ -195,6 +195,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64FalseBooleanVirtualTailRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Literal-false virtual tail IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
             if (X64ScalarWrapperTailCallRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
@@ -241,6 +248,14 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
                     "Instance reference setter IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
+            if (X64OwnerIncrementReferenceStoreRecovery.TryGenerate(methodContext,
+                    methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Owner counter increment and reference store IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 
@@ -437,6 +452,14 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
                     "Nested reference-array call IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
+            if (X64OwnerArrayArgumentTailRecovery.TryGenerate(methodContext,
+                    methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Checked reference-array argument tail IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
 

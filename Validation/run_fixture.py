@@ -138,6 +138,9 @@ import open_generic_early_field
 import open_generic_prefix_operations
 import nested_literal_store
 import nested_byte_field_read
+import array_element_argument_tail
+import final_override_boolean_getter
+import false_boolean_virtual_tail
 import call_before_capture_boolean_store
 import nullable_delegate_field_tail
 import boolean_tail_field_call
@@ -349,6 +352,16 @@ PROFILES = {
     "nested-byte-field-read": {
         "assembly": "NestedByteFieldReadFixture",
         "source": VALIDATION / "NestedByteFieldReadFixture", "methods": 3},
+    "array-element-argument-tail": {
+        "assembly": "ArrayElementArgumentTailFixture",
+        "source": VALIDATION / "ArrayElementArgumentTailFixture", "methods": 5},
+    "final-override-boolean-getter": {
+        "assembly": "FinalOverrideBooleanGetterFixture",
+        "source": VALIDATION / "FinalOverrideBooleanGetterFixture", "methods": 6,
+        "noManagedBody": (("FinalOverrideBooleanGetterFixture.FlagBase", "get_Value"),)},
+    "false-boolean-virtual-tail": {
+        "assembly": "FalseBooleanVirtualTailFixture",
+        "source": VALIDATION / "FalseBooleanVirtualTailFixture", "methods": 3},
     "parameter-class-test": {"assembly": "ParameterClassTestFixture", "source": VALIDATION / "ParameterClassTestFixture", "methods": 1},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
@@ -678,6 +691,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return nullable_delegate_field_tail.verify(path, stage, VERSION)
     if profile == "nested-byte-field-read":
         return nested_byte_field_read.verify(path, stage, VERSION)
+    if profile == "array-element-argument-tail":
+        return array_element_argument_tail.verify(path, stage, VERSION)
+    if profile == "final-override-boolean-getter":
+        return final_override_boolean_getter.verify(path, stage, VERSION)
+    if profile == "false-boolean-virtual-tail":
+        return false_boolean_virtual_tail.verify(path, stage, VERSION)
     if profile == "parameter-class-test":
         return parameter_class_test.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":

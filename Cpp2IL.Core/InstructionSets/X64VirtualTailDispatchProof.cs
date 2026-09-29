@@ -35,27 +35,43 @@ internal static class X64VirtualTailDispatchProof
             !EligibleCaller(method) || TryProveShape(native) is not { } shape ||
             method.UnderlyingPointer == 0 || native[0].IP != method.UnderlyingPointer ||
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
-            !ClosedLeaf(method, native, shape.End, pe, unwind))
+            !ClosedLeaf(method, native, shape.End, 17, pe, unwind))
             return null;
 
-        var offset = shape.MethodPointerOffset;
+        if (!TryResolveOwnerSlot(method, shape.MethodPointerOffset,
+                out var owner, out var target, out var slot) ||
+            !EligibleTarget(target, owner, slot))
+            return null;
+        return new Evidence(target, slot);
+    }
+
+    internal static bool TryResolveOwnerSlot(MethodAnalysisContext method,
+        ulong offset, out TypeAnalysisContext owner, out MethodAnalysisContext target,
+        out int slot)
+    {
+        owner = null!;
+        target = null!;
+        slot = 0;
+        var app = method.AppContext;
         if (offset < (ulong)Il2CppVirtualInvokeLayout.X64VTableOffset ||
             (offset - (ulong)Il2CppVirtualInvokeLayout.X64VTableOffset) %
                 (ulong)Il2CppVirtualInvokeLayout.EntrySize(8) != 0)
-            return null;
+            return false;
         var slotValue = (offset - (ulong)Il2CppVirtualInvokeLayout.X64VTableOffset) /
             (ulong)Il2CppVirtualInvokeLayout.EntrySize(8);
         if (slotValue > int.MaxValue ||
-            method.DeclaringType is not { Definition: { } ownerDefinition } owner ||
+            method.DeclaringType is not { Definition: { } ownerDefinition } resolvedOwner ||
             slotValue >= (ulong)ownerDefinition.VTable.Length ||
-            !EligibleOwnerDispatchLayout(owner, (int)slotValue) ||
+            !EligibleOwnerDispatchLayout(resolvedOwner, (int)slotValue) ||
             ownerDefinition.VTable[(int)slotValue] is not
                 { Type: MetadataUsageType.MethodDef } entry ||
-            app.ResolveContextForMethod(entry) is not { } target ||
-            !EligibleTarget(target, owner, (int)slotValue) ||
-            !ReferenceEquals(entry.AsMethod(), target.Definition))
-            return null;
-        return new Evidence(target, (int)slotValue);
+            app.ResolveContextForMethod(entry) is not { } resolvedTarget ||
+            !ReferenceEquals(entry.AsMethod(), resolvedTarget.Definition))
+            return false;
+        owner = resolvedOwner;
+        target = resolvedTarget;
+        slot = (int)slotValue;
+        return true;
     }
 
     internal static Shape? TryProveShape(IReadOnlyList<NativeInstruction> body)
@@ -79,7 +95,7 @@ internal static class X64VirtualTailDispatchProof
         return new Shape(body[2].MemoryDisplacement64, body[2].NextIP);
     }
 
-    private static bool EligibleCaller(MethodAnalysisContext method)
+    internal static bool EligibleCaller(MethodAnalysisContext method)
     {
         var app = method.AppContext;
         return method.DeclaringType is { } owner &&
@@ -212,14 +228,15 @@ internal static class X64VirtualTailDispatchProof
                RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(target);
     }
 
-    private static bool ClosedLeaf(MethodAnalysisContext method,
-        IReadOnlyList<NativeInstruction> native, ulong end, PE pe,
+    internal static bool ClosedLeaf(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> native, ulong end, int expectedLength, PE pe,
         X64UnwindProof.Index unwind)
     {
         var start = method.UnderlyingPointer;
-        if (start % 16 != 0 || end <= start || end - start != 17 ||
+        if (expectedLength is not (17 or 19) || start % 16 != 0 ||
+            end <= start || end - start != (ulong)expectedLength ||
             end > ulong.MaxValue - 15 ||
-            method.RawBytes.Length != 17 ||
+            method.RawBytes.Length != expectedLength ||
             !X86Utils.Iterate(method).SequenceEqual(native) ||
             X86CallerExceptionRegionProof.CheckProvedTerminalIndirectBranch(
                 method, native, native[^1].IP) != null)
@@ -241,7 +258,8 @@ internal static class X64VirtualTailDispatchProof
                Enumerable.Range(0, 32).All(offset =>
                    unwind.IsExecutableRva(checked((uint)(start + (ulong)offset - unwind.ImageBase))) &&
                    pe.MapVirtualAddressToRaw(start + (ulong)offset, false) == rawStart + offset) &&
-               image.Slice((int)rawStart, 17).SequenceEqual(method.RawBytes.AsSpan());
+               image.Slice((int)rawStart, expectedLength)
+                   .SequenceEqual(method.RawBytes.AsSpan());
     }
 
     private static bool PointerLoad(NativeInstruction instruction, NativeRegister destination,

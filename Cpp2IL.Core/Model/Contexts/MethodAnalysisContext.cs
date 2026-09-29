@@ -483,6 +483,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         ClosedGenericStorageRecovery.Run(this);
         ScalarVirtualDispatchRecovery.Run(this);
         FinalInterfaceBooleanFieldGetterRecovery.Run(this);
+        FinalOverrideBooleanFieldGetterRecovery.Run(this);
         OpenGenericPrefixFieldLayoutProof.Run(this);
 
         LocalVariables.RemoveUnused(this);
