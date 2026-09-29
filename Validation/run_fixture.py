@@ -56,6 +56,8 @@ import boolean_getter
 import boolean_composition
 import conditional_boolean_store
 import conditional_generic_boolean_store
+import conditional_generic_terminal_store
+import instance_parameter_reference_read
 import boolean_literal_store
 import parameter_boolean_array_store
 import scalar_field_comparison
@@ -93,6 +95,7 @@ import nested_boolean_getter
 import nested_flag_setter
 import reference_null
 import reference_field_null
+import wide_reference_null
 import reference_store
 import object_reference_store
 import string_reference_store
@@ -150,6 +153,7 @@ import folded_state_constructor
 import folded_literal_constructor
 import shared_inert_constructor
 import empty_object_constructor
+import layered_virtual_tail_dispatch
 import float_initializer_constructor
 import scalar_wrapper
 import scalar_wrapper_cctor
@@ -209,6 +213,12 @@ PROFILES = {
     "conditional-generic-boolean-store": {"assembly": "ConditionalGenericBooleanStoreFixture",
                                           "source": VALIDATION / "ConditionalGenericBooleanStoreFixture",
                                           "methods": 4},
+    "conditional-generic-terminal-store": {"assembly": "ConditionalGenericTerminalStoreFixture",
+                                           "source": VALIDATION / "ConditionalGenericTerminalStoreFixture",
+                                           "methods": 6},
+    "instance-parameter-reference-read": {"assembly": "InstanceParameterReferenceReadFixture",
+                                          "source": VALIDATION / "InstanceParameterReferenceReadFixture",
+                                          "methods": 5},
     "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 5},
     "boolean-getter-metadata": {"assembly": "BooleanGetterMetadataFixture", "source": VALIDATION / "BooleanGetterMetadataFixture", "methods": 11},
     "virtual-string-call": {"assembly": "VirtualStringCallFixture", "source": VALIDATION / "VirtualStringCallFixture", "methods": 5},
@@ -268,6 +278,7 @@ PROFILES = {
     "native-int-field": {"assembly": "NativeIntFieldFixture", "source": VALIDATION / "NativeIntFieldFixture", "methods": 3},
     "reference-null": {"assembly": "ReferenceNullFixture", "source": VALIDATION / "ReferenceNullFixture", "methods": 3},
     "reference-field-null": {"assembly": "ReferenceFieldNullFixture", "source": VALIDATION / "ReferenceFieldNullFixture", "methods": 12},
+    "wide-reference-null": {"assembly": "WideReferenceNullFixture", "source": VALIDATION / "WideReferenceNullFixture", "methods": 4},
     "sequential-null-guards": {"assembly": "SequentialNullGuardFixture", "source": VALIDATION / "SequentialNullGuardFixture", "methods": 3},
     "call-result-null-guards": {"assembly": "CallResultNullGuardFixture", "source": VALIDATION / "CallResultNullGuardFixture", "methods": 13},
     "reference-store": {"assembly": "ReferenceStoreFixture", "source": VALIDATION / "ReferenceStoreFixture", "methods": 2},
@@ -292,6 +303,10 @@ PROFILES = {
     "throw-only": {"assembly": "ThrowOnlyFixture", "source": VALIDATION / "ThrowOnlyFixture", "methods": 6},
     "virtual-tail-dispatch": {"assembly": "VirtualTailDispatchFixture",
                               "source": VALIDATION / "VirtualTailDispatchFixture", "methods": 5},
+    "layered-virtual-tail-dispatch": {
+        "assembly": "LayeredVirtualTailDispatchFixture",
+        "source": VALIDATION / "LayeredVirtualTailDispatchFixture", "methods": 8,
+        "noManagedBody": (("LayeredVirtualTailDispatchFixture.ITag", "ReadTag"),)},
     "metadata-guard-move": {"assembly": "MetadataGuardMoveFixture", "source": VALIDATION / "MetadataGuardMoveFixture", "methods": 3},
     "metadata-guard-parameter": {"assembly": "MetadataGuardParameterFixture", "source": VALIDATION / "MetadataGuardParameterFixture", "methods": 1},
     "metadata-forwarding": {"assembly": "MetadataForwardingFixture", "source": VALIDATION / "MetadataForwardingFixture", "methods": 5},
@@ -453,6 +468,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return conditional_boolean_store.verify(path, stage, VERSION)
     if profile == "conditional-generic-boolean-store":
         return conditional_generic_boolean_store.verify(path, stage, VERSION)
+    if profile == "conditional-generic-terminal-store":
+        return conditional_generic_terminal_store.verify(path, stage, VERSION)
+    if profile == "instance-parameter-reference-read":
+        return instance_parameter_reference_read.verify(path, stage, VERSION)
     if profile == "boolean-getter":
         return boolean_getter.verify(path, stage, VERSION)
     if profile == "boolean-getter-metadata":
@@ -529,6 +548,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return reference_null.verify(path, stage, VERSION)
     if profile == "reference-field-null":
         return reference_field_null.verify(path, stage, VERSION)
+    if profile == "wide-reference-null":
+        return wide_reference_null.verify(path, stage, VERSION)
     if profile == "sequential-null-guards":
         return sequential_null_guards.verify(path, stage, VERSION)
     if profile == "call-result-null-guards":
@@ -565,6 +586,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return throw_only.verify(path, stage, VERSION)
     if profile == "virtual-tail-dispatch":
         return virtual_tail_dispatch.verify(path, stage, VERSION)
+    if profile == "layered-virtual-tail-dispatch":
+        return layered_virtual_tail_dispatch.verify(path, stage, VERSION)
     if profile == "metadata-guard-move":
         return metadata_guard_move.verify(path, stage, VERSION)
     if profile == "metadata-guard-parameter":

@@ -45,6 +45,16 @@ internal static class X86UnusedReceiverProof
             X64ParameterBooleanArrayStoreProof.Find(method, X86Utils.Iterate(method).ToArray()) == recorded)
             return true;
 
+        // The complete guarded field-read proof binds the receiver to RDX in an
+        // instance method with one class argument. Its only other path is the
+        // independently identified nonreturning null helper; neither path uses
+        // the incoming RCX value.
+        if (nativeRegister == Register.RCX && receiver == new ISIL.Register(null, "rcx") &&
+            X64Guarded64BitFieldReadProof.HasUnchangedInstanceArgumentAbi(method) &&
+            X64Guarded64BitFieldReadProof.Find(method, X86Utils.Iterate(method).ToArray()) is
+                { ReceiverField: null, ReceiverRegister: Register.RDX })
+            return true;
+
         if (IsUnusedForAggregate(method, receiver))
         {
             method.PutExtraData(AggregateEvidenceKey, new AggregateReceiverEvidence(receiver));

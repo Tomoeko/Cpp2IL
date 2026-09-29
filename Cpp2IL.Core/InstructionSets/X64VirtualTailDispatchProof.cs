@@ -47,8 +47,8 @@ internal static class X64VirtualTailDispatchProof
             (ulong)Il2CppVirtualInvokeLayout.EntrySize(8);
         if (slotValue > int.MaxValue ||
             method.DeclaringType is not { Definition: { } ownerDefinition } owner ||
-            ownerDefinition.InterfaceOffsets.Length != 0 ||
             slotValue >= (ulong)ownerDefinition.VTable.Length ||
+            !EligibleOwnerDispatchLayout(owner, (int)slotValue) ||
             ownerDefinition.VTable[(int)slotValue] is not
                 { Type: MetadataUsageType.MethodDef } entry ||
             app.ResolveContextForMethod(entry) is not { } target ||
@@ -101,6 +101,90 @@ internal static class X64VirtualTailDispatchProof
                                          MethodImplAttributes.InternalCall)) == 0 &&
                !RuntimeNullGuardCoalescer.HasOutputOptions(method) &&
                ReferenceEquals(method.ReturnType, app.SystemTypes.SystemVoidType);
+    }
+
+    private static bool EligibleOwnerDispatchLayout(TypeAnalysisContext owner,
+        int selectedSlot)
+    {
+        try
+        {
+            var app = owner.AppContext;
+            var definition = owner.Definition!;
+            var offsets = definition.InterfaceOffsets;
+            // An override shares a slot with an ancestor declaration. The
+            // vtable entry alone cannot identify which declaration appeared at
+            // the original managed callsite.
+            if (owner.BaseType is not { Definition: { } baseDefinition } ||
+                selectedSlot < baseDefinition.VTable.Length)
+                return false;
+            if (ReferenceEquals(owner.BaseType, app.SystemTypes.SystemObjectType) &&
+                offsets.Length == 0 && definition.InterfaceOffsetsCount == 0 &&
+                definition.InterfacesCount == 0 && definition.RawInterfaces.Length == 0 &&
+                owner.InterfaceContexts.Count == 0)
+                return true;
+
+            // Inherited interface offsets can be remapped in a derived vtable.
+            // Admit only interface-free ancestors, then exclude every interval
+            // introduced directly by this owner from the selected class slot.
+            if (X64ScalarVirtualDispatchProof.Hierarchy(owner) is not { } hierarchy ||
+                hierarchy.Skip(1).Any(type => type.Definition is not { } ancestor ||
+                    ancestor.InterfacesCount != 0 || ancestor.InterfaceOffsetsCount != 0 ||
+                    ancestor.RawInterfaces.Length != 0 || ancestor.InterfaceOffsets.Length != 0 ||
+                    type.InterfaceContexts.Count != 0))
+                return false;
+            var rawInterfaces = definition.RawInterfaces;
+            var interfaces = owner.InterfaceContexts;
+            if (rawInterfaces.Length != offsets.Length ||
+                rawInterfaces.Length != interfaces.Count ||
+                rawInterfaces.Length != definition.InterfacesCount ||
+                offsets.Length != definition.InterfaceOffsetsCount ||
+                rawInterfaces.Length > 8)
+                return false;
+
+            var seen = new HashSet<TypeAnalysisContext>();
+            for (var index = 0; index < offsets.Length; index++)
+            {
+                var raw = rawInterfaces[index];
+                var offset = offsets[index];
+                if (raw is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                        NumMods: 0, Byref: 0, Pinned: 0 } ||
+                    offset.Type is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                        NumMods: 0, Byref: 0, Pinned: 0 } offsetType ||
+                    interfaces[index] is not { } contract ||
+                    !ReferenceEquals(contract, app.ResolveIl2CppType(raw)) ||
+                    !ReferenceEquals(contract, app.ResolveIl2CppType(offsetType)) ||
+                    !seen.Add(contract) || !contract.IsInterface ||
+                    contract.IsGenericInstance || contract.GenericParameters.Count != 0 ||
+                    contract.Name != contract.DefaultName ||
+                    contract.Namespace != contract.DefaultNamespace ||
+                    contract.Attributes != contract.DefaultAttributes ||
+                    contract.Definition is not { GenericContainer: null,
+                        RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                            NumMods: 0, Byref: 0, Pinned: 0 },
+                        RawInterfaces.Length: 0 } contractDefinition ||
+                    contract.Methods.Count is < 1 or > 64 ||
+                    contract.Methods.Count != contractDefinition.MethodCount ||
+                    contract.Methods.Any(method => method.IsStatic || !method.IsVirtual ||
+                        !ReferenceEquals(method.DeclaringType, contract) ||
+                        method.Definition is not { } definition ||
+                        !ReferenceEquals(definition.DeclaringType, contractDefinition)) ||
+                    !contract.Methods.Select(method => (int)method.Definition!.slot)
+                        .OrderBy(slot => slot).SequenceEqual(Enumerable.Range(0, contract.Methods.Count)) ||
+                    offset.offset < 0 ||
+                    (long)offset.offset + contract.Methods.Count >
+                        definition.VTable.Length ||
+                    selectedSlot >= offset.offset &&
+                    selectedSlot < (long)offset.offset + contract.Methods.Count)
+                    return false;
+            }
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or
+            InvalidOperationException or IndexOutOfRangeException or
+            OverflowException)
+        {
+            return false;
+        }
     }
 
     private static bool EligibleTarget(MethodAnalysisContext target,

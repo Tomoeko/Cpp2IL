@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Utils;
 using Iced.Intel;
 using LibCpp2IL;
 using LibCpp2IL.BinaryStructures;
@@ -20,13 +21,22 @@ namespace Cpp2IL.Core.InstructionSets;
 internal static class X64Guarded64BitFieldReadProof
 {
     internal sealed record Proof(FieldAnalysisContext Field, FieldAnalysisContext? ReceiverField,
-        ulong LoadIp);
-    internal sealed record Shape(long? ReceiverOffset, long FieldOffset, ulong LoadIp, int CallIndex);
+        ulong LoadIp, Register ReceiverRegister);
+    internal sealed record Shape(long? ReceiverOffset, Register ReceiverRegister,
+        long FieldOffset, ulong LoadIp, int CallIndex);
 
     internal static Proof? Find(MethodAnalysisContext method, IReadOnlyList<Instruction> body)
     {
         var app = method.AppContext;
         var shape = TryProveShape(body);
+        IReadOnlyList<Instruction> provedBody = body;
+        if (shape == null && TryReadPaddedRoot(method, out var paddedRoot,
+                out var paddedCode))
+        {
+            shape = TryProveShape(paddedCode);
+            provedBody = paddedRoot;
+            body = paddedCode;
+        }
         if (shape == null || app.Binary is not PE { PointerSizeBytes: 8 } ||
             app.Binary.InstructionSetId != DefaultInstructionSets.X86_64 ||
             app.UnityVersion.ToString() != "2021.3.35f1" ||
@@ -60,8 +70,31 @@ internal static class X64Guarded64BitFieldReadProof
         FieldAnalysisContext? receiverField = null;
         if (shape.ReceiverOffset is null)
         {
-            if (method.IsStatic)
+            if (shape.ReceiverRegister == Register.RDX)
             {
+                if (method.IsStatic || method.Parameters.Count != 1 ||
+                    definition.parameterCount != 1 ||
+                    definition.InternalParameterData?.Length != 1 ||
+                    !HasUnchangedInstanceArgumentAbi(method) ||
+                    !TryReadPaddedRoot(method, out var boundRoot, out var boundCode) ||
+                    !boundCode.SequenceEqual(body))
+                    return null;
+                provedBody = boundRoot;
+                var parameter = method.Parameters[0];
+                if (parameter.Definition == null ||
+                    !ReferenceEquals(parameter.Definition, definition.InternalParameterData[0]) ||
+                    parameter.ParameterIndex != 0 || !ReferenceEquals(parameter.DeclaringMethod, method) ||
+                    parameter.IsRef || parameter.Attributes != parameter.DefaultAttributes ||
+                    parameter.OverrideParameterType != null ||
+                    parameter.Definition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                        NumMods: 0, Byref: 0, Pinned: 0 })
+                    return null;
+                box = parameter.ParameterType;
+            }
+            else if (method.IsStatic)
+            {
+                if (shape.ReceiverRegister != Register.RCX)
+                    return null;
                 if (method.Parameters.Count != 1 || definition.parameterCount != 1 ||
                     definition.InternalParameterData?.Length != 1)
                     return null;
@@ -78,6 +111,8 @@ internal static class X64Guarded64BitFieldReadProof
             }
             else
             {
+                if (shape.ReceiverRegister != Register.RCX)
+                    return null;
                 if (method.Parameters.Count != 0 || definition.parameterCount != 0 ||
                     (definition.InternalParameterData?.Length ?? 0) != 0 ||
                     !ISIL.NullCheckedCall.IsReferenceClass(method.DeclaringType))
@@ -87,7 +122,8 @@ internal static class X64Guarded64BitFieldReadProof
         }
         else
         {
-            if (method.IsStatic || method.Parameters.Count != 0 || definition.parameterCount != 0 ||
+            if (shape.ReceiverRegister != Register.RAX || method.IsStatic ||
+                method.Parameters.Count != 0 || definition.parameterCount != 0 ||
                 (definition.InternalParameterData?.Length ?? 0) != 0 ||
                 !ISIL.NullCheckedCall.IsReferenceClass(method.DeclaringType))
                 return null;
@@ -120,7 +156,7 @@ internal static class X64Guarded64BitFieldReadProof
         if (fields is not [{ } referenceField] || referenceField.Name != referenceField.DefaultName)
             return null;
         var receiver = new IsilLocalVariable("native-receiver", new IsilRegister(null,
-            shape.ReceiverOffset is null ? "rcx" : "rax"), box);
+            shape.ReceiverOffset is null ? shape.ReceiverRegister.ToString().ToLowerInvariant() : "rax"), box);
         var access = new IsilFieldReference(referenceField, receiver, (int)referenceField.Offset);
         if (!(IsSupportedNativeIntType(method.ReturnType)
                 ? NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, 64)
@@ -129,10 +165,37 @@ internal static class X64Guarded64BitFieldReadProof
 
         var call = body[shape.CallIndex];
         if (X86RuntimeNullThrowProof.TryIdentify(app, call.NearBranchTarget) == null ||
-            X86CallerExceptionRegionProof.Check(method, body, new HashSet<ulong> { call.IP }) != null)
+            X86CallerExceptionRegionProof.Check(method, provedBody, new HashSet<ulong> { call.IP }) != null)
             return null;
-        return new Proof(referenceField, receiverField, shape.LoadIp);
+        return new Proof(referenceField, receiverField, shape.LoadIp,
+            shape.ReceiverRegister);
     }
+
+    internal static bool HasUnchangedInstanceArgumentAbi(MethodAnalysisContext method)
+    {
+        if (method.IsStatic || method.Parameters.Count != 1)
+            return false;
+        var resolver = new X64CallingConventionResolver();
+        if (resolver.ReturnsViaHiddenBuffer(method))
+            return false;
+        var incoming = resolver.ResolveForParameters(method);
+        return incoming.Length == 3 && method.ParameterOperands.Count == incoming.Length &&
+               incoming[0] is IsilRegister { Name: "rcx" } first &&
+               incoming[1] is IsilRegister { Name: "rdx" } second &&
+               incoming[2] is IsilRegister { Name: "r8" } third &&
+               method.ParameterOperands[0] is IsilRegister currentFirst && currentFirst == first &&
+               method.ParameterOperands[1] is IsilRegister currentSecond && currentSecond == second &&
+               method.ParameterOperands[2] is IsilRegister currentThird && currentThird == third;
+    }
+
+    internal static bool HasBoundInstanceArgument(MethodAnalysisContext method,
+        IsilLocalVariable receiver) =>
+        HasUnchangedInstanceArgumentAbi(method) && !receiver.IsThis &&
+        !receiver.IsMethodInfo && method.ParameterLocals.Contains(receiver) &&
+        receiver.Register == (IsilRegister)method.ParameterOperands[1] &&
+        LocalVariables.GetIncomingParameterIndex(method, receiver) == 0 &&
+        !method.ControlFlowGraph!.Instructions.Any(instruction =>
+            ReferenceEquals(instruction.Destination, receiver));
 
     internal static Shape? TryProveShape(IReadOnlyList<Instruction> body)
     {
@@ -156,7 +219,9 @@ internal static class X64Guarded64BitFieldReadProof
                 return null;
             receiverOffset = (long)body[1].MemoryDisplacement64;
         }
-        var tested = nested ? Register.RAX : Register.RCX;
+        var tested = nested ? Register.RAX : body[1].Op0Register;
+        if (!nested && tested is not (Register.RCX or Register.RDX))
+            return null;
         var test = body[nested ? 2 : 1];
         var branch = body[nested ? 3 : 2];
         var load = body[nested ? 4 : 3];
@@ -172,7 +237,26 @@ internal static class X64Guarded64BitFieldReadProof
             call.Code != Code.Call_rel32_64 || call.Op0Kind != OpKind.NearBranch64 ||
             call.NearBranchTarget == 0)
             return null;
-        return new Shape(receiverOffset, (long)load.MemoryDisplacement64, load.IP, body.Count - 1);
+        return new Shape(receiverOffset, tested, (long)load.MemoryDisplacement64,
+            load.IP, body.Count - 1);
+    }
+
+    private static bool TryReadPaddedRoot(MethodAnalysisContext method,
+        out Instruction[] root, out Instruction[] code)
+    {
+        root = [];
+        code = [];
+        if (method.AppContext.Binary is not PE pe ||
+            X64UnwindProof.ForApplication(method.AppContext) is not { } unwind ||
+            X64NativeInstructionReader.ReadRootBody(method) is not { Length: 8 } read ||
+            read[^1].Code != Code.Int3 || read[^1].Length != 1 ||
+            !unwind.MatchesUnwind(method.UnderlyingPointer, read[^1].NextIP,
+                4, 0, new byte[] { 4, 0x42 }) ||
+            !X64NativePaddingProof.HasInt3Padding(pe, read[^1].IP, read[^1].NextIP))
+            return false;
+        root = read;
+        code = read.Take(read.Length - 1).ToArray();
+        return true;
     }
 
     private static bool FieldLoad(Instruction instruction, Register receiver) =>

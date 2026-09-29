@@ -78,11 +78,12 @@ internal static class X64ConditionalGenericBooleanStoreProof
         }
     }
 
-    // Only the exact-target-validated return-copy-first ordering is admitted.
-    // A return copy at the terminal needs its own controlled native build.
+    // Both admitted orders have exact-target source/native pairs. The guarded
+    // early-return order has a separate null arm; a copy at the common terminal
+    // remains outside this proof.
     internal static Shape? TryProveShape(IReadOnlyList<NativeInstruction> body)
     {
-        if (body.Count is not (7 or 8) ||
+        if (body.Count is not (7 or 8 or 9 or 10) ||
             body.Any(instruction => instruction.IsInvalid ||
                 instruction.CodeSize != CodeSize.Code64 ||
                 instruction.HasLockPrefix || instruction.HasRepPrefix ||
@@ -92,16 +93,28 @@ internal static class X64ConditionalGenericBooleanStoreProof
                 instruction.IP != body[index - 1].NextIP).Any())
             return null;
 
-        var pair = body.Count == 8;
-        var terminalIndex = body.Count - 1;
-        var terminal = body[terminalIndex];
-        if (!ReturnCopy(body[0]) ||
-            body[^1].Code != Code.Retnq || body[^1].OpCount != 0 ||
-            body[^1].FlowControl != FlowControl.Return ||
-            !SelfTest(body[1], NativeRegister.RCX) ||
-            !ZeroBranch(body[2], terminal.IP) ||
-            !ByteZeroCompare(body[3], out var conditionOffset) ||
-            !ZeroBranch(body[4], terminal.IP))
+        var guardedEarlyReturn = body.Count is 9 or 10;
+        var pair = body.Count is 8 or 10;
+        var firstReturnIndex = guardedEarlyReturn ? body.Count - 3 :
+            body.Count - 1;
+        int conditionOffset;
+        if (guardedEarlyReturn)
+        {
+            if (!SelfTest(body[0], NativeRegister.RCX) ||
+                !ZeroBranch(body[1], body[^2].IP) ||
+                !ByteZeroCompare(body[2], out conditionOffset) ||
+                !ReturnCopy(body[3]) ||
+                !ZeroBranch(body[4], body[^1].IP) ||
+                !Return(body[firstReturnIndex]) ||
+                !ZeroReturn(body[^2]) || !Return(body[^1]))
+                return null;
+        }
+        else if (!ReturnCopy(body[0]) ||
+                 !SelfTest(body[1], NativeRegister.RCX) ||
+                 !ZeroBranch(body[2], body[^1].IP) ||
+                 !ByteZeroCompare(body[3], out conditionOffset) ||
+                 !ZeroBranch(body[4], body[^1].IP) ||
+                 !Return(body[^1]))
             return null;
 
         var firstStoreIndex = 5;
@@ -114,7 +127,7 @@ internal static class X64ConditionalGenericBooleanStoreProof
             integerOffset = offset;
             firstStoreIndex++;
         }
-        if (firstStoreIndex + 1 != terminalIndex ||
+        if (firstStoreIndex + 1 != firstReturnIndex ||
             !Store(body[firstStoreIndex], 1,
                 pair ? NativeRegister.R8L : NativeRegister.DL,
                 out var booleanOffset) ||
@@ -133,7 +146,7 @@ internal static class X64ConditionalGenericBooleanStoreProof
     {
         method.EnsureRawBytes();
         var start = method.UnderlyingPointer;
-        foreach (var count in new[] { 7, 8 })
+        foreach (var count in new[] { 7, 8, 9, 10 })
         {
             if (X64NativeInstructionReader.Read(pe, unwind, start, count, 64)
                 is not { } read)
@@ -461,6 +474,19 @@ internal static class X64ConditionalGenericBooleanStoreProof
         instruction.Op1Kind == OpKind.Register &&
         instruction.Op1Register == NativeRegister.RCX &&
         instruction.FlowControl == FlowControl.Next;
+
+    private static bool ZeroReturn(NativeInstruction instruction) =>
+        instruction.Code == Code.Xor_r32_rm32 &&
+        instruction.OpCount == 2 &&
+        instruction.Op0Kind == OpKind.Register &&
+        instruction.Op0Register == NativeRegister.EAX &&
+        instruction.Op1Kind == OpKind.Register &&
+        instruction.Op1Register == NativeRegister.EAX &&
+        instruction.FlowControl == FlowControl.Next;
+
+    private static bool Return(NativeInstruction instruction) =>
+        instruction.Code == Code.Retnq && instruction.OpCount == 0 &&
+        instruction.FlowControl == FlowControl.Return;
 
     private static bool SelfTest(NativeInstruction instruction,
         NativeRegister register) =>

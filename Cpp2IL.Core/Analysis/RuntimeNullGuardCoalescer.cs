@@ -59,7 +59,11 @@ internal static class RuntimeNullGuardCoalescer
                        (Operation.Operands[0] is LocalVariable loaded &&
                         FieldLoadReceiverProof.HasBoundRead(method, loaded, Operation) ||
                         ProvedNative64BitFieldRead(method, Access) is { } fieldRead &&
-                        ValidFieldReceiver(method, fieldRead.ReceiverField));
+                        ValidFieldReceiver(method, fieldRead.ReceiverField) &&
+                        (fieldRead.ReceiverRegister != Iced.Intel.Register.RDX ||
+                         Operation.NativeAddress == fieldRead.LoadIp &&
+                         X64Guarded64BitFieldReadProof.HasBoundInstanceArgument(method,
+                             Receiver)));
             return UnchangedParameter(method, Receiver, Receiver.Type!);
         }
 

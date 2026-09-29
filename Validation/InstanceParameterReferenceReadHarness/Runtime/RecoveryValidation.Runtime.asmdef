@@ -1,0 +1,14 @@
+{
+    "name": "RecoveryValidation.Runtime",
+    "rootNamespace": "RecoveryValidation",
+    "references": ["InstanceParameterReferenceReadFixture"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

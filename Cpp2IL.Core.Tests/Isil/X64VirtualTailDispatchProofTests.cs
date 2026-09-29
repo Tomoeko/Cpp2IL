@@ -54,6 +54,24 @@ public class X64VirtualTailDispatchProofTests
             Assert.That(evidence, Is.Not.Null);
             Assert.That(evidence!.Target, Is.SameAs(target));
             Assert.That(evidence.Slot, Is.EqualTo(4));
+            Assert.That(owner.BaseType, Is.SameAs(app.SystemTypes.SystemObjectType));
+            var originalInterfaceCount = owner.Definition.InterfacesCount;
+            var originalOffsetCount = owner.Definition.InterfaceOffsetsCount;
+            try
+            {
+                owner.Definition.InterfacesCount++;
+                Assert.That(X64VirtualTailDispatchProof.Find(method, native), Is.Null,
+                    "An inconsistent direct-interface count cannot prove the vtable slot.");
+                owner.Definition.InterfacesCount = originalInterfaceCount;
+                owner.Definition.InterfaceOffsetsCount++;
+                Assert.That(X64VirtualTailDispatchProof.Find(method, native), Is.Null,
+                    "An inconsistent interface-offset count cannot prove the vtable slot.");
+            }
+            finally
+            {
+                owner.Definition.InterfacesCount = originalInterfaceCount;
+                owner.Definition.InterfaceOffsetsCount = originalOffsetCount;
+            }
             var wrongMethodInfo = native.ToArray();
             wrongMethodInfo[1].MemoryDisplacement64 += 8;
             Assert.That(X64VirtualTailDispatchProof.TryProveShape(wrongMethodInfo), Is.Null);

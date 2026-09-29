@@ -39,16 +39,88 @@ public class X64ReferenceFieldNullComparisonProofTests
         Assert.That(IsClosed(Decode(hex), ManagedOpCode.CheckEqual), Is.False);
     }
 
+    [TestCase("48837948000F97C0C3", 72, ManagedOpCode.CheckGreaterUnsigned)]
+    [TestCase("48837958000F94C0C3", 88, ManagedOpCode.CheckEqual)]
+    public void ExactWideReferenceLeavesRemainClosed(string hex, int offset, ManagedOpCode op)
+    {
+        Assert.That(IsClosed(Decode(hex), op, offset), Is.True);
+    }
+
+    [TestCase("669048837948000F97C0C3", 72, ManagedOpCode.CheckGreaterUnsigned, 1)] // unproved entry NOPW
+    [TestCase("48837948000F94C0C3", 72, ManagedOpCode.CheckGreaterUnsigned, 0)] // wrong flag consumer
+    [TestCase("48837948000F97C1C3", 72, ManagedOpCode.CheckGreaterUnsigned, 0)] // wrong result register
+    [TestCase("48837950000F97C0C3", 72, ManagedOpCode.CheckGreaterUnsigned, 0)] // wrong offset
+    [TestCase("48837948000F97C0C3CC", 72, ManagedOpCode.CheckGreaterUnsigned, 0)] // extra body instruction
+    public void WideNativeMutationsRemainUnproved(string hex, int offset, ManagedOpCode op, int compareIndex)
+    {
+        Assert.That(IsClosed(Decode(hex), op, offset, compareIndex), Is.False);
+    }
+
     [Test]
-    public void OnlyExactSmallAlignedReceiverOffsetsAreAdmitted()
+    public void OnlyPlayerProvedReceiverOffsetsAreAdmitted()
     {
         Assert.Multiple(() =>
         {
-            foreach (var offset in new[] { 16, 24, 32 })
+            foreach (var offset in new[] { 16, 24, 32, 72, 88 })
                 Assert.That(X64ReferenceFieldNullComparisonProof.IsProvedNullReceiverOffset(offset, 8), Is.True);
-            foreach (var offset in new[] { 8, 17, 40, 4096 })
+            foreach (var offset in new[] { 8, 17, 40, 64, 80, 96, 384, 4096 })
                 Assert.That(X64ReferenceFieldNullComparisonProof.IsProvedNullReceiverOffset(offset, 8), Is.False);
+            Assert.That(X64ReferenceFieldNullComparisonProof.IsProvedNullReceiverOffset(72, 4), Is.False);
         });
+    }
+
+    [Test]
+    public void ExactWidePlayerBindsEachReferenceFieldAndRejectsLayoutMutation()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_WIDE_REFERENCE_NULL_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_WIDE_REFERENCE_NULL_FIXTURE_INPUT to the neutral player-input directory.");
+
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata",
+            "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var owner = app.GetAssemblyByName("WideReferenceNullFixture")!.Types
+                .Single(type => type.Name == "ReferenceSlotOwner");
+            foreach (var (name, fieldName, offset) in new[]
+                     { ("get_HasFirst", "First", 72), ("get_IsSecondNull", "Second", 88) })
+            {
+                var field = owner.Fields.Single(candidate => candidate.Name == fieldName);
+                var method = owner.Methods.Single(candidate => candidate.Name == name);
+                method.EnsureRawBytes();
+                Assert.That(field.Offset, Is.EqualTo(offset));
+                Assert.That(method.RawBytes.Length, Is.EqualTo(9));
+                Assert.That(app.MethodsByAddress[method.UnderlyingPointer], Has.Count.EqualTo(1));
+                method.Analyze();
+                Assert.That(FindEvidence(method), Is.Not.Null, name);
+
+                try
+                {
+                    field.OverrideOffset = offset + 8;
+                    Assert.That(FindEvidence(method), Is.Null,
+                        "changed metadata offset invalidates the native field site");
+                }
+                finally { field.OverrideOffset = null; }
+            }
+
+            var first = owner.Methods.Single(method => method.Name == "get_HasFirst");
+            var gap = owner.Fields.Single(field => field.Name == "Gap");
+            try
+            {
+                gap.OverrideOffset = 72;
+                Assert.That(FindEvidence(first), Is.Null,
+                    "an overlapping sibling invalidates the wide reference-field layout");
+            }
+            finally { gap.OverrideOffset = null; }
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
     }
 
     [Test]
@@ -129,9 +201,11 @@ public class X64ReferenceFieldNullComparisonProofTests
             instruction.OpCode is ManagedOpCode.CheckEqual or ManagedOpCode.CheckNotEqual or
                 ManagedOpCode.CheckGreaterUnsigned or ManagedOpCode.CheckLessOrEqualUnsigned);
 
-    private static bool IsClosed(NativeInstruction[] body, ManagedOpCode op) =>
+    private static bool IsClosed(NativeInstruction[] body, ManagedOpCode op, int offset = 16,
+        int compareIndex = 0) =>
         X64ReferenceFieldNullComparisonProof.IsClosedLeafBody(body, 0x1000,
-            body[0].IP, body.Length > 1 ? body[1].IP : 0, body[^1].NextIP, 16, "rcx", op);
+            body[compareIndex].IP, body.Length > compareIndex + 1 ? body[compareIndex + 1].IP : 0,
+            body[^1].NextIP, offset, "rcx", op);
 
     private static NativeInstruction[] Decode(string hex)
     {

@@ -62,8 +62,9 @@ internal static class X64ReferenceFieldNullComparisonProof
             field.Field.Attributes != field.Field.DefaultAttributes ||
             field.Field.IsStatic || field.Field.BackingData?.Field.RawFieldType is not
                 { NumMods: 0, Byref: 0, Pinned: 0 } ||
-            // Exact Windows behavior covers the first three aligned instance
-            // reference slots. Larger null+offset reads need their own fault proof.
+            // Exact Windows player observations also cover reference slots at
+            // offsets 72 and 88, including null-receiver faults. Other wider
+            // offsets and entry padding remain unproved.
             !IsProvedNullReceiverOffset(field.Offset, pe.PointerSizeBytes) ||
             field.Offset != field.Field.Offset ||
             field.Offset != field.Field.DefaultOffset ||
@@ -112,8 +113,7 @@ internal static class X64ReferenceFieldNullComparisonProof
         NullCheckedCall.IsReferenceClass(type) || NullCheckedCall.IsBoundedArrayReference(type);
 
     internal static bool IsProvedNullReceiverOffset(int fieldOffset, int pointerSize) =>
-        pointerSize == 8 && fieldOffset >= 2 * pointerSize &&
-        fieldOffset <= 4 * pointerSize && fieldOffset % pointerSize == 0;
+        pointerSize == 8 && (fieldOffset is 16 or 24 or 32 or 72 or 88);
 
     private static bool IsNullPredicate(ManagedOpCode op, out bool isNull)
     {
