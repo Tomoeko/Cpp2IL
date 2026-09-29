@@ -72,6 +72,7 @@ internal static class X64NativeInstructionReader
                 index.ClassifySpan(address, result[i].NextIP).Kind == X64UnwindProof.SpanKind.Unsupported)
                 return null;
         }
-        return result;
+        return index.IsUnaffectedByBaseRelocation(address,
+            checked((uint)(result[^1].NextIP - address))) ? result : null;
     }
 }

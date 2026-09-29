@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -9,6 +10,7 @@ using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.OutputFormats;
+using LibCpp2IL.PE;
 using MethodDefinition = AsmResolver.DotNet.MethodDefinition;
 
 namespace Cpp2IL.Core.Tests;
@@ -34,7 +36,10 @@ public class IlGeneratorAggregateScalarReadTests
             var assembly = app.GetAssemblyByName("AggregateScalarCompareFixture")!;
             var owner = assembly.Types.Single(type => type.Name == "ScalarPairComparer");
             var pair = assembly.Types.Single(type => type.Name == "ScalarPair");
-            foreach (var method in owner.Methods.Where(method => method.Name.EndsWith("Greater", StringComparison.Ordinal)))
+            var methods = owner.Methods.Where(method => method.Name.EndsWith("Greater", StringComparison.Ordinal) ||
+                method.Name.EndsWith("Compare", StringComparison.Ordinal)).ToArray();
+            Assert.That(methods, Has.Length.EqualTo(6));
+            foreach (var method in methods)
             {
                 method.Analyze();
                 Assert.That(method.AnalysisWarnings, Is.Empty);
@@ -44,12 +49,25 @@ public class IlGeneratorAggregateScalarReadTests
                 Assert.DoesNotThrow(() => IlGenerator.GenerateIl(method, definition));
                 Assert.That(definition.CilMethodBody!.Instructions.Count(instruction => instruction.OpCode == CilOpCodes.Ldfld),
                     Is.EqualTo(2));
+                if (method.Name.EndsWith("Compare", StringComparison.Ordinal))
+                {
+                    var evidence = X86UnusedReceiverProof.GetAggregateEvidence(method);
+                    Assert.That(evidence, Is.Not.Null);
+                    Assert.That(method.ParameterLocals.Any(local => local.IsThis), Is.False);
+                    Assert.That(method.ControlFlowGraph!.Instructions.Any(instruction =>
+                        instruction.OpCode == OpCode.ConditionalJump), Is.True);
+                    Assert.That(X86UnusedReceiverProof.IsUnusedForAggregate(method, evidence!.Receiver), Is.True);
+                    foreach (var mutation in new[] { "receiver-slot-name", "receiver-slot-number",
+                        "receiver-slot-version", "introduced-receiver-local", "introduced-receiver-read",
+                        "missing-projections" })
+                        RejectMutation(method, definition, mutation);
+                }
                 foreach (var mutation in new[] { "component-type", "component-offset", "other-overlap", "layout",
                     "parameter-type", "snapshot-type", "snapshot-name", "read-site", "read-width", "read-offset",
                     "receiver", "argument-name", "argument-version", "duplicate-parameter", "compare-site",
                     "compare-width", "compare-mask", "compare-source", "removed-read", "duplicate-read",
                     "reordered-reads", "extra-effect", "detached-block", "entry-marker-reads", "exit-marker-effect",
-                    "native-bytes", "interior-entry" })
+                    "native-bytes", "native-function-record", "native-unwind-record", "interior-entry" })
                     RejectMutation(method, definition, mutation);
             }
         }
@@ -76,6 +94,9 @@ public class IlGeneratorAggregateScalarReadTests
         var blocks = graph.Blocks.ToArray();
         var blockInstructions = blocks.Select(candidate => candidate.Instructions.ToArray()).ToArray();
         var parameterLocals = method.ParameterLocals.ToArray();
+        var locals = method.Locals.ToArray();
+        var parameterOperands = method.ParameterOperands.ToArray();
+        var projections = X64AggregateScalarOperandProof.GetEvidence(method)!.ToList();
         var argumentRegister = argument.Register;
         var snapshotRegister = snapshot.Register;
         var snapshotType = snapshot.Type;
@@ -85,6 +106,10 @@ public class IlGeneratorAggregateScalarReadTests
         var readOffset = field.Offset;
         var bytes = method.RawBytes;
         var interior = method.UnderlyingPointer + 1;
+        var pe = (PE)method.AppContext.Binary;
+        var nativeOffset = -1L;
+        var nativeByte = (byte)0;
+        var streamPosition = pe.BaseStream.Position;
         try
         {
             switch (mutation)
@@ -132,7 +157,50 @@ public class IlGeneratorAggregateScalarReadTests
                     changed[0] ^= 1;
                     method.RawBytes = new BinarySlice(changed);
                     break;
+                case "native-function-record":
+                case "native-unwind-record":
+                    var index = X64UnwindProof.ForApplication(method.AppContext)!;
+                    var image = pe.GetRawBinaryContent();
+                    var header = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(0x3C, 4)));
+                    var directory = header + 24 + 136;
+                    var tableRva = BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(directory, 4));
+                    var tableSize = BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(directory + 4, 4));
+                    var tableOffset = checked((int)pe.MapVirtualAddressToRaw(index.ImageBase + tableRva));
+                    var functionRva = checked((uint)(method.UnderlyingPointer - index.ImageBase));
+                    for (var at = 0; at < tableSize; at += 12)
+                    {
+                        var record = tableOffset + at;
+                        if (BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(record, 4)) != functionRva)
+                            continue;
+                        nativeOffset = mutation == "native-function-record" ? record + 4 :
+                            pe.MapVirtualAddressToRaw(index.ImageBase +
+                                BinaryPrimitives.ReadUInt32LittleEndian(image.Slice(record + 8, 4)));
+                        break;
+                    }
+                    Assert.That(nativeOffset, Is.GreaterThanOrEqualTo(0));
+                    nativeByte = pe.GetByteAtRawAddress((ulong)nativeOffset);
+                    pe.BaseStream.Position = nativeOffset;
+                    pe.BaseStream.WriteByte((byte)(nativeByte ^ 1));
+                    Assert.That(X64UnwindProof.ForApplication(method.AppContext), Is.Null);
+                    break;
                 case "interior-entry": method.AppContext.MethodsByAddress[interior] = [method]; break;
+                case "receiver-slot-name":
+                    var named = (Register)parameterOperands[0];
+                    method.ParameterOperands[0] = new Register(named.Number, "rdx", named.Version);
+                    break;
+                case "receiver-slot-number": method.ParameterOperands[0] = new Register(0, "rcx"); break;
+                case "receiver-slot-version": method.ParameterOperands[0] = ((Register)parameterOperands[0]).Copy(7); break;
+                case "introduced-receiver-local":
+                    method.Locals.Add(new LocalVariable("introducedReceiver", (Register)parameterOperands[0], method.DeclaringType));
+                    break;
+                case "introduced-receiver-read":
+                    var receiver = new LocalVariable("introducedReceiver", (Register)parameterOperands[0], method.DeclaringType);
+                    block.Instructions.Add(new Instruction(999, OpCode.Move, snapshot, receiver));
+                    break;
+                case "missing-projections":
+                    method.PutExtraData(X64AggregateScalarOperandProof.EvidenceKey,
+                        new System.Collections.Generic.List<X64AggregateScalarOperandProof.Evidence>());
+                    break;
                 default: throw new ArgumentOutOfRangeException(nameof(mutation));
             }
             Assert.That(() => IlGenerator.GenerateIl(method, definition),
@@ -141,6 +209,12 @@ public class IlGeneratorAggregateScalarReadTests
         }
         finally
         {
+            if (nativeOffset >= 0)
+            {
+                pe.BaseStream.Position = nativeOffset;
+                pe.BaseStream.WriteByte(nativeByte);
+            }
+            pe.BaseStream.Position = streamPosition;
             component.OverrideFieldType = null;
             component.OverrideOffset = null;
             other.OverrideOffset = null;
@@ -159,6 +233,11 @@ public class IlGeneratorAggregateScalarReadTests
             method.AppContext.MethodsByAddress.Remove(interior);
             method.ParameterLocals.Clear();
             method.ParameterLocals.AddRange(parameterLocals);
+            method.Locals.Clear();
+            method.Locals.AddRange(locals);
+            method.ParameterOperands.Clear();
+            method.ParameterOperands.AddRange(parameterOperands);
+            method.PutExtraData(X64AggregateScalarOperandProof.EvidenceKey, projections);
             graph.Blocks.Clear();
             graph.Blocks.AddRange(blocks);
             for (var index = 0; index < blocks.Length; index++)

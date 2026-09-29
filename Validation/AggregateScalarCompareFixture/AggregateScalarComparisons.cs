@@ -33,5 +33,25 @@ namespace AggregateScalarCompareFixture
         {
             return first.High > second.High;
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int InstanceLowCompare(ScalarPair first, ScalarPair second)
+        {
+            if (first.Low > second.Low)
+                return 1;
+            if (first.Low < second.Low)
+                return -1;
+            return 0;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int InstanceHighCompare(ScalarPair first, ScalarPair second)
+        {
+            if (first.High > second.High)
+                return 1;
+            if (first.High < second.High)
+                return -1;
+            return 0;
+        }
     }
 }

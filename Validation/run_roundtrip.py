@@ -24,6 +24,8 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "scalar-field-comparison",
     "integer-literal-store",
     "aggregate-scalar-compare",
+    "boolean-parameter-class-test",
+    "nested-literal-store",
     "enum-field-array",
     "parameter-class-test",
     "catch-divide", "exception-regions", "explicit-class-cast", "array-access", "array-sequence", "field-array", "field-boolean-array", "field-boolean-array-read", "range-array-read", "constructed-base-boolean-array", "narrow-array", "float-array", "word-array", "reference-array", "boolean-getter", "boolean-getter-metadata", "virtual-string-call", "generic-dispatch", "guarded-sink", "folded-state-constructor", "folded-literal-constructor", "shared-inert-constructor", "float-initializer-constructor", "scalar-wrapper", "scalar-wrapper-cctor", "constructor-thunk-chain", "boolean-parameter-branch", "narrow-test-arithmetic", "byte-mask-parameter", "byte-mask-one", "array-call",

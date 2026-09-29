@@ -89,31 +89,10 @@ internal static class X64ParameterClassTestProof
     {
         try
         {
-            var app = method.AppContext;
-            if (!OrdinaryMethod(method) || app.Binary is not PE pe ||
-                X64UnwindProof.ForApplication(app) is not { } unwind ||
-                shape.TypeInfoSlot <= shape.OnceFlag &&
-                shape.OnceFlag - shape.TypeInfoSlot < 8 ||
-                !X64PeOnceFlagProof.IsInitiallyZero(pe, unwind, shape.OnceFlag) ||
-                !X64MetadataStaticGetterProof.FileBackedWritableData(pe, unwind,
-                    shape.TypeInfoSlot, 8) ||
-                !X64PeOnceFlagProof.IsUnrelocatedRange(pe, unwind,
-                    shape.TypeInfoSlot, 8) ||
-                shape.MetadataInitializer != app.GetOrCreateKeyFunctionAddresses()
-                    .il2cpp_codegen_initialize_runtime_metadata ||
-                !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app,
-                    pe, unwind, shape.MetadataInitializer))
+            if (!OrdinaryMethod(method))
                 return null;
-
-            var target = method.ReturnType;
-            var owner = method.DeclaringType!;
-            var usage = app.LibCpp2IlContext.GetRawTypeGlobalByAddress(
-                shape.TypeInfoSlot);
-            return usage is { Type: MetadataUsageType.TypeInfo, IsValid: true } &&
-                ReferenceEquals(app.ResolveIl2CppType(usage.AsType()), target) &&
-                X64ClassCastLookupProof.SameOrDirectlyReferencedAssembly(
-                    owner.DeclaringAssembly, target.DeclaringAssembly) &&
-                StableClassHierarchy(target) ? target : null;
+            var target = BindTypeInfoTarget(method, shape);
+            return ReferenceEquals(target, method.ReturnType) ? target : null;
         }
         catch (Exception exception) when (exception is ArgumentException or
             InvalidOperationException or IndexOutOfRangeException or OverflowException)
@@ -122,14 +101,45 @@ internal static class X64ParameterClassTestProof
         }
     }
 
-    private static bool OrdinaryMethod(MethodAnalysisContext method)
+    // Both reference and Boolean results test this player-derived target. A
+    // Boolean signature cannot identify the TypeInfo used by the native body.
+    internal static TypeAnalysisContext? BindTypeInfoTarget(MethodAnalysisContext method,
+        Shape shape)
+    {
+        var app = method.AppContext;
+        if (app.Binary is not PE pe ||
+            X64UnwindProof.ForApplication(app) is not { } unwind ||
+            shape.TypeInfoSlot <= shape.OnceFlag && shape.OnceFlag - shape.TypeInfoSlot < 8 ||
+            !X64PeOnceFlagProof.IsInitiallyZero(pe, unwind, shape.OnceFlag) ||
+            !X64MetadataStaticGetterProof.FileBackedWritableData(pe, unwind, shape.TypeInfoSlot, 8) ||
+            !X64PeOnceFlagProof.IsUnrelocatedRange(pe, unwind, shape.TypeInfoSlot, 8) ||
+            shape.MetadataInitializer != app.GetOrCreateKeyFunctionAddresses()
+                .il2cpp_codegen_initialize_runtime_metadata ||
+            !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe, unwind, shape.MetadataInitializer))
+            return null;
+
+        var usage = app.LibCpp2IlContext.GetRawTypeGlobalByAddress(shape.TypeInfoSlot);
+        if (usage is not { Type: MetadataUsageType.TypeInfo, IsValid: true } ||
+            app.ResolveIl2CppType(usage.AsType()) is not { } target ||
+            method.DeclaringType is not { } owner ||
+            !X64ClassCastLookupProof.SameOrDirectlyReferencedAssembly(
+                owner.DeclaringAssembly, target.DeclaringAssembly) ||
+            !StableClassHierarchy(target))
+            return null;
+        return target;
+    }
+
+    internal static bool OrdinaryMethod(MethodAnalysisContext method,
+        bool booleanResult = false)
     {
         var app = method.AppContext;
         if (method.DeclaringType is not { Definition: { GenericContainer: null } } owner ||
             !X64ClassCastLookupProof.PublicOrdinaryClass(owner) ||
             method.Definition is not { GenericContainer: null, parameterCount: 1,
-                RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                RawReturnType: { Type: var returnKind,
                     NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
+            returnKind != (booleanResult ? Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN :
+                Il2CppTypeEnum.IL2CPP_TYPE_CLASS) ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
             definition.InternalParameterData is not [{ RawType:
                 { Type: Il2CppTypeEnum.IL2CPP_TYPE_OBJECT, NumMods: 0,
@@ -150,6 +160,8 @@ internal static class X64ParameterClassTestProof
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
             !ReferenceEquals(method.ReturnType, method.DefaultReturnType) ||
+            booleanResult && !ReferenceEquals(method.ReturnType,
+                app.SystemTypes.SystemBooleanType) ||
             method.UnderlyingPointer == 0)
             return false;
 

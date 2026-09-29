@@ -56,8 +56,10 @@ internal static class RuntimeNullGuardCoalescer
                 return false;
             if (IsProved64BitFieldReadType(ValueType))
                 return StoredValue == null &&
-                       ProvedNative64BitFieldRead(method, Access) is { } fieldRead &&
-                       ValidFieldReceiver(method, fieldRead.ReceiverField);
+                       (Operation.Operands[0] is LocalVariable loaded &&
+                        FieldLoadReceiverProof.HasBoundRead(method, loaded, Operation) ||
+                        ProvedNative64BitFieldRead(method, Access) is { } fieldRead &&
+                        ValidFieldReceiver(method, fieldRead.ReceiverField));
             return UnchangedParameter(method, Receiver, Receiver.Type!);
         }
 
@@ -724,7 +726,8 @@ internal static class RuntimeNullGuardCoalescer
                    ? (nativeInt
                        ? NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, 64)
                        : NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access)) &&
-                     ProvedNative64BitFieldRead(method, access) != null
+                     (ProvedNative64BitFieldRead(method, access) != null ||
+                      HasBoundReferenceFieldRead(method, access, operation))
                    : width != 0 && NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, width));
 
         bool IsProvedLiteralStore(Instruction candidate) =>
@@ -732,6 +735,12 @@ internal static class RuntimeNullGuardCoalescer
             ReferenceEquals(stored, access) &&
             LiteralFieldStoreProof.IsValidFor(method, candidate, access, literal);
     }
+
+    private static bool HasBoundReferenceFieldRead(MethodAnalysisContext method, FieldReference access,
+        Instruction? operation) => method.ControlFlowGraph!.Instructions.Any(candidate =>
+        (operation == null || ReferenceEquals(candidate, operation)) &&
+        candidate.Operands is [LocalVariable loaded, FieldReference source] &&
+        ReferenceEquals(source, access) && FieldLoadReceiverProof.HasBoundRead(method, loaded, candidate));
 
     private static X64Guarded64BitFieldReadProof.Proof? ProvedNative64BitFieldRead(
         MethodAnalysisContext method, FieldReference access)

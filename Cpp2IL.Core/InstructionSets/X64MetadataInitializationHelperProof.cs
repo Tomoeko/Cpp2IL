@@ -214,8 +214,8 @@ internal static partial class X64MetadataInitializationHelperProof
     private static bool ProveClassFromTypeExport(PE pe, X64UnwindProof.Index unwind,
         ulong target)
     {
-        var exported = pe.GetVirtualAddressOfExportedFunctionByName("il2cpp_class_from_type");
-        var alias = pe.GetVirtualAddressOfExportedFunctionByName("il2cpp_class_from_il2cpp_type");
+        var exported = X64PeExportProof.Find(pe, unwind, "il2cpp_class_from_type");
+        var alias = X64PeExportProof.Find(pe, unwind, "il2cpp_class_from_il2cpp_type");
         return exported != 0 && alias == exported &&
                Read(pe, unwind, exported, 2, 7) is { } code &&
                MoveOneToDl(code[0]) && Jump(code[1]) && code[1].NearBranchTarget == target &&
@@ -309,7 +309,7 @@ internal static partial class X64MetadataInitializationHelperProof
                 End: var classInitEnd } ||
             classInitStart != target || classInitEnd <= target)
             return false;
-        var exported = pe.GetVirtualAddressOfExportedFunctionByName("il2cpp_object_new");
+        var exported = X64PeExportProof.Find(pe, unwind, "il2cpp_object_new");
         if (exported == 0 ||
             Read(pe, unwind, exported, 6, 18, allowChainedRegion: true) is not { } api ||
             !Stack(api[0], Mnemonic.Sub, 0x28) || !DirectCall(api[1]) ||
@@ -341,7 +341,7 @@ internal static partial class X64MetadataInitializationHelperProof
     private static bool ProveGetTargetExport(PE pe, X64UnwindProof.Index unwind,
         ulong target)
     {
-        var exported = pe.GetVirtualAddressOfExportedFunctionByName("il2cpp_gchandle_get_target");
+        var exported = X64PeExportProof.Find(pe, unwind, "il2cpp_gchandle_get_target");
         return exported != 0 &&
                Read(pe, unwind, exported, 1, 5) is { } code &&
                Jump(code[0]) && code[0].NearBranchTarget == target &&
@@ -352,7 +352,7 @@ internal static partial class X64MetadataInitializationHelperProof
     private static bool ProveRaiseExport(PE pe, X64UnwindProof.Index unwind,
         ulong target)
     {
-        var exported = pe.GetVirtualAddressOfExportedFunctionByName("il2cpp_raise_exception");
+        var exported = X64PeExportProof.Find(pe, unwind, "il2cpp_raise_exception");
         if (exported == 0 ||
             Read(pe, unwind, exported, 3, 11) is not { } code ||
             !Stack(code[0], Mnemonic.Sub, 0x28) ||
@@ -398,7 +398,8 @@ internal static partial class X64MetadataInitializationHelperProof
                 X64UnwindProof.SpanKind.Unsupported)
                 return null;
         }
-        return result;
+        return unwind.IsUnaffectedByBaseRelocation(address,
+            checked((uint)(result[^1].NextIP - address))) ? result : null;
     }
 
     private static bool TablePointsTo(PE pe, X64UnwindProof.Index unwind, uint tableRva,
@@ -408,6 +409,8 @@ internal static partial class X64MetadataInitializationHelperProof
             unwind.IsWritableFileBackedRva(tableRva))
             return false;
         var tableAddress = unwind.ImageBase + tableRva;
+        if (!unwind.IsUnaffectedByBaseRelocation(tableAddress, 28))
+            return false;
         var first = pe.MapVirtualAddressToRaw(tableAddress, false);
         var last = pe.MapVirtualAddressToRaw(tableAddress + 27, false);
         var raw = pe.GetRawBinaryContent();
@@ -421,8 +424,8 @@ internal static partial class X64MetadataInitializationHelperProof
     private readonly record struct FunctionRecord(uint Start, uint End, uint UnwindRva);
 
     // This exact MSVC switch places the TypeInfo commit in a chain-to-chain
-    // UNW_FLAG_CHAININFO region. The shared unwind index deliberately rejects
-    // nested chains, so validate the two links here before reading that span.
+    // UNW_FLAG_CHAININFO region. Bind both exact tuples as well as the shared
+    // index's independently authenticated handler-free root.
     private static bool ProveNestedCommitUnwind(PE pe, X64UnwindProof.Index unwind,
         ulong rootAddress, ulong directAddress, ulong commitAddress, ulong commitEnd)
     {
@@ -445,6 +448,7 @@ internal static partial class X64MetadataInitializationHelperProof
                 { Kind: X64UnwindProof.SpanKind.HandlerFree, RootStart: var rootStart } ||
             rootStart != rootAddress ||
             !SameRoot(unwind, rootAddress, directAddress, directAddress + 1) ||
+            !SameRoot(unwind, rootAddress, commitAddress, commitEnd) ||
             !TryChain(pe, unwind, direct.UnwindRva, out var directParent,
                 requireNoUnwindCodes: false) || directParent != root ||
             !TryChain(pe, unwind, commit.UnwindRva, out var commitParent,
@@ -472,7 +476,8 @@ internal static partial class X64MetadataInitializationHelperProof
         var size = ReadU32(raw, directory + 4);
         if (rva == 0 || size < 12 || size > 4_000_000 || size % 12 != 0 ||
             rva > uint.MaxValue - size ||
-            !unwind.IsReadableFileBackedRva(rva))
+            !unwind.IsReadableFileBackedRva(rva) ||
+            !unwind.IsUnaffectedByBaseRelocationRva(rva, size))
             return false;
         var start = pe.MapVirtualAddressToRaw(unwind.ImageBase + rva, false);
         var end = pe.MapVirtualAddressToRaw(unwind.ImageBase + rva + size - 1, false);
@@ -513,7 +518,8 @@ internal static partial class X64MetadataInitializationHelperProof
         var raw = pe.GetRawBinaryContent();
         if (at < 0 || at > raw.Length - 16 || (raw[(int)at] & 7) != 1 ||
             raw[(int)at] >> 3 != 4 ||
-            !unwind.IsReadableFileBackedRva(unwindRva))
+            !unwind.IsReadableFileBackedRva(unwindRva) ||
+            !unwind.IsUnaffectedByBaseRelocationRva(unwindRva, 4))
             return false;
         var codeCount = raw[(int)at + 2];
         if (requireNoUnwindCodes && (raw[(int)at + 1] != 0 ||
@@ -524,7 +530,8 @@ internal static partial class X64MetadataInitializationHelperProof
             return false;
         var last = pe.MapVirtualAddressToRaw(address + (uint)chainOffset + 11, false);
         if (last != at + chainOffset + 11 || last >= raw.Length ||
-            !unwind.IsReadableFileBackedRva(unwindRva + (uint)chainOffset + 11))
+            !unwind.IsReadableFileBackedRva(unwindRva + (uint)chainOffset + 11) ||
+            !unwind.IsUnaffectedByBaseRelocationRva(unwindRva, (uint)chainOffset + 12))
             return false;
         var chain = (int)at + chainOffset;
         parent = new(ReadU32(raw, chain), ReadU32(raw, chain + 4),

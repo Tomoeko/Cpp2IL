@@ -16,7 +16,7 @@ internal static class X64ReferenceWriteBarrierProof
     {
         try
         {
-            var exported = pe.GetVirtualAddressOfExportedFunctionByName("il2cpp_gc_wbarrier_set_field");
+            var exported = X64PeExportProof.Find(pe, unwind, "il2cpp_gc_wbarrier_set_field");
             if (exported == 0 ||
                 X64NativeInstructionReader.Read(pe, unwind, exported, 3, 16) is not { } wrapper ||
                 !RegisterMove(wrapper[0], Register.RCX, Register.RDX) ||
@@ -78,6 +78,7 @@ internal static class X64ReferenceWriteBarrierProof
                 return false;
         }
         if (unwind.ClassifySpan(address, body[^1].NextIP).Kind != X64UnwindProof.SpanKind.NoEntry ||
+            !unwind.IsUnaffectedByBaseRelocation(address, checked((uint)(body[^1].NextIP - address))) ||
             !CardMarkerShape(body, out var enabledFlag, out var cardTable) ||
             enabledFlag < unwind.ImageBase || cardTable < unwind.ImageBase ||
             enabledFlag - unwind.ImageBase > uint.MaxValue ||

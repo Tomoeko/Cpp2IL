@@ -471,6 +471,8 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         ConstructorChainRecovery.Run(this);
         DeadCodeEliminator.Run(this);
 
+        ReferenceFieldAddressStoreRecovery.Run(this);
+
         LocalVariables.RemoveUnused(this);
     }
 

@@ -123,6 +123,149 @@ public class X64UnwindProofTests
         Assert.That(X64UnwindProof.Parse(image)!.IsUnaffectedByBaseRelocationRva(0x200C), Is.False);
     }
 
+    [TestCase(0x1FF9)] // Only the last byte of a preceding DIR64 overlaps .pdata.
+    [TestCase(0x2000)]
+    [TestCase(0x202F)] // The entire table, including unrelated records, establishes gaps.
+    [TestCase(0x003C)] // PE header location.
+    [TestCase(0x0120)] // Exception directory location and size.
+    [TestCase(0x01F9)] // Section characteristics and mapping.
+    public void RelocatedDirectoryEvidenceCannotEstablishFunctionsOrAbsentLeaves(int target)
+    {
+        var image = Image();
+        Relocate(image, (uint)target);
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(index.ClassifySpan(ImageBase + 0x1000, ImageBase + 0x1001).Kind,
+                Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+            Assert.That(index.ClassifySpan(ImageBase + 0x1200, ImageBase + 0x1201).Kind,
+                Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+            Assert.That(index.HasFunctionEntryAt(ImageBase + 0x1000, ImageBase + 0x1001), Is.False);
+            Assert.That(index.GetHandler(ImageBase + 0x1000), Is.Null);
+        });
+    }
+
+    [TestCase("unknown-kind")]
+    [TestCase("truncated-block")]
+    [TestCase("self-relocation")]
+    [TestCase("missing-directory-width")]
+    public void UnauthenticatedRelocationTablesCannotEstablishAbsentLeaves(string defect)
+    {
+        var image = Image();
+        Relocate(image, 0x3070);
+        switch (defect)
+        {
+            case "unknown-kind": U16(image, 0x988, 0x3070); break;
+            case "truncated-block": U32(image, 0x984, 14); break;
+            case "self-relocation": Relocate(image, 0x3079); break;
+            case "missing-directory-width": U32(image, 0x104, 5); break;
+        }
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.That(index.ClassifySpan(ImageBase + 0x1200, ImageBase + 0x1201).Kind,
+            Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+        Assert.That(index.IsUnaffectedByBaseRelocationRva(0x1000, 1), Is.False);
+    }
+
+    [TestCase(0x2FF9)] // A preceding DIR64 overlaps the first header byte.
+    [TestCase(0x3000)]
+    [TestCase(0x3004)] // Unwind operation.
+    [TestCase(0x3007)] // Aligned code-array padding is part of the record.
+    public void RelocatedUnwindRecordsRetainOnlyTheirAuthenticatedFunctionBoundary(int target)
+    {
+        var image = Image();
+        Relocate(image, (uint)target);
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(index.ClassifySpan(ImageBase + 0x1000, ImageBase + 0x1001).Kind,
+                Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+            Assert.That(index.HasFunctionEntryAt(ImageBase + 0x1000, ImageBase + 0x1001), Is.True);
+            Assert.That(index.MatchesUnwind(ImageBase + 0x1000, ImageBase + 0x1010,
+                4, 0, new byte[] { 4, 0x42 }), Is.False);
+            Assert.That(index.ClassifySpan(ImageBase + 0x1200, ImageBase + 0x1201).Kind,
+                Is.EqualTo(X64UnwindProof.SpanKind.NoEntry));
+        });
+    }
+
+    [TestCase(0x3000)] // Primary unwind header.
+    [TestCase(0x300C)] // Intermediate save operation.
+    [TestCase(0x301B)] // Last byte of the intermediate chain tuple.
+    [TestCase(0x302C)] // Final chain's unwind RVA.
+    public void ChainedEvidenceRequiresEveryUnwindRecordAndTupleToRemainUnrelocated(int target)
+    {
+        var image = NestedChainImage();
+        Relocate(image, (uint)target);
+        Assert.That(Classify(image, 0x1300, 0x1301).Kind,
+            Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
+    }
+
+    [Test]
+    public void RelocationRangeProofChecksInteriorOverlapsAndExactBoundaries()
+    {
+        var image = Image();
+        Relocate(image, 0x3060, 0x3064, 0x306C); // Overlapping and adjacent spans merge.
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(index.IsUnaffectedByBaseRelocationRva(0x3050, 0x10), Is.True);
+            Assert.That(index.IsUnaffectedByBaseRelocationRva(0x3050, 0x30), Is.False);
+            Assert.That(index.IsUnaffectedByBaseRelocationRva(0x3074, 1), Is.True);
+            Assert.That(index.IsUnaffectedByBaseRelocationRva(0x3073, 1), Is.False);
+            Assert.That(index.IsUnaffectedByBaseRelocationRva(0x3FFF, 2), Is.False);
+            Assert.That(index.IsUnaffectedByBaseRelocationRva(0x1000, 0), Is.False);
+            Assert.That(index.IsUnaffectedByBaseRelocation(ImageBase - 1, 1), Is.False);
+            Assert.That(index.IsUnaffectedByBaseRelocation(ulong.MaxValue, 1), Is.False);
+        });
+    }
+
+    [TestCase(0x3008)] // Immediately after the first record; only its neighbor changes.
+    [TestCase(0x3070)] // Unconsumed data beside the records.
+    public void UnrelatedRelocationsDoNotDiscardAuthenticatedUnwindEvidence(int target)
+    {
+        var image = Image();
+        Relocate(image, (uint)target);
+        Assert.That(Classify(image, 0x1000, 0x1001).Kind,
+            Is.EqualTo(X64UnwindProof.SpanKind.HandlerFree));
+    }
+
+    [TestCase(0x300C)] // Function-info pointer.
+    [TestCase(0x3020)] // Function-info header.
+    [TestCase(0x3028)] // IP-map RVA's final byte.
+    [TestCase(0x3030)] // Compressed unwind map.
+    [TestCase(0x3044)] // Handler-array RVA.
+    [TestCase(0x3051)] // Compressed IP delta.
+    [TestCase(0x3062)] // Catch funclet RVA.
+    [TestCase(0x3066)] // Compressed continuation offset.
+    public void LanguageSpecificMapsRequireEveryConsumedByteToRemainUnrelocated(int target)
+    {
+        var image = Eh4Image();
+        Relocate(image, (uint)target);
+        var index = X64UnwindProof.Parse(image)!;
+        var region = index.GetHandler(ImageBase + 0x1000);
+        Assert.That(region, Is.Not.Null, "The unwind handler RVA remains authenticated.");
+        Assert.That(X64Eh4MapProof.Parse(image, index, region!.Value), Is.Null);
+    }
+
+    [Test]
+    public void AdjacentUnconsumedLanguageDataDoesNotInvalidateTheParsedMap()
+    {
+        var image = Eh4Image();
+        Relocate(image, 0x3067);
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.That(X64Eh4MapProof.Parse(image, index,
+            index.GetHandler(ImageBase + 0x1000)!.Value), Is.Not.Null);
+    }
+
+    [TestCase(0x3005)] // Tail overlap includes the handler RVA.
+    [TestCase(0x3008)]
+    [TestCase(0x300B)]
+    public void RelocatedHandlerRvasCannotEstablishALanguageHandler(int target)
+    {
+        var image = Eh4Image();
+        Relocate(image, (uint)target);
+        Assert.That(X64UnwindProof.Parse(image)!.GetHandler(ImageBase + 0x1000), Is.Null);
+    }
+
     [Test]
     public void MissingRecordsAndInteriorEntriesRemainExplicitForTheCallerProof()
     {
@@ -512,6 +655,21 @@ public class X64UnwindProofTests
         }
         void Record(int at, uint start, uint end, uint unwind)
         { U32(image, at, start); U32(image, at + 4, end); U32(image, at + 8, unwind); }
+    }
+
+    private static void Relocate(byte[] image, params uint[] targets)
+    {
+        // One synthetic block per target also exercises directory-order independence.
+        U32(image, 0x130, 0x3080);
+        U32(image, 0x134, checked((uint)targets.Length * 12));
+        image.AsSpan(0x980).Clear();
+        for (var index = 0; index < targets.Length; index++)
+        {
+            var at = 0x980 + index * 12;
+            U32(image, at, targets[index] & ~0xFFFU);
+            U32(image, at + 4, 12);
+            U16(image, at + 8, (ushort)(0xA000 | targets[index] & 0xFFFU));
+        }
     }
 
     private static void U16(byte[] bytes, int at, ushort value) => BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(at), value);

@@ -24,7 +24,8 @@ internal static class X64NativeLiteralFieldStoreProof
             return false;
         try
         {
-            caller.EnsureRawBytes();
+            if (caller.RawBytes.Length == 0)
+                caller.EnsureRawBytes();
             var body = X86Utils.Iterate(caller).ToArray();
             var native = body.Where(instruction =>
                 instruction.IP == address).ToArray();
@@ -68,9 +69,21 @@ internal static class X64NativeLiteralFieldStoreProof
                 {
                     if (caller.ControlFlowGraph?.Instructions.Where(instruction =>
                             ReferenceEquals(instruction.Destination, access.Local)).ToArray() is not
-                        [{ OpCode: OpCode.Call, NativeAddress: { } call }])
+                        [var origin] || origin.NativeAddress is not { } produced)
                         return false;
-                    producerCall = call;
+                    if (origin.OpCode == OpCode.Call)
+                        producerCall = produced;
+                    else
+                    {
+                        var operations = caller.ControlFlowGraph.Instructions.Where(instruction =>
+                            instruction.NativeAddress == address &&
+                            ReferenceEquals(instruction.Operands.ElementAtOrDefault(0), access)).ToArray();
+                        return operations is [var operation] &&
+                               Analysis.FieldLoadReceiverProof.HasBoundProducer(caller,
+                                   access.Local, origin, operation) &&
+                               X64NativeRegisterAliasProof.IsAliasFromFieldLoad(body,
+                                   address, store.MemoryBase, produced);
+                    }
                 }
                 if (!X64NativeRegisterAliasProof.IsAlias(body, address,
                         store.MemoryBase, receiverRegister, producerCall))

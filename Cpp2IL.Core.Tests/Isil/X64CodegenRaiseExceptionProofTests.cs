@@ -222,9 +222,10 @@ public class X64CodegenRaiseExceptionProofTests
                 var changedApp = Cpp2IlApi.CurrentAppContext!;
                 var changedPe = (PE)changedApp.Binary;
                 var index = X64UnwindProof.ForApplication(changedApp)!;
-                Assert.That(X64NativeInstructionReader.Read(changedPe, index,
-                    proof.NullGuard, 6, 64), Is.EqualTo(nullGuard),
+                Assert.That(DecodeFile(changedPe, proof.NullGuard, 6), Is.EqualTo(nullGuard),
                     "File decoding preserves the guard, but the loader would rewrite overlapping instructions.");
+                Assert.That(X64NativeInstructionReader.Read(changedPe, index,
+                    proof.NullGuard, 6, 64), Is.Null);
                 Assert.That(index.MatchesUnwind(proof.NullGuard, nullGuard[^1].NextIP,
                     4, 0, new byte[] { 4, 0x42 }), Is.True);
                 Assert.That(X86RuntimeNullThrowProof.TryIdentify(changedApp,
@@ -286,8 +287,7 @@ public class X64CodegenRaiseExceptionProofTests
                     var index = X64UnwindProof.ForApplication(relocatedApp)!;
                     Assert.That(X64CodegenRaiseExceptionProof.HasTraceLayout(relocatedApp), Is.True);
                     Assert.That(X64CodegenRaiseExceptionProof.TryProve(proof.Raiser,
-                        (address, count) => X64NativeInstructionReader.Read(relocatedPe,
-                            index, address, count, count * 15),
+                        (address, count) => DecodeFile(relocatedPe, address, count),
                         relocatedPe.GetVirtualAddressOfExportedFunctionByName,
                         regions => X64CodegenRaiseExceptionProof.AllowsUnwind(index, regions)), Is.True,
                         "The relocation leaves the file bytes, export anchor and unwind proof unchanged.");
@@ -305,6 +305,15 @@ public class X64CodegenRaiseExceptionProofTests
             }
         }
         finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    // Decode unchanged file bytes independently of the loaded-byte admission
+    // gate. This keeps the relocation controls distinct from shape mutations.
+    private static Instruction[] DecodeFile(PE pe, ulong address, int count)
+    {
+        var offset = checked((int)pe.MapVirtualAddressToRaw(address, false));
+        return X86Utils.Disassemble(pe.GetRawBinaryContent().Slice(offset, count * 15),
+            address, false).Take(count).ToArray();
     }
 
     private static void AssertTerminalAliasRejected(ApplicationAnalysisContext app,

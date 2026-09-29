@@ -18,11 +18,24 @@ internal static class X64UnwindProof
     internal enum SpanKind { Unsupported, NoEntry, HandlerFree }
     internal readonly record struct SpanClassification(SpanKind Kind, ulong Start, ulong End, ulong RootStart = 0);
     private sealed record CacheEntry(Index? Value);
-    // PE owns the read-only input bytes. Context/metadata overrides do not change this input.
+    // PE exposes a read-only span, but its backing stream can still be written.
+    // Reuse parsed structure only while the consumed input bytes are unchanged.
     private static readonly ConditionalWeakTable<PE, CacheEntry> Cache = new();
 
-    internal static Index? ForApplication(ApplicationAnalysisContext app) => app.Binary is PE { PointerSizeBytes: 8 } pe
-        ? Cache.GetValue(pe, binary => new(Parse(binary.GetRawBinaryContent()))).Value : null;
+    internal static Index? ForApplication(ApplicationAnalysisContext app)
+    {
+        if (app.Binary is not PE { PointerSizeBytes: 8 } pe)
+            return null;
+        return ForBinary(pe);
+    }
+
+    internal static Index? ForBinary(PE pe)
+    {
+        if (pe.PointerSizeBytes != 8)
+            return null;
+        var index = Cache.GetValue(pe, binary => new(Parse(binary.GetRawBinaryContent()))).Value;
+        return index != null && index.HasUnchangedInput(pe.GetRawBinaryContent()) ? index : null;
+    }
 
     internal static Index? Parse(ReadOnlySpan<byte> image)
     {
@@ -33,6 +46,7 @@ internal static class X64UnwindProof
 
     internal readonly record struct Section(uint Rva, uint VirtualSize, uint Raw, uint RawSize, uint Characteristics);
     internal readonly record struct RelocationSpan(uint Start, uint End);
+    internal sealed record InputSnapshot(int Offset, byte[] Bytes);
     internal sealed record Unwind(byte PrologSize, byte FrameRegister, byte[] Codes,
         byte Flags = 0, uint HandlerRva = 0, uint HandlerDataRva = 0,
         uint ChainStart = 0, uint ChainEnd = 0, uint ChainUnwindRva = 0);
@@ -51,18 +65,36 @@ internal static class X64UnwindProof
         private readonly Section[] _sections;
         private readonly Function[] _functions;
         private readonly RelocationSpan[]? _baseRelocations;
+        private readonly bool _functionTableIsStable;
+        private readonly InputSnapshot[]? _inputSnapshots;
 
         internal Index(ulong imageBase, uint imageSize, Section[] sections, Function[] functions,
-            RelocationSpan[]? baseRelocations = null)
+            RelocationSpan[]? baseRelocations = null, bool functionTableIsStable = true,
+            InputSnapshot[]? inputSnapshots = null)
         {
             _imageBase = imageBase;
             _imageSize = imageSize;
             _sections = sections;
             _functions = functions;
             _baseRelocations = baseRelocations;
+            _functionTableIsStable = functionTableIsStable;
+            _inputSnapshots = inputSnapshots;
         }
 
         internal ulong ImageBase => _imageBase;
+
+        // Authenticate only structural evidence, not the complete native image.
+        // Direct synthetic Index controls have no backing input snapshots.
+        internal bool HasUnchangedInput(ReadOnlySpan<byte> image)
+        {
+            if (_inputSnapshots == null)
+                return true;
+            foreach (var snapshot in _inputSnapshots)
+                if (snapshot.Offset < 0 || snapshot.Offset > image.Length - snapshot.Bytes.Length ||
+                    !image.Slice(snapshot.Offset, snapshot.Bytes.Length).SequenceEqual(snapshot.Bytes))
+                    return false;
+            return true;
+        }
 
         internal int MapReadOnlyRva(uint rva, uint length) => rva < _imageSize &&
             _imageBase <= ulong.MaxValue - rva ? MapReadOnlyData(_imageBase + rva, length) : -1;
@@ -107,22 +139,16 @@ internal static class X64UnwindProof
         // File-backed zero bytes may be changed by the PE loader. Only an
         // authenticated relocation directory can establish that a byte is
         // unaffected at a nonpreferred load address.
-        internal bool IsUnaffectedByBaseRelocationRva(uint rva)
-        {
-            if (rva >= _imageSize || _baseRelocations == null)
-                return false;
-            var low = 0;
-            var high = _baseRelocations.Length;
-            while (low < high)
-            {
-                var middle = low + (high - low) / 2;
-                if (_baseRelocations[middle].Start <= rva)
-                    low = middle + 1;
-                else
-                    high = middle;
-            }
-            return low == 0 || rva >= _baseRelocations[low - 1].End;
-        }
+        internal bool IsUnaffectedByBaseRelocationRva(uint rva) =>
+            IsUnaffectedByBaseRelocationRva(rva, 1);
+
+        internal bool IsUnaffectedByBaseRelocationRva(uint rva, uint length) =>
+            length != 0 && (ulong)rva + length <= _imageSize &&
+            IsUnrelocated(_baseRelocations, rva, length);
+
+        internal bool IsUnaffectedByBaseRelocation(ulong address, uint length) =>
+            address >= _imageBase && address - _imageBase < _imageSize &&
+            IsUnaffectedByBaseRelocationRva((uint)(address - _imageBase), length);
 
         // A PE section's virtual tail after its file-backed bytes is zero-initialized.
         // Checking two writable endpoints alone misses gaps and intervening sections.
@@ -140,7 +166,7 @@ internal static class X64UnwindProof
 
         internal SpanClassification ClassifySpan(ulong start, ulong end)
         {
-            if (!TryRange(start, end, out var rva, out var endRva))
+            if (!_functionTableIsStable || !TryRange(start, end, out var rva, out var endRva))
                 return new(SpanKind.Unsupported, 0, 0);
             var index = Find(rva);
             if (index < _functions.Length && _functions[index].Start < endRva)
@@ -161,7 +187,7 @@ internal static class X64UnwindProof
         // only the boundary, never the following function's behavior.
         internal bool HasFunctionEntryAt(ulong start, ulong firstInstructionEnd)
         {
-            if (!TryRange(start, firstInstructionEnd, out var rva, out var endRva))
+            if (!_functionTableIsStable || !TryRange(start, firstInstructionEnd, out var rva, out var endRva))
                 return false;
             var index = Find(rva);
             return index < _functions.Length && _functions[index].Start == rva &&
@@ -170,7 +196,7 @@ internal static class X64UnwindProof
 
         internal HandlerInfo? GetHandler(ulong entry)
         {
-            if (entry == ulong.MaxValue || !TryRange(entry, entry + 1, out var rva, out _))
+            if (!_functionTableIsStable || entry == ulong.MaxValue || !TryRange(entry, entry + 1, out var rva, out _))
                 return null;
             var index = Find(rva);
             if (index >= _functions.Length || _functions[index] is not
@@ -302,6 +328,8 @@ internal static class X64UnwindProof
         private readonly ReadOnlySpan<byte> _image = image;
         private Section[] _sections = [];
         private uint _imageSize;
+        private RelocationSpan[]? _baseRelocations;
+        private readonly List<(int Offset, int Length)> _inputRanges = new();
 
         public Index? Parse()
         {
@@ -343,6 +371,20 @@ internal static class X64UnwindProof
             var table = Map(_sections, tableRva, tableSize, false);
             if (table < 0)
                 return null;
+            // DOS fields locate the PE headers; the remaining header range owns
+            // the optional directories and every section's mapping/permissions.
+            _inputRanges.Add((0, 2));
+            _inputRanges.Add((0x3C, 4));
+            _inputRanges.Add((pe, checked(24 + optionalSize + sectionCount * 40)));
+            _inputRanges.Add((table, checked((int)tableSize)));
+            _baseRelocations = ReadBaseRelocations(optional, optionalSize);
+            // Directory ordering and even an apparent gap depend on every .pdata
+            // record. Loaded bytes must preserve the headers, mapping and table.
+            var headerSize = checked((uint)(sectionStart + sectionCount * 40));
+            if (!IsUnrelocated(_baseRelocations, 0, headerSize) ||
+                !IsUnrelocated(_baseRelocations, tableRva, tableSize))
+                return new Index(imageBase, _imageSize, _sections, [], _baseRelocations,
+                    functionTableIsStable: false, inputSnapshots: CaptureInput());
             var records = new Function[checked((int)(tableSize / 12))];
             var unwind = new Dictionary<uint, Unwind?>();
             uint previousEnd = 0;
@@ -388,8 +430,33 @@ internal static class X64UnwindProof
                 else
                     records[index] = record with { RootStart = current.Start };
             }
-            return new Index(imageBase, _imageSize, _sections, records,
-                ReadBaseRelocations(optional, optionalSize));
+            return new Index(imageBase, _imageSize, _sections, records, _baseRelocations,
+                inputSnapshots: CaptureInput());
+        }
+
+        private InputSnapshot[] CaptureInput()
+        {
+            _inputRanges.Sort((left, right) => left.Offset.CompareTo(right.Offset));
+            var merged = new List<(int Offset, int Length)>();
+            foreach (var range in _inputRanges)
+            {
+                if (merged.Count != 0 && range.Offset <= merged[^1].Offset + merged[^1].Length)
+                {
+                    var previous = merged[^1];
+                    var end = Math.Max(previous.Offset + previous.Length, checked(range.Offset + range.Length));
+                    merged[^1] = (previous.Offset, end - previous.Offset);
+                }
+                else
+                    merged.Add(range);
+            }
+            var snapshots = new InputSnapshot[merged.Count];
+            for (var at = 0; at < merged.Count; at++)
+            {
+                var range = merged[at];
+                snapshots[at] = new InputSnapshot(range.Offset,
+                    _image.Slice(range.Offset, range.Length).ToArray());
+            }
+            return snapshots;
         }
 
         private RelocationSpan[]? ReadBaseRelocations(int optional, ushort optionalSize)
@@ -406,6 +473,7 @@ internal static class X64UnwindProof
             var table = Map(_sections, tableRva, tableSize, false);
             if (table < 0)
                 return null;
+            _inputRanges.Add((table, (int)tableSize));
 
             var spans = new List<RelocationSpan>();
             var offset = 0U;
@@ -442,15 +510,20 @@ internal static class X64UnwindProof
                 else
                     merged.Add(span);
             }
-            return merged.ToArray();
+            var result = merged.ToArray();
+            // A relocation cannot modify the directory that defines this proof.
+            return IsUnrelocated(result, tableRva, tableSize) ? result : null;
         }
 
         private Unwind? ReadUnwind(uint rva)
         {
-            if (rva == 0 || rva % 4 != 0)
+            if (rva == 0 || rva % 4 != 0 || !IsUnrelocated(_baseRelocations, rva, 4))
                 return null;
             var at = Map(_sections, rva, 4, false);
-            if (at < 0 || (_image[at] & 7) != 1)
+            if (at < 0)
+                return null;
+            _inputRanges.Add((at, 4));
+            if ((_image[at] & 7) != 1)
                 return null;
             var flags = (byte)(_image[at] >> 3);
             if (flags > 4)
@@ -458,19 +531,23 @@ internal static class X64UnwindProof
             var prolog = _image[at + 1];
             var count = _image[at + 2];
             var frame = _image[at + 3];
-            if (Map(_sections, rva, (uint)(4 + (count + 1) / 2 * 4), false) != at)
+            var recordSize = (uint)(4 + (count + 1) / 2 * 4);
+            if (Map(_sections, rva, recordSize, false) != at ||
+                !IsUnrelocated(_baseRelocations, rva, recordSize))
                 return null;
+            _inputRanges.Add((at, (int)recordSize));
             var codes = _image.Slice(at + 4, count * 2).ToArray();
             if (!ValidCodes(codes, prolog, frame, flags == 4))
                 return null;
             if (flags == 0)
                 return new(prolog, frame, codes);
-            var handlerField = checked(rva + (uint)(4 + (count + 1) / 2 * 4));
+            var handlerField = checked(rva + recordSize);
             if (flags == 4)
             {
                 var chainField = Map(_sections, handlerField, 12, false);
-                if (chainField < 0)
+                if (chainField < 0 || !IsUnrelocated(_baseRelocations, handlerField, 12))
                     return null;
+                _inputRanges.Add((chainField, 12));
                 var chainStart = U32(chainField);
                 var chainEnd = U32(chainField + 4);
                 var chainUnwindRva = U32(chainField + 8);
@@ -480,8 +557,9 @@ internal static class X64UnwindProof
                     ChainEnd: chainEnd, ChainUnwindRva: chainUnwindRva);
             }
             var fieldOffset = Map(_sections, handlerField, 5, false);
-            if (fieldOffset < 0)
+            if (fieldOffset < 0 || !IsUnrelocated(_baseRelocations, handlerField, 4))
                 return null;
+            _inputRanges.Add((fieldOffset, 4));
             var handlerRva = U32(fieldOffset);
             if (handlerRva == 0 || Map(_sections, handlerRva, 1, true) < 0)
                 return null;
@@ -492,6 +570,26 @@ internal static class X64UnwindProof
         private ushort U16(int offset) => BinaryPrimitives.ReadUInt16LittleEndian(_image.Slice(offset, 2));
         private uint U32(int offset) => BinaryPrimitives.ReadUInt32LittleEndian(_image.Slice(offset, 4));
         private ulong U64(int offset) => BinaryPrimitives.ReadUInt64LittleEndian(_image.Slice(offset, 8));
+    }
+
+    private static bool IsUnrelocated(RelocationSpan[]? spans, uint rva, uint length)
+    {
+        if (spans == null || length == 0 || (ulong)rva + length > uint.MaxValue)
+            return false;
+        var end = (ulong)rva + length;
+        var low = 0;
+        var high = spans.Length;
+        // Find the first relocation whose end exceeds the requested start.
+        // Merged spans have both increasing starts and increasing ends.
+        while (low < high)
+        {
+            var middle = low + (high - low) / 2;
+            if (spans[middle].End <= rva)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+        return low == spans.Length || spans[low].Start >= end;
     }
 
     // Validate the supported version1 encoding without guessing unknown unwind ops.

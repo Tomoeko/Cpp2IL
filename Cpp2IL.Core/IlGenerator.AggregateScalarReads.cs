@@ -15,11 +15,25 @@ public static partial class IlGenerator
 {
     internal static void ValidateAggregateScalarReads(MethodAnalysisContext method)
     {
+        var receiverEvidence = X86UnusedReceiverProof.GetAggregateEvidence(method);
         if (X64AggregateScalarOperandProof.GetEvidence(method) is not { Count: > 0 } recorded)
+        {
+            if (receiverEvidence != null)
+                throw AggregateScalarFailure("the unused receiver lost its component projections");
             return;
+        }
         if (method.ControlFlowGraph is not { } graph)
             throw AggregateScalarFailure("the typed graph is missing");
         var instructions = graph.Instructions;
+        if (receiverEvidence != null &&
+            (!X86UnusedReceiverProof.IsUnusedForAggregate(method, receiverEvidence.Receiver) ||
+             method.Locals.Any(local => local.IsThis || local.Register.Name == receiverEvidence.Receiver.Name ||
+                 local.Register.Number == receiverEvidence.Receiver.Number) ||
+             method.ParameterLocals.Any(local => local.IsThis) ||
+             instructions.SelectMany(OperandEffects.ReadLocals).Any(local => local.IsThis ||
+                 local.Register.Name == receiverEvidence.Receiver.Name ||
+                 local.Register.Number == receiverEvidence.Receiver.Number)))
+            throw AggregateScalarFailure("the original unused receiver or complete native control flow changed");
         if (graph.EntryBlock.Instructions.Count != 0 || graph.ExitBlock.Instructions.Count != 0 ||
             graph.Blocks.SelectMany(block => block.Instructions).Count() != instructions.Count)
             throw AggregateScalarFailure("the graph has detached or duplicated operations");

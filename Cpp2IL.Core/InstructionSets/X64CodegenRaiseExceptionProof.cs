@@ -32,7 +32,7 @@ internal static class X64CodegenRaiseExceptionProof
         {
             return HasTraceLayout(app) && TryProve(target,
                 (address, count) => X64NativeInstructionReader.Read(pe, unwind, address, count, count * 15),
-                pe.GetVirtualAddressOfExportedFunctionByName,
+                name => X64PeExportProof.Find(pe, unwind, name),
                 regions => AllowsUnwind(unwind, regions) && regions.All(region =>
                     X64PeOnceFlagProof.IsUnrelocatedRange(pe, unwind, region.Start,
                         checked((uint)(region.End - region.Start)))));

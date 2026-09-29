@@ -68,7 +68,8 @@ internal static class LiteralFieldStoreProof
         if (definitions is not [var origin] ||
             graph.FindBlockByInstruction(origin) is not { } producerBlock ||
             graph.FindBlockByInstruction(operation) is not { } storeBlock ||
-            !CallResultNullGuardProof.HasBoundProducer(method, receiver, origin))
+            !(CallResultNullGuardProof.HasBoundProducer(method, receiver, origin) ||
+              FieldLoadReceiverProof.HasBoundProducer(method, receiver, origin, operation)))
             return false;
         return ReferenceEquals(producerBlock, storeBlock)
             ? producerBlock.Instructions.IndexOf(origin) < storeBlock.Instructions.IndexOf(operation)

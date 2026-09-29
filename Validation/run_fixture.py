@@ -109,6 +109,8 @@ import reference_tail_call
 import enum_return_tail
 import explicit_class_cast
 import parameter_class_test
+import boolean_parameter_class_test
+import nested_literal_store
 import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
@@ -170,7 +172,7 @@ PROFILES = {
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
     "reference-array": {"assembly": "ReferenceArrayFixture", "source": VALIDATION / "ReferenceArrayFixture", "methods": 3},
     "boolean-literal-store": {"assembly": "BooleanLiteralStoreFixture", "source": VALIDATION / "BooleanLiteralStoreFixture", "methods": 6},
-    "aggregate-scalar-compare": {"assembly": "AggregateScalarCompareFixture", "source": VALIDATION / "AggregateScalarCompareFixture", "methods": 5},
+    "aggregate-scalar-compare": {"assembly": "AggregateScalarCompareFixture", "source": VALIDATION / "AggregateScalarCompareFixture", "methods": 7},
     "integer-literal-store": {"assembly": "IntegerLiteralStoreFixture", "source": VALIDATION / "IntegerLiteralStoreFixture", "methods": 10},
     "scalar-field-comparison": {"assembly": "ScalarFieldComparisonFixture", "source": VALIDATION / "ScalarFieldComparisonFixture", "methods": 3},
     "parameter-boolean-array-store": {"assembly": "ParameterBooleanArrayStoreFixture", "source": VALIDATION / "ParameterBooleanArrayStoreFixture", "methods": 10},
@@ -244,6 +246,8 @@ PROFILES = {
     "reference-tail-call": {"assembly": "ReferenceTailCallFixture", "source": VALIDATION / "ReferenceTailCallFixture", "methods": 2},
     "enum-return-tail": {"assembly": "EnumReturnTailFixture", "source": VALIDATION / "EnumReturnTailFixture", "methods": 4},
     "explicit-class-cast": {"assembly": "ExplicitClassCastFixture", "source": VALIDATION / "ExplicitClassCastFixture", "methods": 1},
+    "boolean-parameter-class-test": {"assembly": "BooleanParameterClassTestFixture", "source": VALIDATION / "BooleanParameterClassTestFixture", "methods": 1},
+    "nested-literal-store": {"assembly": "NestedLiteralStoreFixture", "source": VALIDATION / "NestedLiteralStoreFixture", "methods": 9},
     "parameter-class-test": {"assembly": "ParameterClassTestFixture", "source": VALIDATION / "ParameterClassTestFixture", "methods": 1},
     "boolean-tail-field-call": {"assembly": "BooleanTailFieldCallFixture",
                                 "source": VALIDATION / "BooleanTailFieldCallFixture", "methods": 6},
@@ -507,6 +511,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return enum_return_tail.verify(path, stage, VERSION)
     if profile == "explicit-class-cast":
         return explicit_class_cast.verify(path, stage, VERSION)
+    if profile == "boolean-parameter-class-test":
+        return boolean_parameter_class_test.verify(path, stage, VERSION)
+    if profile == "nested-literal-store":
+        return nested_literal_store.verify(path, stage, VERSION)
     if profile == "parameter-class-test":
         return parameter_class_test.verify(path, stage, VERSION)
     if profile == "boolean-tail-field-call":

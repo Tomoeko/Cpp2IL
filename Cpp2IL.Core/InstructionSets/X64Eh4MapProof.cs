@@ -255,7 +255,8 @@ internal static class X64Eh4MapProof
         {
             value = 0;
             var offset = _index.MapReadOnlyData(_address, 1);
-            if (offset < 0 || offset >= _image.Length) return false;
+            if (offset < 0 || offset >= _image.Length ||
+                !_index.IsUnaffectedByBaseRelocation(_address, 1)) return false;
             value = _image[offset];
             _address++;
             return true;
@@ -265,7 +266,8 @@ internal static class X64Eh4MapProof
         {
             value = 0;
             var offset = _index.MapReadOnlyData(_address, 4);
-            if (offset < 0 || offset > _image.Length - 4) return false;
+            if (offset < 0 || offset > _image.Length - 4 ||
+                !_index.IsUnaffectedByBaseRelocation(_address, 4)) return false;
             value = BinaryPrimitives.ReadUInt32LittleEndian(_image.Slice(offset, 4));
             _address += 4;
             return true;

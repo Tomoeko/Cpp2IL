@@ -12,10 +12,36 @@ internal static class X64NativeRegisterAliasProof
 {
     internal static bool IsAlias(IReadOnlyList<Instruction> body, ulong useAddress,
         Register useRegister, Register entryRegister, ulong? resultCall = null)
+        => IsAliasCore(body, useAddress, useRegister, entryRegister, resultCall,
+            resultCall == null ? null : Register.RAX, requireCall: resultCall != null);
+
+    // The caller must bind this load's memory operand to unchanged field metadata
+    // and independently prove its base. A field is captured here once; another
+    // load of the same address is not the same snapshot after intervening effects.
+    internal static bool IsAliasFromFieldLoad(IReadOnlyList<Instruction> body,
+        ulong useAddress, Register useRegister, ulong loadAddress)
+    {
+        var sources = body.Where(instruction => instruction.IP == loadAddress).ToArray();
+        if (sources is not [{ Code: Code.Mov_r64_rm64, Op0Kind: OpKind.Register,
+                Op1Kind: OpKind.Memory } load] ||
+            load.Op0Register is < Register.RAX or > Register.R15 ||
+            load.Op0Register == Register.RSP || load.MemoryBase == Register.RSP ||
+            load.MemoryBase is < Register.RAX or > Register.R15 ||
+            load.MemoryIndex != Register.None || load.MemorySize.GetSize() != 8 ||
+            load.HasLockPrefix || load.HasRepPrefix || load.HasRepnePrefix ||
+            load.SegmentPrefix != Register.None)
+            return false;
+        return IsAliasCore(body, useAddress, useRegister, Register.None,
+            loadAddress, load.Op0Register, requireCall: false);
+    }
+
+    private static bool IsAliasCore(IReadOnlyList<Instruction> body, ulong useAddress,
+        Register useRegister, Register entryRegister, ulong? definitionAddress,
+        Register? definitionRegister, bool requireCall)
     {
         if (body.Count is 0 or > 512 || useRegister == Register.RSP ||
             useRegister is < Register.RAX or > Register.R15 ||
-            resultCall == null && entryRegister is < Register.RAX or > Register.R15)
+            definitionAddress == null && entryRegister is < Register.RAX or > Register.R15)
             return false;
         var addresses = new Dictionary<ulong, int>();
         for (var index = 0; index < body.Count; index++)
@@ -26,9 +52,9 @@ internal static class X64NativeRegisterAliasProof
                 return false;
             addresses.Add(body[index].IP, index);
         }
-        if (!addresses.TryGetValue(useAddress, out var use) || resultCall is { } call &&
-            (!addresses.TryGetValue(call, out var source) ||
-             body[source].Code != Code.Call_rel32_64))
+        if (!addresses.TryGetValue(useAddress, out var use) || definitionAddress is { } definition &&
+            (!addresses.TryGetValue(definition, out var source) ||
+             requireCall && body[source].Code != Code.Call_rel32_64))
             return false;
 
         var predecessors = Enumerable.Range(0, body.Count).Select(_ => new List<int>()).ToArray();
@@ -89,7 +115,7 @@ internal static class X64NativeRegisterAliasProof
             if (register == Register.RSP)
                 return false;
             if (index == 0)
-                return resultCall == null && register == entryRegister &&
+                return definitionAddress == null && register == entryRegister &&
                        !predecessors[0].Any(reachable.Contains);
             var key = (index, register);
             if (memo.TryGetValue(key, out var proved))
@@ -106,7 +132,7 @@ internal static class X64NativeRegisterAliasProof
         bool After(int index, Register register)
         {
             var native = body[index];
-            if (native.IP == resultCall && register == Register.RAX)
+            if (native.IP == definitionAddress && register == definitionRegister)
                 return true;
             if (native.FlowControl is FlowControl.Call or FlowControl.IndirectCall &&
                 register is Register.RAX or Register.RCX or Register.RDX or
