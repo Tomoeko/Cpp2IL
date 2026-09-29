@@ -5,6 +5,7 @@ import argparse
 from contextlib import contextmanager
 import alias_ambiguity
 import array_access
+import array_read_increment
 import array_sequence
 import array_call
 import boolean_parameter_branch
@@ -90,6 +91,8 @@ import nested_flag_setter
 import reference_null
 import reference_field_null
 import reference_store
+import object_reference_store
+import string_reference_store
 import runtime_cast_concat
 import static_literal_concat
 import throw_only
@@ -122,6 +125,7 @@ import guarded_scalar_accessor
 import ordered_generic_tail_field
 import enum_integer_conversion
 import closed_generic_storage
+import closed_generic_guarded_call
 import dynamic_virtual_dispatch
 import open_generic_early_field
 import open_generic_prefix_operations
@@ -157,6 +161,8 @@ PROFILES = {
     "catch-divide": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "CatchDivideFixture", "methods": 1},
     "exception-regions": {"assembly": "ExceptionRegionFixture", "source": VALIDATION / "ExceptionRegionFixture", "methods": 2},
     "array-access": {"assembly": "ArrayAccessFixture", "source": VALIDATION / "ArrayAccessFixture", "methods": 8},
+    "array-read-increment": {"assembly": "ArrayReadIncrementFixture",
+                             "source": VALIDATION / "ArrayReadIncrementFixture", "methods": 1},
     "array-sequence": {"assembly": "ArraySequenceFixture", "source": VALIDATION / "ArraySequenceFixture", "methods": 2},
     "enum-field-array": {"assembly": "EnumFieldArrayFixture", "source": VALIDATION / "EnumFieldArrayFixture", "methods": 8},
     "field-array": {"assembly": "FieldArrayFixture", "source": VALIDATION / "FieldArrayFixture", "methods": 4},
@@ -219,6 +225,8 @@ PROFILES = {
                                 "source": VALIDATION / "EnumIntegerConversionFixture", "methods": 8},
     "closed-generic-storage": {"assembly": "ClosedGenericStorageFixture",
                                "source": VALIDATION / "ClosedGenericStorageFixture", "methods": 6},
+    "closed-generic-guarded-call": {"assembly": "ClosedGenericGuardedCallFixture",
+                                    "source": VALIDATION / "ClosedGenericGuardedCallFixture", "methods": 4},
     "dynamic-virtual-dispatch": {"assembly": "DynamicVirtualDispatchFixture",
                                 "source": VALIDATION / "DynamicVirtualDispatchFixture", "methods": 10},
     "open-generic-early-field": {"assembly": "OpenGenericEarlyFieldFixture",
@@ -251,6 +259,10 @@ PROFILES = {
     "sequential-null-guards": {"assembly": "SequentialNullGuardFixture", "source": VALIDATION / "SequentialNullGuardFixture", "methods": 3},
     "call-result-null-guards": {"assembly": "CallResultNullGuardFixture", "source": VALIDATION / "CallResultNullGuardFixture", "methods": 13},
     "reference-store": {"assembly": "ReferenceStoreFixture", "source": VALIDATION / "ReferenceStoreFixture", "methods": 2},
+    "object-reference-store": {"assembly": "ObjectReferenceStoreFixture",
+                               "source": VALIDATION / "ObjectReferenceStoreFixture", "methods": 2},
+    "string-reference-store": {"assembly": "StringReferenceStoreFixture",
+                               "source": VALIDATION / "StringReferenceStoreFixture", "methods": 2},
     "external-references": {"assembly": "ExternalReferenceFixture", "source": VALIDATION / "ExternalReferenceFixture", "methods": 1},
     "numerics-reference": {"assembly": "NumericsReferenceFixture", "source": VALIDATION / "NumericsReferenceFixture", "methods": 1},
     "iterator-factory": {"assembly": "IteratorFactoryFixture", "source": VALIDATION / "IteratorFactoryFixture", "methods": 8},
@@ -387,6 +399,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return exception_regions.verify(path, stage, VERSION)
     if profile == "array-access":
         return array_access.verify(path, stage, VERSION)
+    if profile == "array-read-increment":
+        return array_read_increment.verify(path, stage, VERSION)
     if profile == "array-sequence":
         return array_sequence.verify(path, stage, VERSION)
     if profile == "enum-field-array":
@@ -501,6 +515,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return call_result_null_guard.verify(path, stage, VERSION)
     if profile == "reference-store":
         return reference_store.verify(path, stage, VERSION)
+    if profile == "object-reference-store":
+        return object_reference_store.verify(path, stage, VERSION)
+    if profile == "string-reference-store":
+        return string_reference_store.verify(path, stage, VERSION)
     if profile == "external-references":
         return external_references.verify(path, stage, VERSION)
     if profile == "numerics-reference":
@@ -581,6 +599,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return enum_integer_conversion.verify(path, stage, VERSION)
     if profile == "closed-generic-storage":
         return closed_generic_storage.verify(path, stage, VERSION)
+    if profile == "closed-generic-guarded-call":
+        return closed_generic_guarded_call.verify(path, stage, VERSION)
     if profile == "dynamic-virtual-dispatch":
         return dynamic_virtual_dispatch.verify(path, stage, VERSION)
     if profile == "open-generic-early-field":

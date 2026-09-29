@@ -76,19 +76,25 @@ internal static class X64ReferenceFieldStoreProof
             owner.OverrideParameterType != null || value.OverrideParameterType != null ||
             ownerDefinition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
-            valueDefinition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+            valueDefinition.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS or
+                Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or Il2CppTypeEnum.IL2CPP_TYPE_STRING,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
             owner.ParameterType is not { Definition: { GenericContainer: null } } box ||
             !ISIL.NullCheckedCall.IsReferenceClass(box) || box.IsGenericInstance ||
             box.GenericParameters.Count != 0 || box.Attributes != box.DefaultAttributes ||
-            !ReferenceEquals(value.ParameterType, box))
+            !(valueDefinition.RawType.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS &&
+              ReferenceEquals(value.ParameterType, box) ||
+              valueDefinition.RawType.Type == Il2CppTypeEnum.IL2CPP_TYPE_OBJECT &&
+              ReferenceEquals(value.ParameterType, app.SystemTypes.SystemObjectType) ||
+              valueDefinition.RawType.Type == Il2CppTypeEnum.IL2CPP_TYPE_STRING &&
+              ReferenceEquals(value.ParameterType, app.SystemTypes.SystemStringType)))
             return null;
 
         var candidates = box.Fields.Where(field => !field.IsStatic &&
             field.Offset == shape.FieldOffset &&
             ReferenceEquals(field.FieldType, value.ParameterType) &&
-            field.BackingData?.Field.RawFieldType is { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
-                NumMods: 0, Byref: 0, Pinned: 0 }).ToArray();
+            field.BackingData?.Field.RawFieldType is { NumMods: 0, Byref: 0, Pinned: 0 } rawField &&
+            rawField.Type == valueDefinition.RawType.Type).ToArray();
         if (candidates is not [{ } storedField] ||
             storedField.Name != storedField.DefaultName ||
             (storedField.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) != 0 ||

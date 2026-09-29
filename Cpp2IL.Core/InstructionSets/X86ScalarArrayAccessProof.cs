@@ -17,6 +17,7 @@ namespace Cpp2IL.Core.InstructionSets;
 /// <summary>
 /// Closed exact-profile array access: prove both runtime exception exits and the only
 /// successful memory access before replacing the diamond with managed ldelem or stelem.
+/// One Int32 read shape also proves an immediately following 32-bit increment.
 /// Reference elements are read only; a reference store needs a separate covariance and
 /// write-barrier proof. This does not generalize to unchecked native array access.
 /// </summary>
@@ -93,16 +94,21 @@ internal static class X86ScalarArrayAccessProof
         var isReferenceElement = ISIL.NullCheckedCall.IsReferenceClass(element);
         var elementSize = isByteElement ? 1 : isWordElement ? 2 :
             isWideElement || isReferenceElement ? 8 : 4;
+        var increment = !isWrite && ReferenceEquals(element, app.SystemTypes.SystemInt32Type) &&
+                        body.Count > 12 && body[7].Code == Code.Inc_rm32;
+        var exitOffset = increment ? 1 : 0;
         bool? signedWordRead = isWordElement
             ? ReferenceEquals(element, app.SystemTypes.SystemInt16Type) : null;
-        var nullCall = body[9];
-        var boundsCall = body[11];
-        if (!TryProveShape(body, isWrite, elementSize, isSingleElement, signedWordRead) ||
+        var nullCall = body[9 + exitOffset];
+        var boundsCall = body[11 + exitOffset];
+        if (!TryProveShape(body, isWrite, elementSize, isSingleElement, signedWordRead, increment) ||
+            increment && !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context) ||
             isReferenceElement && !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(context,
                 requireUniqueBinding: false) ||
             RuntimeNullGuardCoalescer.HasOutputOptions(context))
             return null;
-        var provedRegion = TryCompleteTrapTerminatedRegion(app, context.UnderlyingPointer, body);
+        var provedRegion = TryCompleteTrapTerminatedRegion(app, context.UnderlyingPointer, body,
+            11 + exitOffset);
         if (provedRegion == null ||
             X86RuntimeNullThrowProof.TryIdentify(app, nullCall.NearBranchTarget) == null ||
             !X86RuntimeBoundsThrowProof.TryIdentify(app, boundsCall.NearBranchTarget) ||
@@ -122,6 +128,14 @@ internal static class X86ScalarArrayAccessProof
                 new(1, ISIL.OpCode.Return),
             ];
         var result = new IsilRegister(null, "array_read_result");
+        if (increment)
+            return
+            [
+                new(0, ISIL.OpCode.Move, result, memory),
+                new(1, ISIL.OpCode.Add, result, result, new ISIL.Immediate(1))
+                    { IntegerBitWidth = 32 },
+                new(2, ISIL.OpCode.Return, result),
+            ];
         return
         [
             new(0, ISIL.OpCode.Move, result, memory),
@@ -229,13 +243,15 @@ internal static class X86ScalarArrayAccessProof
     }
 
     internal static bool TryProveShape(IReadOnlyList<Instruction> body, bool isWrite, int elementSize = 4,
-        bool isSingleElement = false, bool? signedWordRead = null)
+        bool isSingleElement = false, bool? signedWordRead = null, bool increment = false)
     {
-        if (body.Count < 12 || elementSize is not (1 or 2 or 4 or 8) ||
+        var exitOffset = increment ? 1 : 0;
+        if (body.Count < 12 + exitOffset || elementSize is not (1 or 2 or 4 or 8) ||
             isSingleElement && elementSize != 4 || signedWordRead.HasValue != (elementSize == 2) ||
-            signedWordRead.HasValue && (isWrite || isSingleElement))
+            signedWordRead.HasValue && (isWrite || isSingleElement) ||
+            increment && (isWrite || isSingleElement || elementSize != 4))
             return false;
-        for (var i = 0; i < 12; i++)
+        for (var i = 0; i < 12 + exitOffset; i++)
         {
             var instruction = body[i];
             if (instruction.IsInvalid || instruction.CodeSize != CodeSize.Code64 ||
@@ -251,19 +267,21 @@ internal static class X86ScalarArrayAccessProof
         return Stack(body[0], Mnemonic.Sub, 0x28) &&
                Registers(body[1], Mnemonic.Test, Register.RCX, Register.RCX) &&
                nullBranch.Mnemonic == Mnemonic.Je && nullBranch.Op0Kind == OpKind.NearBranch64 &&
-               nullBranch.NearBranchTarget == body[9].IP &&
+               nullBranch.NearBranchTarget == body[9 + exitOffset].IP &&
                length.Mnemonic == Mnemonic.Cmp && length.OpCount == 2 &&
                length.Op0Kind == OpKind.Register && length.Op0Register == Register.EDX &&
                Memory(length, 1, Register.RCX, Register.None, 1, 0x18, 4) &&
                boundsBranch.Mnemonic == Mnemonic.Jae && boundsBranch.Op0Kind == OpKind.NearBranch64 &&
-               boundsBranch.NearBranchTarget == body[11].IP &&
+               boundsBranch.NearBranchTarget == body[11 + exitOffset].IP &&
                body[5].Code == Code.Movsxd_r64_rm32 &&
                Registers(body[5], Mnemonic.Movsxd, Register.RAX, Register.EDX) &&
                SuccessfulElementAccess(element, isWrite, elementSize, isSingleElement, signedWordRead) &&
-               Stack(body[7], Mnemonic.Add, 0x28) &&
-               body[8].Code == Code.Retnq && body[8].OpCount == 0 &&
-               Call(body[9]) && body[10].Code == Code.Int3 &&
-               Call(body[11]);
+               (!increment || body[7].Code == Code.Inc_rm32 && body[7].OpCount == 1 &&
+                   body[7].Op0Kind == OpKind.Register && body[7].Op0Register == Register.EAX) &&
+               Stack(body[7 + exitOffset], Mnemonic.Add, 0x28) &&
+               body[8 + exitOffset].Code == Code.Retnq && body[8 + exitOffset].OpCount == 0 &&
+               Call(body[9 + exitOffset]) && body[10 + exitOffset].Code == Code.Int3 &&
+               Call(body[11 + exitOffset]);
     }
 
     private static bool Registers(Instruction i, Mnemonic mnemonic, Register destination, Register source)
