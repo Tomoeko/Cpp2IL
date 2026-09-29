@@ -13,6 +13,13 @@ public static partial class IlGenerator
         {
             if (instruction.OpCode == OpCode.RuntimeNullThrow)
                 throw new DecompilerException("Uncoalesced target runtime null guard has no faithful standalone managed emission");
+            if (instruction.CallSemantics == CallSemantics.VirtualDispatch)
+            {
+                if (!instruction.IsCall || !ScalarVirtualDispatchRecovery.TryGetBoundCall(context, instruction, out var virtualTarget) ||
+                    !ReferenceEquals(virtualTarget.AppContext, context.AppContext))
+                    throw new DecompilerException("Virtual invocation marker requires a complete current native and managed slot proof");
+                continue;
+            }
             if (instruction.CallSemantics == CallSemantics.Direct)
                 continue;
             if (instruction.CallSemantics != CallSemantics.NullCheckedInstance || !instruction.IsCall ||

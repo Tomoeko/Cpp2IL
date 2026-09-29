@@ -6,4 +6,6 @@ public enum CallSemantics
     Direct,
     // A proved runtime receiver guard must remain a null check after native guard coalescing.
     NullCheckedInstance,
+    // A proved vtable invocation must retain runtime override selection and its receiver check.
+    VirtualDispatch,
 }

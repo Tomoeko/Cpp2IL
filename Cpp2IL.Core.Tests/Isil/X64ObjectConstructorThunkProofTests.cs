@@ -14,6 +14,40 @@ public class X64ObjectConstructorThunkProofTests
 {
     [Test]
     [NonParallelizable]
+    public void ExactPlayerBindsFieldfulOpenGenericEmptyConstructor()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_OPEN_GENERIC_EARLY_FIELD_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_OPEN_GENERIC_EARLY_FIELD_INPUT to the neutral synthetic player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata", "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            var owner = app.GetAssemblyByName("OpenGenericEarlyFieldFixture")!.Types
+                .Single(type => type.Name == "OpenEarlyState`1");
+            Assert.That(owner.Fields.Count(field => !field.IsStatic), Is.EqualTo(4));
+            var constructor = owner.Methods.Single(method => method.Name == ".ctor");
+            constructor.EnsureRawBytes();
+            var native = X86Utils.Iterate(constructor).ToArray();
+            var bound = X64ObjectConstructorThunkProof.Find(constructor, native);
+            Assert.That(bound, Is.Not.Null);
+            Assert.That(bound!.DeclaringType, Is.SameAs(app.SystemTypes.SystemObjectType));
+
+            var changed = native.ToArray();
+            changed[1].NearBranch64 += 16;
+            Assert.That(X64ObjectConstructorThunkProof.Find(constructor, changed), Is.Null);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    [NonParallelizable]
     public void ExactPlayerBoundsEmptyThunkBeforeUnsupportedNeighborUnwind()
     {
         var directory = Environment.GetEnvironmentVariable(

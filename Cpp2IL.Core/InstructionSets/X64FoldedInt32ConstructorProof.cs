@@ -29,14 +29,16 @@ internal static class X64FoldedInt32ConstructorProof
         if (Find(method, decoded) is not { } proof)
             return null;
 
+        ClosedGenericStorageRecovery.MarkIfConsumed(method, proof.State);
+
         var receiver = new ISIL.Register(null, "rcx");
         return
         [
-            new(0, ISIL.OpCode.CallVoid, proof.BaseConstructor, receiver),
+            new(0, ISIL.OpCode.CallVoid, proof.BaseConstructor, receiver) { NativeAddress = decoded[6].IP },
             new(1, ISIL.OpCode.Move,
                 new ISIL.MemoryOperand(receiver, null, proof.State.Offset),
-                new ISIL.Register(null, "rdx")),
-            new(2, ISIL.OpCode.Return),
+                new ISIL.Register(null, "rdx")) { NativeAddress = decoded[7].IP },
+            new(2, ISIL.OpCode.Return) { NativeAddress = decoded[11].IP },
         ];
     }
 
@@ -61,7 +63,8 @@ internal static class X64FoldedInt32ConstructorProof
                 aliases.Count(candidate => ReferenceEquals(candidate, method)) != 1)
                 return null;
 
-            method.EnsureRawBytes();
+            if (method.RawBytes.Length == 0)
+                method.EnsureRawBytes();
             var start = method.UnderlyingPointer;
             var span = unwind.ClassifySpan(start, start + 1);
             if (span.Kind != X64UnwindProof.SpanKind.HandlerFree ||
@@ -75,8 +78,8 @@ internal static class X64FoldedInt32ConstructorProof
                     app.MethodsByAddress.ContainsKey(start + (ulong)offset)))
                 return null;
 
-            // RawBytes is refreshed by EnsureRawBytes. Bind the supplied decode to
-            // those authenticated PE bytes, including the estimated suffix.
+            // Retain a nonempty analysis cache so a changed cache is rejected.
+            // Bind the supplied decode to authenticated PE bytes, including the estimated suffix.
             var exactBody = X86Utils.Iterate(method.RawBytes.AsSpan().Slice(0, 36),
                 start, false);
             if (exactBody.Count != 12 ||
@@ -165,6 +168,7 @@ internal static class X64FoldedInt32ConstructorProof
         var last = pe.MapVirtualAddressToRaw(end - 1, false);
         var bytes = pe.GetRawBinaryContent();
         return first >= 0 && last == first + 35 &&
+               unwind.IsUnaffectedByBaseRelocation(start, 36) &&
                first <= bytes.Length - 36 &&
                method.RawBytes.AsSpan().Slice(0, 36)
                    .SequenceEqual(bytes.Slice((int)first, 36)) &&

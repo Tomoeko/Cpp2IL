@@ -67,6 +67,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var addresses = new List<ulong>();
 
         var nativeInstructions = X86Utils.Iterate(context).ToArray();
+        if (X64ScalarVirtualDispatchProof.TryLift(context) is { } scalarVirtualDispatch)
+            return scalarVirtualDispatch; // Bind the complete indirect invocation before classifying its native exit.
         var noReturnCalls = new HashSet<ulong>();
         if (X64ObjectConstructorThunkProof.TryLift(context, nativeInstructions) is { } objectConstructorThunk)
             return objectConstructorThunk; // The complete tail thunk binds the shared Object constructor target.
@@ -110,6 +112,10 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return byRefIntegerSplit; // Bind both 32-bit stores and their order to the original byref arguments.
         if (X64GuardedScalarAccessorProof.TryLift(context) is { } guardedScalarAccessor)
             return guardedScalarAccessor; // Preserve the captured receiver and its proved accessible scalar accessor.
+        if (X64EnumIntegerConversionProof.TryLift(context) is { } enumIntegerConversion)
+            return enumIntegerConversion; // Preserve the enum argument through the proved native and return conversions.
+        if (OpenGenericEarlyFieldProof.TryLift(context) is { } openGenericEarlyField)
+            return openGenericEarlyField; // Complete leaf binds an early field before unknown generic storage.
         if (X86DirectBooleanFieldGetterProof.TryLift(context, nativeInstructions) is { } booleanGetter)
             return booleanGetter; // The complete leaf binds a byte read to this method's own Boolean field.
         if (X64NarrowScalarFieldGetterProof.TryLift(context) is { } narrowScalarGetter)

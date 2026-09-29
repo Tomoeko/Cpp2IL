@@ -100,6 +100,16 @@ internal static class X64ObjectConstructorThunkProof
             decoded[1].NextIP < start || decoded[1].NextIP - start != 7)
             return false;
 
+        // The native MethodDef span can be exactly seven bytes or run into
+        // padding and a neighbor. In both cases, authenticate the complete
+        // consumed thunk against the current executable PE and cached bytes.
+        if (start > ulong.MaxValue - 7 ||
+            unwind.ClassifySpan(start, start + 7).Kind != X64UnwindProof.SpanKind.NoEntry ||
+            !unwind.IsUnaffectedByBaseRelocation(start, 7) ||
+            !X64AncestorConstructorThunkProof.FileBackedExecutable(pe, unwind,
+                method.RawBytes.AsSpan().Slice(0, 7), start))
+            return false;
+
         if (method.RawBytes.Length == 7)
         {
             if (decoded.Count != 2)
@@ -193,7 +203,7 @@ internal static class X64ObjectConstructorThunkProof
         owner.Name == owner.DefaultName && owner.Namespace == owner.DefaultNamespace &&
         !owner.IsGenericInstance &&
         (owner.Definition.GenericContainer == null && owner.GenericParameters.Count == 0 ||
-         HasFieldlessGenericObjectOwner(owner, app)) &&
+         HasGenericObjectOwner(owner, app)) &&
         owner.BaseType is { } baseType && NullCheckedCall.IsReferenceClass(baseType) &&
         !RuntimeNullGuardCoalescer.HasOutputOptions(method) &&
         HasUnchangedConstructorBinding(method, owner, app) &&
@@ -219,18 +229,18 @@ internal static class X64ObjectConstructorThunkProof
                aliases.Count(candidate => ReferenceEquals(candidate, method)) == 1;
     }
 
-    private static bool HasFieldlessGenericObjectOwner(TypeAnalysisContext owner,
+    private static bool HasGenericObjectOwner(TypeAnalysisContext owner,
         ApplicationAnalysisContext app) =>
-        owner.Definition is { GenericContainer: not null, HasCctor: false,
+        owner.Definition is { GenericContainer: { } container, HasCctor: false,
             PackingSizeIsDefault: true, ClassSizeIsDefault: true } &&
+        !container.isGenericMethod && ReferenceEquals(container.TypeOwner, owner.Definition) &&
+        owner.GenericParameters.Count == container.genericParameterCount &&
         owner.GenericParameters.Count > 0 &&
         ReferenceEquals(owner.BaseType, app.SystemTypes.SystemObjectType) &&
         ReferenceEquals(owner.BaseType, owner.DefaultBaseType) &&
         owner.InterfaceContexts.Count == 0 &&
         owner.Methods.Count(candidate => candidate.Name == ".ctor") == 1 &&
-        owner.Methods.All(candidate => candidate.Name != ".cctor") &&
-        owner.Fields.All(field => field.Attributes == field.DefaultAttributes &&
-            (field.IsStatic || (field.Attributes & FieldAttributes.Literal) != 0));
+        owner.Methods.All(candidate => candidate.Name != ".cctor");
 
     private static bool FileBacked(PE pe, ulong start, ulong end)
     {

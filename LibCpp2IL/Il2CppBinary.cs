@@ -48,6 +48,13 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     private Dictionary<string, Il2CppCodeGenModule> _codeGenModulesByName = new(); //24.2+
     private Dictionary<Il2CppVariableWidthIndex<Il2CppMethodDefinition>, ulong> _genericMethodDictionary = new();
     private readonly Dictionary<ulong, Il2CppType> _typesByAddress = new();
+    private readonly Dictionary<Il2CppType, ulong> _typeAddresses = new(new RegisteredTypeIdentityComparer());
+
+    private sealed class RegisteredTypeIdentityComparer : IEqualityComparer<Il2CppType>
+    {
+        public bool Equals(Il2CppType? first, Il2CppType? second) => ReferenceEquals(first, second);
+        public int GetHashCode(Il2CppType type) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(type);
+    }
 
     public abstract long RawLength { get; }
 
@@ -175,6 +182,10 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
         {
             _types[i] = ReadReadableAtVirtualAddress<Il2CppType>(typePtrs[i]);
             _typesByAddress[typePtrs[i]] = _types[i];
+            if (_typeAddresses.TryGetValue(_types[i], out var previous) && previous != typePtrs[i])
+                _typeAddresses[_types[i]] = 0; // An ambiguous identity must not authenticate an arbitrary address.
+            else
+                _typeAddresses[_types[i]] = typePtrs[i];
         }
 
         InBinaryMetadataSize += GetNumBytesReadSinceLastCallAndClear();
@@ -425,6 +436,9 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
     public Il2CppType GetIl2CppTypeFromPointer(ulong pointer)
         => _typesByAddress[pointer];
+
+    public bool TryGetTypeVirtualAddress(Il2CppType type, out ulong address)
+        => _typeAddresses.TryGetValue(type, out address) && address != 0;
 
     public int GetFieldOffsetFromIndex(Il2CppVariableWidthIndex<Il2CppTypeDefinition> typeIndex, int fieldIndexInType, Il2CppVariableWidthIndex<Il2CppFieldDefinition> fieldIndex, bool isValueType, bool isStatic)
     {

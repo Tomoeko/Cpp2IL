@@ -17,14 +17,15 @@ public class Instruction : IOperand
     /// <summary>Native integer operand width in bits; zero means unspecified. This is not the width of a Boolean result.</summary>
     public int IntegerBitWidth { get; set; }
 
-    /// <summary>Direct call, or an instance call retaining a proved runtime receiver check.</summary>
+    /// <summary>Direct invocation, proved receiver checking, or proved dynamic dispatch.</summary>
     public CallSemantics CallSemantics
     {
         get;
         set
         {
-            if (value != CallSemantics.Direct && (value != CallSemantics.NullCheckedInstance || !IsCall))
-                throw new InvalidOperationException("Only a managed call can retain a runtime null-check marker");
+            if (value != CallSemantics.Direct &&
+                (!IsCall || value is not (CallSemantics.NullCheckedInstance or CallSemantics.VirtualDispatch)))
+                throw new InvalidOperationException("Only a managed call can retain proved invocation semantics");
             field = value;
         }
     }
@@ -37,7 +38,7 @@ public class Instruction : IOperand
             if (field == value)
                 return;
             if (CallSemantics != CallSemantics.Direct && value is not (OpCode.Call or OpCode.CallVoid))
-                throw new InvalidOperationException("A null-checked call cannot lose its invocation semantics");
+                throw new InvalidOperationException("A managed call cannot lose its proved invocation semantics");
 
             field = value;
             ResetSources();

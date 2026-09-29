@@ -40,8 +40,8 @@ public class OrderedGenericTailFieldFixtureTests
             var access = new FieldReference(value, receiver, value.Offset);
             Assert.That(later.FieldType, Is.InstanceOf<GenericInstanceTypeAnalysisContext>());
             Assert.That(later.FieldType.IsValueType, Is.True);
-            Assert.That(TypeSizes.UnboxedSize(later.FieldType, app.Binary.PointerSizeBytes), Is.Zero,
-                "This control must actually have an unavailable projected generic extent.");
+            Assert.That(TypeSizes.UnboxedSize(later.FieldType, app.Binary.PointerSizeBytes), Is.EqualTo(16),
+                "The original closed integer substitution now has independently proved sequential storage.");
             Assert.That(later.Offset, Is.GreaterThanOrEqualTo(value.Offset + 4));
             Assert.That(NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, 32), Is.True);
             constructor.EnsureRawBytes();

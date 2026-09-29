@@ -5,6 +5,7 @@ using Cpp2IL.Core.Extensions;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.Il2CppApiFunctions;
 using Cpp2IL.Core.ISIL;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 using LibCpp2IL;
@@ -126,11 +127,22 @@ public static class MetadataResolver
                     if (genericOwner.GenericArguments.Any(a => a.IsValueType))
                         continue;
 
-                    field = GenericInstanceFieldLayout.FindFieldAtOffset(genericOwner.GenericType, memory.Addend);
+                    field = OpenGenericEarlyFieldProof.TryResolve(method, instruction, memory, genericOwner) ??
+                            OpenGenericPrefixFieldLayoutProof.TryResolve(method, instruction, memory, genericOwner, i);
+                    // An open constructed receiver has no player-backed generic
+                    // instantiation layout. The target needs a native site proof;
+                    // the closed-original and secondary-profile paths retain
+                    // their independent layout rules.
+                    if (field == null && (genericOwner.OriginalRawType != null ||
+                                          !X86RuntimeNullThrowProof.IsSupportedProfile(method.AppContext)))
+                        field = GenericInstanceFieldLayout.FindFieldAtOffset(genericOwner, memory.Addend);
                 }
                 else if (staticOwner == null && owner.GenericParameters.Count > 0)
                 {
-                    field = GenericInstanceFieldLayout.FindFieldAtOffset(owner, memory.Addend);
+                    field = OpenGenericEarlyFieldProof.TryResolve(method, instruction, memory, owner) ??
+                            OpenGenericPrefixFieldLayoutProof.TryResolve(method, instruction, memory, owner, i);
+                    if (field == null && !X86RuntimeNullThrowProof.IsSupportedProfile(method.AppContext))
+                        field = GenericInstanceFieldLayout.FindFieldAtOffset(owner, memory.Addend);
                 }
                 else
                 {

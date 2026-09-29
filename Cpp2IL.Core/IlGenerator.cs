@@ -74,6 +74,10 @@ public static partial class IlGenerator
     public static void GenerateIl(MethodAnalysisContext context, MethodDefinition definition)
     {
         ValidateGuardedScalarAccessors(context);
+        ValidateClosedGenericStorage(context);
+        ValidateOpenGenericEarlyFields(context);
+        ValidateOpenGenericPrefixFields(context);
+        ValidateScalarVirtualDispatch(context);
         ValidateCallSemantics(context);
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
@@ -86,6 +90,7 @@ public static partial class IlGenerator
         ValidateWideFieldLow32Reads(context);
         ValidateSmallAggregateFieldGetters(context);
         ValidateByRefIntegerSplits(context);
+        ValidateEnumIntegerConversions(context);
         ValidateEnumFieldArrayReads(context);
         ValidateParameterBooleanArrayStores(context);
         ValidateFloatingFieldReads(context);
@@ -443,7 +448,7 @@ public static partial class IlGenerator
                 if (instruction.Operands[0] is not MethodAnalysisContext targetMethod)
                     throw new DecompilerException($"Call target is unresolved: {instruction.Operands[0]}");
 
-                if (instruction.CallSemantics == CallSemantics.NullCheckedInstance)
+                if (instruction.CallSemantics is CallSemantics.NullCheckedInstance or CallSemantics.VirtualDispatch)
                     ValidateNullCheckedParameterTypes(instruction, locals);
 
                 var importedMethod = targetMethod.ToMethodDescriptor();
@@ -474,7 +479,7 @@ public static partial class IlGenerator
                         throw new DecompilerException($"Call argument {i} is unresolved");
                 }
 
-                instructions.Add(instruction.CallSemantics == CallSemantics.NullCheckedInstance
+                instructions.Add(instruction.CallSemantics is CallSemantics.NullCheckedInstance or CallSemantics.VirtualDispatch
                     ? CilOpCodes.Callvirt : CilOpCodes.Call, importedMethod);
 
                 // the lifter's guess at whether the callee returns anything can disagree with the

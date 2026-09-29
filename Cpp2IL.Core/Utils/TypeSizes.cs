@@ -1,4 +1,5 @@
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.Analysis;
 
 namespace Cpp2IL.Core.Utils;
 
@@ -8,6 +9,8 @@ public static class TypeSizes
     // don't know (no definition, e.g. an open generic).
     public static long UnboxedSize(TypeAnalysisContext type, int pointerSize)
     {
+        if (type is GenericInstanceTypeAnalysisContext constructed)
+            return pointerSize == 8 ? ClosedGenericValueLayoutProof.Find(constructed)?.Size ?? 0 : 0;
         var header = 2L * pointerSize;
 
         if (type.Definition?.RawSizes is { instance_size: var boxed } && boxed > header)

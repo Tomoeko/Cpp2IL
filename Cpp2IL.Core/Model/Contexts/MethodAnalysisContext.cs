@@ -479,7 +479,11 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         SmallAggregateFieldGetterRecovery.Run(this);
         ByRefIntegerSplitRecovery.Run(this);
         GuardedScalarAccessorRecovery.Run(this);
+        EnumIntegerConversionRecovery.Run(this);
+        ClosedGenericStorageRecovery.Run(this);
+        ScalarVirtualDispatchRecovery.Run(this);
         FinalInterfaceBooleanFieldGetterRecovery.Run(this);
+        OpenGenericPrefixFieldLayoutProof.Run(this);
 
         LocalVariables.RemoveUnused(this);
     }

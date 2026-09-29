@@ -65,18 +65,20 @@ internal static class X64UnwindProof
         private readonly Section[] _sections;
         private readonly Function[] _functions;
         private readonly RelocationSpan[]? _baseRelocations;
+        private readonly RelocationSpan[]? _rawBaseRelocations;
         private readonly bool _functionTableIsStable;
         private readonly InputSnapshot[]? _inputSnapshots;
 
         internal Index(ulong imageBase, uint imageSize, Section[] sections, Function[] functions,
             RelocationSpan[]? baseRelocations = null, bool functionTableIsStable = true,
-            InputSnapshot[]? inputSnapshots = null)
+            InputSnapshot[]? inputSnapshots = null, RelocationSpan[]? rawBaseRelocations = null)
         {
             _imageBase = imageBase;
             _imageSize = imageSize;
             _sections = sections;
             _functions = functions;
             _baseRelocations = baseRelocations;
+            _rawBaseRelocations = rawBaseRelocations;
             _functionTableIsStable = functionTableIsStable;
             _inputSnapshots = inputSnapshots;
         }
@@ -149,6 +151,32 @@ internal static class X64UnwindProof
         internal bool IsUnaffectedByBaseRelocation(ulong address, uint length) =>
             address >= _imageBase && address - _imageBase < _imageSize &&
             IsUnaffectedByBaseRelocationRva((uint)(address - _imageBase), length);
+
+        // Absolute metadata pointers require rebasing in the supported relocatable image.
+        // Merged ranges cannot establish pointer rebasing: duplicate or overlapping
+        // DIR64 entries apply the image delta twice or modify a neighboring pointer.
+        internal bool HasCanonicalPointerRelocation(ulong address)
+        {
+            if (address < _imageBase || address - _imageBase > uint.MaxValue - 8 ||
+                address - _imageBase + 8 > _imageSize)
+                return false;
+            var rva = (uint)(address - _imageBase);
+            if (_rawBaseRelocations == null)
+                return false;
+            var low = 0;
+            var high = _rawBaseRelocations.Length;
+            while (low < high)
+            {
+                var middle = low + (high - low) / 2;
+                if (_rawBaseRelocations[middle].End <= rva)
+                    low = middle + 1;
+                else
+                    high = middle;
+            }
+            return low < _rawBaseRelocations.Length &&
+                   _rawBaseRelocations[low] == new RelocationSpan(rva, rva + 8) &&
+                   (low + 1 == _rawBaseRelocations.Length || _rawBaseRelocations[low + 1].Start >= rva + 8);
+        }
 
         // A PE section's virtual tail after its file-backed bytes is zero-initialized.
         // Checking two writable endpoints alone misses gaps and intervening sections.
@@ -329,6 +357,7 @@ internal static class X64UnwindProof
         private Section[] _sections = [];
         private uint _imageSize;
         private RelocationSpan[]? _baseRelocations;
+        private RelocationSpan[]? _rawBaseRelocations;
         private readonly List<(int Offset, int Length)> _inputRanges = new();
 
         public Index? Parse()
@@ -384,7 +413,7 @@ internal static class X64UnwindProof
             if (!IsUnrelocated(_baseRelocations, 0, headerSize) ||
                 !IsUnrelocated(_baseRelocations, tableRva, tableSize))
                 return new Index(imageBase, _imageSize, _sections, [], _baseRelocations,
-                    functionTableIsStable: false, inputSnapshots: CaptureInput());
+                    functionTableIsStable: false, inputSnapshots: CaptureInput(), rawBaseRelocations: _rawBaseRelocations);
             var records = new Function[checked((int)(tableSize / 12))];
             var unwind = new Dictionary<uint, Unwind?>();
             uint previousEnd = 0;
@@ -431,7 +460,7 @@ internal static class X64UnwindProof
                     records[index] = record with { RootStart = current.Start };
             }
             return new Index(imageBase, _imageSize, _sections, records, _baseRelocations,
-                inputSnapshots: CaptureInput());
+                inputSnapshots: CaptureInput(), rawBaseRelocations: _rawBaseRelocations);
         }
 
         private InputSnapshot[] CaptureInput()
@@ -467,7 +496,10 @@ internal static class X64UnwindProof
             var tableRva = U32(optional + 152);
             var tableSize = U32(optional + 156);
             if (tableRva == 0 && tableSize == 0)
+            {
+                _rawBaseRelocations = [];
                 return [];
+            }
             if (tableRva == 0 || tableSize < 8 || tableSize > int.MaxValue)
                 return null;
             var table = Map(_sections, tableRva, tableSize, false);
@@ -512,7 +544,10 @@ internal static class X64UnwindProof
             }
             var result = merged.ToArray();
             // A relocation cannot modify the directory that defines this proof.
-            return IsUnrelocated(result, tableRva, tableSize) ? result : null;
+            if (!IsUnrelocated(result, tableRva, tableSize))
+                return null;
+            _rawBaseRelocations = spans.ToArray();
+            return result;
         }
 
         private Unwind? ReadUnwind(uint rva)

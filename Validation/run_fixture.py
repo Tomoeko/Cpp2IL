@@ -120,6 +120,11 @@ import wide_field_low32
 import byref_integer_halves
 import guarded_scalar_accessor
 import ordered_generic_tail_field
+import enum_integer_conversion
+import closed_generic_storage
+import dynamic_virtual_dispatch
+import open_generic_early_field
+import open_generic_prefix_operations
 import nested_literal_store
 import boolean_tail_field_call
 import call_result_boolean_store
@@ -210,6 +215,16 @@ PROFILES = {
                                 "source": VALIDATION / "GuardedScalarAccessorFixture", "methods": 7},
     "ordered-generic-tail-field": {"assembly": "OrderedGenericTailFieldFixture",
                                   "source": VALIDATION / "OrderedGenericTailFieldFixture", "methods": 2},
+    "enum-integer-conversion": {"assembly": "EnumIntegerConversionFixture",
+                                "source": VALIDATION / "EnumIntegerConversionFixture", "methods": 8},
+    "closed-generic-storage": {"assembly": "ClosedGenericStorageFixture",
+                               "source": VALIDATION / "ClosedGenericStorageFixture", "methods": 6},
+    "dynamic-virtual-dispatch": {"assembly": "DynamicVirtualDispatchFixture",
+                                "source": VALIDATION / "DynamicVirtualDispatchFixture", "methods": 10},
+    "open-generic-early-field": {"assembly": "OpenGenericEarlyFieldFixture",
+                                 "source": VALIDATION / "OpenGenericEarlyFieldFixture", "methods": 4},
+    "open-generic-prefix-operations": {"assembly": "OpenGenericPrefixOperationsFixture",
+                                       "source": VALIDATION / "OpenGenericPrefixOperationsFixture", "methods": 2},
     "guarded-sink": {"assembly": "GuardedSinkFixture", "source": VALIDATION / "GuardedSinkFixture", "methods": 3},
     "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
     "folded-literal-constructor": {"assembly": "FoldedLiteralConstructorFixture", "source": VALIDATION / "FoldedLiteralConstructorFixture", "methods": 3},
@@ -562,6 +577,16 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return byref_integer_halves.verify(path, stage, VERSION)
     if profile == "guarded-scalar-accessor":
         return guarded_scalar_accessor.verify(path, stage, VERSION)
+    if profile == "enum-integer-conversion":
+        return enum_integer_conversion.verify(path, stage, VERSION)
+    if profile == "closed-generic-storage":
+        return closed_generic_storage.verify(path, stage, VERSION)
+    if profile == "dynamic-virtual-dispatch":
+        return dynamic_virtual_dispatch.verify(path, stage, VERSION)
+    if profile == "open-generic-early-field":
+        return open_generic_early_field.verify(path, stage, VERSION)
+    if profile == "open-generic-prefix-operations":
+        return open_generic_prefix_operations.verify(path, stage, VERSION)
     if profile == "ordered-generic-tail-field":
         return ordered_generic_tail_field.verify(path, stage, VERSION)
     if profile == "nested-literal-store":

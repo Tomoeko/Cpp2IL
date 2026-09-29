@@ -218,6 +218,53 @@ public class X64UnwindProofTests
         });
     }
 
+    [TestCase("none", false)]
+    [TestCase("exact", true)]
+    [TestCase("adjacent", true)]
+    [TestCase("unrelated", false)]
+    [TestCase("duplicate", false)]
+    [TestCase("partial-before", false)]
+    [TestCase("partial-after", false)]
+    [TestCase("hidden-overlap", false)]
+    [TestCase("overlap-before", false)]
+    public void PointerRelocationPreservesWholeSlotsExactlyOnce(string scenario, bool expected)
+    {
+        var image = Image();
+        uint[] targets = scenario switch
+        {
+            "none" => [],
+            "exact" => [0x3060],
+            "adjacent" => [0x3058, 0x3060, 0x3068],
+            "unrelated" => [0x3040],
+            "duplicate" => [0x3060, 0x3060],
+            "partial-before" => [0x305C],
+            "partial-after" => [0x3064],
+            "hidden-overlap" => [0x3060, 0x3064],
+            "overlap-before" => [0x305C, 0x3060],
+            _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
+        };
+        if (targets.Length != 0)
+            Relocate(image, targets);
+        var index = X64UnwindProof.Parse(image)!;
+        Assert.That(index.HasCanonicalPointerRelocation(ImageBase + 0x3060), Is.EqualTo(expected));
+        if (targets.Length != 0 && scenario != "unrelated")
+            Assert.That(index.IsUnaffectedByBaseRelocationRva(0x3060, 8), Is.False,
+                "An intersecting relocation is safe only through the exact pointer-slot proof.");
+    }
+
+    [Test]
+    public void PointerRelocationCannotAuthenticateAnOutOfImageOrOverflowingSlot()
+    {
+        var index = X64UnwindProof.Parse(Image())!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(index.HasCanonicalPointerRelocation(ImageBase - 1), Is.False);
+            Assert.That(index.HasCanonicalPointerRelocation(ImageBase + 0x3FF9), Is.False);
+            Assert.That(index.HasCanonicalPointerRelocation(ImageBase + 0x4000), Is.False);
+            Assert.That(index.HasCanonicalPointerRelocation(ulong.MaxValue), Is.False);
+        });
+    }
+
     [TestCase(0x3008)] // Immediately after the first record; only its neighbor changes.
     [TestCase(0x3070)] // Unconsumed data beside the records.
     public void UnrelatedRelocationsDoNotDiscardAuthenticatedUnwindEvidence(int target)

@@ -10,6 +10,14 @@ namespace Cpp2IL.Core.Model.Contexts;
 
 public class GenericInstanceTypeAnalysisContext : ReferencedTypeAnalysisContext
 {
+    // Only instances resolved from registered player metadata have a storage witness.
+    internal Il2CppType? OriginalRawType { get; }
+    private readonly (ulong Data, uint Bits, uint Attrs, Il2CppTypeEnum Kind, uint Mods, uint Byref, uint Pinned, uint ValueType)? _originalRawFacts;
+
+    internal bool HasUnchangedOriginalRawType => OriginalRawType is { Data: not null } raw &&
+        _originalRawFacts == (raw.Datapoint, raw.Bits, raw.Attrs, raw.Type, raw.NumMods, raw.Byref, raw.Pinned, raw.ValueType) &&
+        raw.Data.Dummy == raw.Datapoint;
+
     public TypeAnalysisContext GenericType { get; }
 
     public List<TypeAnalysisContext> GenericArguments { get; } = [];
@@ -47,6 +55,8 @@ public class GenericInstanceTypeAnalysisContext : ReferencedTypeAnalysisContext
 
     private GenericInstanceTypeAnalysisContext(Il2CppType rawType, ApplicationAnalysisContext context) : base(context.ResolveContextForAssembly(rawType.GetGenericClass().TypeDefinition.DeclaringAssembly!))
     {
+        OriginalRawType = rawType;
+        _originalRawFacts = (rawType.Datapoint, rawType.Bits, rawType.Attrs, rawType.Type, rawType.NumMods, rawType.Byref, rawType.Pinned, rawType.ValueType);
         var underConstruction = _underConstruction ??= new();
         underConstruction[(context, rawType)] = this;
         try

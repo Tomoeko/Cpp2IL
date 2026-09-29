@@ -391,11 +391,17 @@ internal static class X64IteratorFactoryProof
             !app.MethodsByAddress.TryGetValue(target, out var aliases) ||
             !aliases.Contains(constructor))
             return false;
-        constructor.EnsureRawBytes();
+        if (constructor.RawBytes.Length == 0)
+            constructor.EnsureRawBytes();
         var body = X86Utils.Iterate(constructor).ToArray();
+        var offset = pe.MapVirtualAddressToRaw(target, false);
+        var image = pe.GetRawBinaryContent();
         return constructor.RawBytes.Length == 3 && body is
                    [{ Code: Code.Retnq_imm16, Immediate16: 0 }] &&
                FileBacked(pe, target, target + 3) &&
+               offset >= 0 && offset <= image.Length - 3 &&
+               constructor.RawBytes.AsSpan().SequenceEqual(image.Slice(checked((int)offset), 3)) &&
+               unwind.IsUnaffectedByBaseRelocation(target, 3) &&
                unwind.ClassifySpan(target, target + 3) is
                    { Kind: X64UnwindProof.SpanKind.NoEntry };
     }
