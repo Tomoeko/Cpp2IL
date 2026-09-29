@@ -80,6 +80,8 @@ public static partial class IlGenerator
         ValidateComposedReferenceFieldStore(context);
         ValidateReferenceFieldAddressStores(context);
         ValidateNarrowScalarFieldGetters(context);
+        ValidateFinalInterfaceBooleanFieldGetters(context);
+        ValidateIntegerTruncations(context);
         ValidateEnumFieldArrayReads(context);
         ValidateParameterBooleanArrayStores(context);
         ValidateFloatingFieldReads(context);

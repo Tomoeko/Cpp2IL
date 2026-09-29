@@ -28,6 +28,8 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "sealed-parameter-class-test",
     "guarded-array-length",
     "narrow-scalar-getter",
+    "final-interface-boolean-getter",
+    "integer-truncation",
     "nested-literal-store",
     "enum-field-array",
     "parameter-class-test",

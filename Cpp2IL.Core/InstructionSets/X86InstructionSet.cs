@@ -100,6 +100,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return composedReferenceStore; // Preserve the increment, source read, and null-guarded field write in native order.
         if (X86ByteThresholdReturnProof.TryLift(context, nativeInstructions) is { } byteThreshold)
             return byteThreshold; // The complete leaf proves one unsigned byte-field predicate.
+        if (X64FinalInterfaceBooleanFieldGetterProof.TryLift(context) is { } finalInterfaceGetter)
+            return finalInterfaceGetter; // Final interface slots and the complete own-field leaf are bound together.
         if (X86DirectBooleanFieldGetterProof.TryLift(context, nativeInstructions) is { } booleanGetter)
             return booleanGetter; // The complete leaf binds a byte read to this method's own Boolean field.
         if (X64NarrowScalarFieldGetterProof.TryLift(context) is { } narrowScalarGetter)

@@ -35,6 +35,37 @@ internal static class X64NativeRegisterAliasProof
             loadAddress, load.Op0Register, requireCall: false);
     }
 
+    // The typed caller separately authenticates the original operand and count.
+    // This proves that the complete shifted value, including its high bits,
+    // reaches a later use on every native entry path without a partial write.
+    internal static bool IsAliasFromIntegerShift(IReadOnlyList<Instruction> body,
+        ulong useAddress, Register useRegister, ulong shiftAddress)
+    {
+        if (body.Where(instruction => instruction.IP == shiftAddress).ToArray() is not [var shift] ||
+            shift.Code is not (Code.Shr_rm64_imm8 or Code.Sar_rm64_imm8) ||
+            shift.Op0Kind != OpKind.Register || shift.Op1Kind != OpKind.Immediate8 ||
+            shift.Op0Register is < Register.RAX or > Register.R15 || shift.Op0Register == Register.RSP ||
+            shift.Immediate8 is 0 or > 63 || shift.HasLockPrefix || shift.HasRepPrefix || shift.HasRepnePrefix ||
+            shift.SegmentPrefix != Register.None)
+            return false;
+        return IsAliasCore(body, useAddress, useRegister, Register.None,
+            shiftAddress, shift.Op0Register, requireCall: false);
+    }
+
+    internal static bool IsAliasFromIntegerTruncation(IReadOnlyList<Instruction> body,
+        ulong useAddress, Register useRegister, ulong moveAddress)
+    {
+        if (body.Where(instruction => instruction.IP == moveAddress).ToArray() is not [var move] ||
+            move.Code is not (Code.Mov_r32_rm32 or Code.Mov_rm32_r32) ||
+            move.Op0Kind != OpKind.Register || move.Op1Kind != OpKind.Register ||
+            move.Op0Register.GetSize() != 4 || move.Op1Register.GetSize() != 4 ||
+            move.Op0Register.GetFullRegister() == Register.RSP || move.Op1Register.GetFullRegister() == Register.RSP ||
+            move.HasLockPrefix || move.HasRepPrefix || move.HasRepnePrefix || move.SegmentPrefix != Register.None)
+            return false;
+        return IsAliasCore(body, useAddress, useRegister, Register.None,
+            moveAddress, move.Op0Register.GetFullRegister(), requireCall: false);
+    }
+
     private static bool IsAliasCore(IReadOnlyList<Instruction> body, ulong useAddress,
         Register useRegister, Register entryRegister, ulong? definitionAddress,
         Register? definitionRegister, bool requireCall)

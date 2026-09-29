@@ -39,6 +39,16 @@ internal static class X86DirectBooleanFieldGetterProof
 
     internal static FieldAnalysisContext? Find(MethodAnalysisContext method,
         IReadOnlyList<Instruction> body)
+        => Find(method, body, false);
+
+    // The final-interface route supplies its own closed dispatch proof and final
+    // emission binding; ordinary getter admission retains the existing rules.
+    internal static FieldAnalysisContext? FindFinalInterface(MethodAnalysisContext method,
+        IReadOnlyList<Instruction> body)
+        => Find(method, body, true);
+
+    private static FieldAnalysisContext? Find(MethodAnalysisContext method,
+        IReadOnlyList<Instruction> body, bool finalInterface)
     {
         var shape = TryProveShape(body);
         var hasUnrelatedSuffix = false;
@@ -78,14 +88,17 @@ internal static class X86DirectBooleanFieldGetterProof
             (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                                       MethodImplAttributes.ManagedMask |
                                       MethodImplAttributes.InternalCall)) != 0 ||
-            !HasUnchangedVirtualDispatch(method, owner, definition) ||
+            !(finalInterface
+                ? X64FinalInterfaceBooleanFieldGetterProof.HasUnchangedDispatch(method)
+                : HasUnchangedVirtualDispatch(method, owner, definition)) ||
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,
                 requireUniqueBinding: false) ||
             method.UnderlyingPointer == 0 || body[0].IP != method.UnderlyingPointer)
             return null;
 
-        method.EnsureRawBytes();
+        if (!finalInterface || method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         var start = method.UnderlyingPointer;
         if (shape.End < start ||
             (hasUnrelatedSuffix

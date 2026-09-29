@@ -412,6 +412,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         InterfaceDispatchRecovery.Run(this);
 
         LocalVariables.ResolveTypesAndFields(this);
+        IntegerTruncationRecovery.Run(this);
 
         // Needs type resolved for delegate locals
         DelegateInvokeRecovery.Run(this);
@@ -474,6 +475,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
 
         ReferenceFieldAddressStoreRecovery.Run(this);
         NarrowScalarFieldGetterRecovery.Run(this);
+        FinalInterfaceBooleanFieldGetterRecovery.Run(this);
 
         LocalVariables.RemoveUnused(this);
     }

@@ -113,6 +113,8 @@ import boolean_parameter_class_test
 import sealed_parameter_class_test
 import guarded_array_length
 import narrow_scalar_getter
+import final_interface_boolean_getter
+import integer_truncation
 import nested_literal_store
 import boolean_tail_field_call
 import call_result_boolean_store
@@ -185,6 +187,14 @@ PROFILES = {
     "virtual-string-call": {"assembly": "VirtualStringCallFixture", "source": VALIDATION / "VirtualStringCallFixture", "methods": 5},
     "generic-dispatch": {"assembly": "GenericDispatchFixture", "source": VALIDATION / "GenericDispatchFixture", "methods": 4,
                          "noManagedBody": (("GenericDispatchFixture.IRead`1", "Read"),)},
+    "final-interface-boolean-getter": {
+        "assembly": "FinalInterfaceBooleanGetterFixture",
+        "source": VALIDATION / "FinalInterfaceBooleanGetterFixture", "methods": 11,
+        "noManagedBody": (("FinalInterfaceBooleanGetterFixture.IFlag", "get_Value"),
+                          ("FinalInterfaceBooleanGetterFixture.IFlag", "Read")),
+    },
+    "integer-truncation": {"assembly": "IntegerTruncationFixture",
+                           "source": VALIDATION / "IntegerTruncationFixture", "methods": 7},
     "guarded-sink": {"assembly": "GuardedSinkFixture", "source": VALIDATION / "GuardedSinkFixture", "methods": 3},
     "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
     "folded-literal-constructor": {"assembly": "FoldedLiteralConstructorFixture", "source": VALIDATION / "FoldedLiteralConstructorFixture", "methods": 3},
@@ -525,6 +535,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return guarded_array_length.verify(path, stage, VERSION)
     if profile == "narrow-scalar-getter":
         return narrow_scalar_getter.verify(path, stage, VERSION)
+    if profile == "final-interface-boolean-getter":
+        return final_interface_boolean_getter.verify(path, stage, VERSION)
+    if profile == "integer-truncation":
+        return integer_truncation.verify(path, stage, VERSION)
     if profile == "nested-literal-store":
         return nested_literal_store.verify(path, stage, VERSION)
     if profile == "parameter-class-test":
