@@ -53,6 +53,10 @@ import byte_mask_one
 import boolean_getter
 import boolean_composition
 import boolean_literal_store
+import parameter_boolean_array_store
+import scalar_field_comparison
+import integer_literal_store
+import aggregate_scalar_compare
 import boolean_getter_metadata
 import byte_threshold
 import composed_array
@@ -166,6 +170,10 @@ PROFILES = {
     "word-array": {"assembly": "WordArrayFixture", "source": VALIDATION / "WordArrayFixture", "methods": 2},
     "reference-array": {"assembly": "ReferenceArrayFixture", "source": VALIDATION / "ReferenceArrayFixture", "methods": 3},
     "boolean-literal-store": {"assembly": "BooleanLiteralStoreFixture", "source": VALIDATION / "BooleanLiteralStoreFixture", "methods": 6},
+    "aggregate-scalar-compare": {"assembly": "AggregateScalarCompareFixture", "source": VALIDATION / "AggregateScalarCompareFixture", "methods": 5},
+    "integer-literal-store": {"assembly": "IntegerLiteralStoreFixture", "source": VALIDATION / "IntegerLiteralStoreFixture", "methods": 10},
+    "scalar-field-comparison": {"assembly": "ScalarFieldComparisonFixture", "source": VALIDATION / "ScalarFieldComparisonFixture", "methods": 3},
+    "parameter-boolean-array-store": {"assembly": "ParameterBooleanArrayStoreFixture", "source": VALIDATION / "ParameterBooleanArrayStoreFixture", "methods": 10},
     "boolean-composition": {"assembly": "BooleanCompositionFixture", "source": VALIDATION / "BooleanCompositionFixture", "methods": 3},
     "boolean-getter": {"assembly": "BooleanGetterFixture", "source": VALIDATION / "BooleanGetterFixture", "methods": 5},
     "boolean-getter-metadata": {"assembly": "BooleanGetterMetadataFixture", "source": VALIDATION / "BooleanGetterMetadataFixture", "methods": 11},
@@ -355,6 +363,14 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return reference_array.verify(path, stage, VERSION)
     if profile == "boolean-literal-store":
         return boolean_literal_store.verify(path, stage, VERSION)
+    if profile == "aggregate-scalar-compare":
+        return aggregate_scalar_compare.verify(path, stage, VERSION)
+    if profile == "integer-literal-store":
+        return integer_literal_store.verify(path, stage, VERSION)
+    if profile == "scalar-field-comparison":
+        return scalar_field_comparison.verify(path, stage, VERSION)
+    if profile == "parameter-boolean-array-store":
+        return parameter_boolean_array_store.verify(path, stage, VERSION)
     if profile == "boolean-composition":
         return boolean_composition.verify(path, stage, VERSION)
     if profile == "boolean-getter":

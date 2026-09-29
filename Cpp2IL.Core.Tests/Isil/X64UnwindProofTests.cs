@@ -311,6 +311,77 @@ public class X64UnwindProofTests
             Is.EqualTo(X64UnwindProof.SpanKind.Unsupported));
     }
 
+    [Test]
+    public void UnwindOnlyCleanupMapsRemainSeparateFromManagedCatchAdmission()
+    {
+        var image = CleanupImage();
+        var index = X64UnwindProof.Parse(image)!;
+        var region = index.GetHandler(ImageBase + 0x1000)!.Value;
+        Assert.That(X64Eh4MapProof.Parse(image, index, region), Is.Null);
+        var map = X64Eh4MapProof.ParseCleanup(image, index, region);
+        Assert.That(map, Is.Not.Null);
+        Assert.That(map!.UnwindActions, Is.EqualTo(new[]
+        {
+            new X64Eh4MapProof.UnwindAction(1, 1, 0x1300, 0x20, -1),
+            new X64Eh4MapProof.UnwindAction(7, 0, null, null, -1)
+        }));
+        Assert.That(map.TryBlocks, Is.Empty);
+        Assert.That(map.IpStates, Is.EqualTo(new[] { new X64Eh4MapProof.IpState(0x1002, 0) }));
+        Assert.That(index.ClassifySpan(region.Start, region.Start + 1).Kind,
+            Is.EqualTo(X64UnwindProof.SpanKind.Unsupported),
+            "A parsed cleanup map does not authorize ordinary managed lifting or authenticate its handler.");
+    }
+
+    [TestCase("exception-search")]
+    [TestCase("catch-table")]
+    [TestCase("catch-funclet")]
+    [TestCase("separated")]
+    [TestCase("noexcept")]
+    [TestCase("missing-actions")]
+    [TestCase("invalid-object-encoding")]
+    [TestCase("bad-unwind-link")]
+    [TestCase("nonexecutable-action")]
+    [TestCase("out-of-range-ip")]
+    public void UnsupportedOrMalformedCleanupMapsFailClosed(string defect)
+    {
+        var image = CleanupImage();
+        switch (defect)
+        {
+            case "exception-search": image[0x900] = 1 | 3 << 3; break;
+            case "catch-table":
+                image[0x920] = 0x38;
+                U32(image, 0x925, 0x3040);
+                U32(image, 0x929, 0x3050);
+                break;
+            case "catch-funclet": image[0x920] = 0x29; break;
+            case "separated": image[0x920] = 0x2A; break;
+            case "noexcept": image[0x920] = 0x68; break;
+            case "missing-actions": image[0x930] = 0; break;
+            case "invalid-object-encoding": image[0x936] = 0x1F; break;
+            case "bad-unwind-link": image[0x937] = 0x10; break;
+            case "nonexecutable-action": U32(image, 0x932, 0x3040); break;
+            case "out-of-range-ip": image[0x951] = 0x40; break;
+            default: throw new ArgumentOutOfRangeException(nameof(defect));
+        }
+        var index = X64UnwindProof.Parse(image)!;
+        var region = index.GetHandler(ImageBase + 0x1000)!.Value;
+        Assert.That(X64Eh4MapProof.ParseCleanup(image, index, region), Is.Null);
+    }
+
+    private static byte[] CleanupImage()
+    {
+        var image = Eh4Image();
+        image[0x900] = 1 | 2 << 3;
+        image[0x920] = 0x28;
+        U32(image, 0x925, 0x3050);
+        image[0x930] = 4;
+        image[0x931] = 10;
+        U32(image, 0x932, 0x1300);
+        image[0x936] = 0x40;
+        image[0x937] = 0x38;
+        return image;
+    }
+
     [TestCase(1)]
     [TestCase(2)]
     [TestCase(3)]

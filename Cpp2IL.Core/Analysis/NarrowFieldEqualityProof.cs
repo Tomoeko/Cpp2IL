@@ -120,9 +120,14 @@ internal static class NarrowFieldEqualityProof
         => reference.Field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4 &&
            HasUnchangedFieldLayout(reference, 32, false, false, true);
 
+    internal static bool HasUnchangedFloatingFieldLayout(FieldReference reference, int width)
+        => (width == 32 && reference.Field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4 ||
+            width == 64 && reference.Field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R8) &&
+           HasUnchangedFieldLayout(reference, width, false, false, true);
+
     private static bool HasUnchangedFieldLayout(FieldReference reference, int width,
         bool referenceField, bool allowFieldlessConstructedBase = false,
-        bool singleField = false)
+        bool floatingField = false)
     {
         var field = reference.Field;
         var owner = field.DeclaringType;
@@ -134,7 +139,8 @@ internal static class NarrowFieldEqualityProof
             // override records an actual change; object identity does not.
             field.OverrideFieldType != null ||
             !(referenceField ||
-              (singleField && field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4) ||
+              (floatingField && (width == 32 && field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4 ||
+                                 width == 64 && field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R8)) ||
               HasExactStorageWidth(field.FieldType, width) ||
               width == owner.AppContext.Binary.PointerSizeBytes * 8 &&
               field.FieldType.Type is (Il2CppTypeEnum.IL2CPP_TYPE_I or

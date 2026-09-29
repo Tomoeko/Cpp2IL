@@ -52,7 +52,7 @@ internal static class RuntimeNullGuardCoalescer
                 !ReferenceEquals(Field.DeclaringType, Owner) ||
                 !NullCheckedCall.SameOrdinaryType(Field.FieldType, ValueType) ||
                 Field.Attributes != Attributes || Field.IsStatic || Access.Offset != Offset || Field.Offset != Offset ||
-                RequireNativeBinding && !HasUnchangedNativeField(method, Access))
+                RequireNativeBinding && !HasUnchangedNativeField(method, Access, Operation))
                 return false;
             if (IsProved64BitFieldReadType(ValueType))
                 return StoredValue == null &&
@@ -74,6 +74,7 @@ internal static class RuntimeNullGuardCoalescer
                 method.GetExtraData<X86GuardedZeroStoreProof.Proof>(
                     X86GuardedZeroStoreProof.EvidenceKey) is { StoreWidth: 1 } byteProof &&
                 ReferenceEquals(byteProof.Field, Field) && ValidFieldReceiver(method, byteProof.ReceiverField),
+            Immediate literal when LiteralFieldStoreProof.IsValidFor(method, Operation, Access, literal) => true,
             Immediate { Value: 0 } =>
                 method.GetExtraData<X86GuardedZeroStoreProof.Proof>(
                     X86GuardedZeroStoreProof.EvidenceKey) is { } proof &&
@@ -423,7 +424,9 @@ internal static class RuntimeNullGuardCoalescer
                          ReferenceEquals(writeAccess.Field.FieldType,
                              method.AppContext.SystemTypes.SystemBooleanType) &&
                          (!requireNativeFieldBinding ||
-                          BooleanLiteralFieldStoreProof.IsValidFor(method, instruction, writeAccess, literal))) &&
+                          BooleanLiteralFieldStoreProof.IsValidFor(method, instruction, writeAccess, literal)) ||
+                         value is Immediate integerLiteral &&
+                         LiteralFieldStoreProof.IsValidFor(method, instruction, writeAccess, integerLiteral)) &&
                         provesNativeField(writeAccess))
                     {
                         operation = instruction;
@@ -696,12 +699,17 @@ internal static class RuntimeNullGuardCoalescer
         return true;
     }
 
-    private static bool HasUnchangedNativeField(MethodAnalysisContext method, FieldReference access)
+    private static bool HasUnchangedNativeField(MethodAnalysisContext method, FieldReference access,
+        Instruction? operation = null)
     {
         var field = access.Field;
         var owner = field.DeclaringType;
         var types = owner.AppContext.SystemTypes;
-        var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) ? 32 :
+        var provedUnsignedLiteral = ReferenceEquals(field.FieldType, types.SystemUInt32Type) &&
+            (operation != null
+                ? IsProvedLiteralStore(operation)
+                : method.ControlFlowGraph!.Instructions.Any(IsProvedLiteralStore));
+        var width = ReferenceEquals(field.FieldType, types.SystemInt32Type) || provedUnsignedLiteral ? 32 :
             ReferenceEquals(field.FieldType, types.SystemInt64Type) ? 64 :
             ReferenceEquals(field.FieldType, types.SystemBooleanType) ? 8 : 0;
         var proved64BitRead = IsProved64BitFieldReadType(field.FieldType);
@@ -718,6 +726,11 @@ internal static class RuntimeNullGuardCoalescer
                        : NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access)) &&
                      ProvedNative64BitFieldRead(method, access) != null
                    : width != 0 && NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, width));
+
+        bool IsProvedLiteralStore(Instruction candidate) =>
+            candidate.Operands is [FieldReference stored, Immediate literal] &&
+            ReferenceEquals(stored, access) &&
+            LiteralFieldStoreProof.IsValidFor(method, candidate, access, literal);
     }
 
     private static X64Guarded64BitFieldReadProof.Proof? ProvedNative64BitFieldRead(

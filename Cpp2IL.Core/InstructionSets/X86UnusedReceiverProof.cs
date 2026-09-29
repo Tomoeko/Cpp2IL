@@ -30,6 +30,15 @@ internal static class X86UnusedReceiverProof
             ReferenceEquals(original.Field, current.Field) && original.LoadIp == current.LoadIp)
             return true;
 
+        // A closed parameter-array store binds every consumed incoming value to
+        // a managed parameter. Its null/bounds helper exits consume no receiver,
+        // so the absent instance local is established by the complete body proof.
+        if (!method.IsStatic && receiver == new ISIL.Register(null, "rcx") &&
+            method.ParameterOperands.FirstOrDefault() is ISIL.Register incoming && incoming == receiver &&
+            X64ParameterBooleanArrayStoreProof.GetEvidence(method) is { } recorded &&
+            X64ParameterBooleanArrayStoreProof.Find(method, X86Utils.Iterate(method).ToArray()) == recorded)
+            return true;
+
         return IsUnused(X86Utils.Disassemble(method.RawBytes.AsSpan(), method.UnderlyingPointer, false), nativeRegister);
     }
 

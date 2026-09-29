@@ -78,6 +78,9 @@ public static partial class IlGenerator
         ValidateParameterGuardedArrayAccesses(context);
         ValidateComposedReferenceFieldStore(context);
         ValidateEnumFieldArrayReads(context);
+        ValidateParameterBooleanArrayStores(context);
+        ValidateFloatingFieldReads(context);
+        ValidateAggregateScalarReads(context);
 
         // Diagnose retained lifting failures before local typing. An unsupported operation
         // often also leaves its result untyped; that secondary error must not hide the cause.

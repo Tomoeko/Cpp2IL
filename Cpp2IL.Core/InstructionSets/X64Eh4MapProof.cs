@@ -35,7 +35,27 @@ internal static class X64Eh4MapProof
     internal static Map? Parse(ReadOnlySpan<byte> image, X64UnwindProof.Index index,
         X64UnwindProof.HandlerInfo region)
     {
-        if ((region.Flags & 1) == 0 || region.Start < index.ImageBase ||
+        if ((region.Flags & 1) == 0)
+            return null;
+        return ParseMap(image, index, region);
+    }
+
+    // Runtime C++ temporaries use UNW_FLAG_UHANDLER without EHANDLER: their
+    // actions run while unwinding, with no catch search. Keep this separate from
+    // managed catch/finally admission and from the native handler's identity.
+    internal static Map? ParseCleanup(ReadOnlySpan<byte> image, X64UnwindProof.Index index,
+        X64UnwindProof.HandlerInfo region)
+    {
+        if (region.Flags != 2 || ParseMap(image, index, region) is not
+                { Header: 0x28, TryBlocks.Count: 0, UnwindActions.Count: > 0 } map)
+            return null;
+        return map;
+    }
+
+    private static Map? ParseMap(ReadOnlySpan<byte> image, X64UnwindProof.Index index,
+        X64UnwindProof.HandlerInfo region)
+    {
+        if (region.Start < index.ImageBase ||
             region.End <= region.Start || region.End - index.ImageBase > uint.MaxValue)
             return null;
         var startRva = (uint)(region.Start - index.ImageBase);

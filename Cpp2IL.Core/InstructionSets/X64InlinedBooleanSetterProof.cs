@@ -350,43 +350,7 @@ internal static class X64InlinedBooleanSetterProof
 
     internal static bool HasNativeCallerStore(MethodAnalysisContext caller,
         PE pe, X64UnwindProof.Index unwind, ulong address,
-        FieldReference access, bool value)
-    {
-        if (address < caller.UnderlyingPointer ||
-            address - caller.UnderlyingPointer > int.MaxValue - 15 ||
-            !Enum.TryParse<NativeRegister>(access.Local.Register.Name,
-                true, out var receiverRegister))
-            return false;
-        try
-        {
-            caller.EnsureRawBytes();
-            var native = X86Utils.Iterate(caller).Where(instruction =>
-                instruction.IP == address).ToArray();
-            if (native is not [{ Code: Code.Mov_rm8_imm8,
-                    Op0Kind: OpKind.Memory, Op1Kind: OpKind.Immediate8 } store] ||
-                store.IsInvalid || store.CodeSize != CodeSize.Code64 ||
-                store.HasLockPrefix || store.HasRepPrefix ||
-                store.HasRepnePrefix ||
-                store.SegmentPrefix != NativeRegister.None ||
-                store.MemoryBase != receiverRegister ||
-                store.MemoryIndex != NativeRegister.None ||
-                store.MemorySize.GetSize() != 1 ||
-                store.MemoryDisplacement64 != (ulong)access.Offset ||
-                store.Immediate8 != (value ? 1 : 0) ||
-                unwind.ClassifySpan(address, store.NextIP).Kind !=
-                    X64UnwindProof.SpanKind.HandlerFree)
-                return false;
-            var offset = checked((int)(address - caller.UnderlyingPointer));
-            return offset <= caller.RawBytes.Length - store.Length &&
-                   X64AncestorConstructorThunkProof.FileBackedExecutable(pe,
-                       unwind, caller.RawBytes.AsSpan().Slice(offset,
-                           store.Length), address);
-        }
-        catch (Exception exception) when (exception is ArgumentException or
-                                          InvalidOperationException or
-                                          IndexOutOfRangeException or OverflowException)
-        {
-            return false;
-        }
-    }
+        FieldReference access, bool value) =>
+        X64NativeLiteralFieldStoreProof.IsValidFor(caller, pe, unwind,
+            address, access, value ? 1u : 0u, 8);
 }

@@ -22,7 +22,6 @@ namespace Cpp2IL.Core.InstructionSets;
 internal static class X64TerminalManagedThrowProof
 {
     private static readonly byte[] SavedRbxFrame = [0x06, 0x32, 0x02, 0x30];
-    private static readonly byte[] SavedRbxRdiFrame = [0x0A, 0x34, 0x06, 0x00, 0x0A, 0x32, 0x06, 0x70];
     private static readonly byte[] Stack28Frame = [0x04, 0x42];
 
     internal sealed record Evidence(TypeAnalysisContext ExceptionType, MethodAnalysisContext Constructor);
@@ -107,6 +106,8 @@ internal static class X64TerminalManagedThrowProof
             methodSlot <= typeSlot && typeSlot - methodSlot < 8 ||
             !WritableFileBacked(pe, unwind, typeSlot, 8) ||
             !WritableFileBacked(pe, unwind, methodSlot, 8) ||
+            !X64PeOnceFlagProof.IsUnrelocatedRange(pe, unwind, typeSlot, 8) ||
+            !X64PeOnceFlagProof.IsUnrelocatedRange(pe, unwind, methodSlot, 8) ||
             app.LibCpp2IlContext.GetRawTypeGlobalByAddress(typeSlot) is not
                 { Type: MetadataUsageType.TypeInfo, IsValid: true } typeUsage ||
             app.ResolveIl2CppType(typeUsage.AsType()) is not { } exceptionType ||
@@ -238,12 +239,12 @@ internal static class X64TerminalManagedThrowProof
         return true;
     }
 
-    private static bool ProveNullCheck(ApplicationAnalysisContext app, PE pe,
+    internal static bool ProveNullCheck(ApplicationAnalysisContext app, PE pe,
         X64UnwindProof.Index unwind, ulong target)
     {
         var body = Read(pe, target, 6);
         if (body == null || !WellFormed(body) ||
-            body[0].IP != target || !Stack(body[0], Mnemonic.Sub, 0x28) ||
+            body[0].IP != target || body[0].Length != 4 || !Stack(body[0], Mnemonic.Sub, 0x28) ||
             !Test(body[1], NativeRegister.RCX) ||
             !Branch(body[2], Code.Je_rel8_64, body[5].IP) ||
             !Stack(body[3], Mnemonic.Add, 0x28) || !Return(body[4]) ||
@@ -255,6 +256,8 @@ internal static class X64TerminalManagedThrowProof
                region.Start == target && region.RootStart == target &&
                region.End - body[^1].NextIP <= 16 &&
                unwind.MatchesUnwind(region.Start, region.End, 4, 0, Stack28Frame) &&
+               X64PeOnceFlagProof.IsUnrelocatedRange(pe, unwind, target,
+                   checked((uint)(body[^1].NextIP - target))) &&
                X64NativePaddingProof.HasInt3Padding(pe, body[^1].NextIP, region.End) &&
                NoManagedAliases(app, region.Start, region.End) &&
                X86CallerExceptionRegionProof.Check(body, target,
@@ -264,56 +267,32 @@ internal static class X64TerminalManagedThrowProof
     internal static bool ProveRaiseWrapper(ApplicationAnalysisContext app, PE pe,
         X64UnwindProof.Index unwind, ulong target)
     {
+        if (!X64CodegenRaiseExceptionProof.TryIdentify(app, target))
+            return false;
         var export = pe.GetVirtualAddressOfExportedFunctionByName("il2cpp_raise_exception");
         var entry = Read(pe, export, 3);
         var body = Read(pe, target, 12);
-        if (entry == null || body == null || !WellFormed(entry) || !WellFormed(body) ||
-            !Stack(entry[0], Mnemonic.Sub, 0x28) || !Zero(entry[1], NativeRegister.EDX) ||
-            !DirectCall(entry[2]) ||
-            !Store(body[0], NativeRegister.RSP, 8, NativeRegister.RBX) ||
-            !Push(body[1], NativeRegister.RDI) || !Stack(body[2], Mnemonic.Sub, 0x20) ||
-            !Move(body[3], NativeRegister.RDI, NativeRegister.RCX) ||
-            !Move(body[4], NativeRegister.RBX, NativeRegister.RDX) ||
-            !Add(body[5], NativeRegister.RCX, 0x38) ||
-            !DirectCall(body[6]) ||
-            !Address(body[7], NativeRegister.RCX, NativeRegister.RDI, 0x40) ||
-            !DirectCall(body[8]) ||
-            !Move(body[9], NativeRegister.RDX, NativeRegister.RBX) ||
-            !Move(body[10], NativeRegister.RCX, NativeRegister.RDI) ||
-            !DirectCall(body[11]) ||
-            body[11].NearBranchTarget != entry[2].NearBranchTarget ||
-            !ProveZeroSetter(app, pe, unwind, body[6].NearBranchTarget) ||
-            !ProveZeroSetter(app, pe, unwind, body[8].NearBranchTarget))
+        if (entry == null || body == null ||
+            Read(pe, body[6].NearBranchTarget, 2) is not { } clear)
             return false;
 
+        // The reusable component owns the trace writes, exported raise ABI,
+        // frame operations and relocation proof. This throw-only route retains
+        // its stricter helper boundaries, trap padding and native ownership.
         var exportRegion = unwind.ClassifySpan(export, entry[^1].NextIP);
         var wrapperRegion = unwind.ClassifySpan(target, body[^1].NextIP);
         return exportRegion.Kind == X64UnwindProof.SpanKind.HandlerFree &&
                exportRegion.Start == export && exportRegion.RootStart == export &&
                exportRegion.End - entry[^1].NextIP <= 16 &&
-               unwind.MatchesUnwind(exportRegion.Start, exportRegion.End, 4, 0, Stack28Frame) &&
                X64NativePaddingProof.HasInt3Padding(pe, entry[^1].NextIP, exportRegion.End) &&
                NoManagedAliases(app, exportRegion.Start, exportRegion.End) &&
                wrapperRegion.Kind == X64UnwindProof.SpanKind.HandlerFree &&
                wrapperRegion.Start == target && wrapperRegion.RootStart == target &&
                wrapperRegion.End - body[^1].NextIP <= 16 &&
-               unwind.MatchesUnwind(wrapperRegion.Start, wrapperRegion.End, 10, 0, SavedRbxRdiFrame) &&
                X64NativePaddingProof.HasInt3Padding(pe, body[^1].NextIP, wrapperRegion.End) &&
-               NoManagedAliases(app, wrapperRegion.Start, wrapperRegion.End);
-    }
-
-    private static bool ProveZeroSetter(ApplicationAnalysisContext app, PE pe,
-        X64UnwindProof.Index unwind, ulong target)
-    {
-        var body = Read(pe, target, 2);
-        return body != null && WellFormed(body) &&
-               body[0].Code == Code.Mov_rm64_imm32 &&
-               Memory(body[0], 0, NativeRegister.RCX, 0, 8) &&
-               body[0].Op1Kind == OpKind.Immediate32to64 && body[0].GetImmediate(1) == 0 &&
-               Return(body[1]) &&
-               unwind.ClassifySpan(target, body[^1].NextIP).Kind == X64UnwindProof.SpanKind.NoEntry &&
-               X64NativePaddingProof.HasInt3Padding(pe, body[^1].NextIP, target + 16) &&
-               NoManagedAliases(app, target, target + 16);
+               NoManagedAliases(app, wrapperRegion.Start, wrapperRegion.End) &&
+               X64NativePaddingProof.HasInt3Padding(pe, clear[^1].NextIP, clear[0].IP + 16) &&
+               NoManagedAliases(app, clear[0].IP, clear[0].IP + 16);
     }
 
     private static bool NoManagedAliases(ApplicationAnalysisContext app, ulong start, ulong end) =>
@@ -407,27 +386,6 @@ internal static class X64TerminalManagedThrowProof
         i.Code == Code.Lea_r64_m && i.Op0Kind == OpKind.Register &&
         i.Op0Register == destination && i.Op1Kind == OpKind.Memory &&
         i.MemoryBase == NativeRegister.RIP && i.MemoryIndex == NativeRegister.None;
-
-    private static bool Address(NativeInstruction i, NativeRegister destination,
-        NativeRegister basis, ulong offset) =>
-        i.Code == Code.Lea_r64_m && i.Op0Kind == OpKind.Register &&
-        i.Op0Register == destination && Memory(i, 1, basis, offset, 0);
-
-    private static bool Store(NativeInstruction i, NativeRegister basis,
-        ulong offset, NativeRegister source) =>
-        i.Code == Code.Mov_rm64_r64 && Memory(i, 0, basis, offset, 8) &&
-        i.Op1Kind == OpKind.Register && i.Op1Register == source;
-
-    private static bool Memory(NativeInstruction i, int operand, NativeRegister basis,
-        ulong offset, int width) =>
-        i.GetOpKind(operand) == OpKind.Memory && i.MemoryBase == basis &&
-        i.MemoryIndex == NativeRegister.None && i.MemoryDisplacement64 == offset &&
-        i.MemorySize.GetSize() == width;
-
-    private static bool Add(NativeInstruction i, NativeRegister destination, ulong amount) =>
-        i.Code == Code.Add_rm64_imm8 && i.Op0Kind == OpKind.Register &&
-        i.Op0Register == destination && i.Op1Kind == OpKind.Immediate8to64 &&
-        i.GetImmediate(1) == amount;
 
     private static bool DirectCall(NativeInstruction i) =>
         i.Code == Code.Call_rel32_64 && i.Op0Kind == OpKind.NearBranch64 &&

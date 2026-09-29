@@ -108,6 +108,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return fieldArrayAccess; // The field read and both array exception exits are proved together.
         if (X86FieldBooleanArrayLiteralStoreProof.TryLift(context, nativeInstructions) is { } booleanArrayStore)
             return booleanArrayStore; // The field, byte store and both exception exits form one closed body.
+        if (X64ParameterBooleanArrayStoreProof.TryLift(context, nativeInstructions) is { } parameterBooleanArrayStore)
+            return parameterBooleanArrayStore;
         if (X64SequentialInt32FieldArrayProof.TryLift(context, nativeInstructions) is { } sequentialArrayAccess)
             return sequentialArrayAccess; // Both array failures and the intervening field effects are proved together.
         if (X86IntegerExtensionProof.TryLift(context, nativeInstructions) is { } integerExtension)
@@ -1167,7 +1169,13 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Comisd:
             case Mnemonic.Ucomiss:
             case Mnemonic.Ucomisd:
-                if (instruction.Op0Kind != OpKind.Register || instruction.Op1Kind != OpKind.Register)
+                var provedFloatingRead = instruction.Op1Kind == OpKind.Memory
+                    ? X64FloatingFieldOperandProof.Find(context, instruction)
+                    : null;
+                var provedAggregateRead = instruction.Op1Kind == OpKind.Memory
+                    ? X64AggregateScalarOperandProof.Find(context, instruction) : null;
+                if (instruction.Op0Kind != OpKind.Register ||
+                    instruction.Op1Kind != OpKind.Register && provedFloatingRead == null && provedAggregateRead == null)
                 {
                     Add(instruction.IP, ISIL.OpCode.NotImplemented,
                         new ISIL.StringLiteral("Floating comparison memory operands require an exact read-width proof"));
@@ -1179,6 +1187,20 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 var floatWidth = instruction.Mnemonic is Mnemonic.Comiss or Mnemonic.Ucomiss ? 32 : 64;
                 var floatLeft = ConvertOperand(instruction, 0);
                 var floatRight = ConvertOperand(instruction, 1);
+                if (provedAggregateRead != null)
+                {
+                    X64AggregateScalarOperandProof.Record(context, provedAggregateRead);
+                    floatRight = CaptureComparisonOperand(instruction.IP, new ISIL.MemoryOperand(
+                        new ISIL.Register(null, X86Utils.GetRegisterName(provedAggregateRead.Shape.Store.Op1Register)),
+                        addend: provedAggregateRead.Field.Offset), X64AggregateScalarOperandProof.ComparisonCaptureName);
+                }
+                else if (provedFloatingRead != null)
+                {
+                    context.PutExtraData(X64FloatingFieldOperandProof.EvidenceKey, provedFloatingRead);
+                    // COMISS/COMISD perform one memory read while setting all three
+                    // live floating flags. Preserve its position and read it once.
+                    floatRight = CaptureComparisonOperand(instruction.IP, floatRight, "FLOAT_FIELD_COMPARE_READ");
+                }
                 Add(instruction.IP, ISIL.OpCode.FloatCompare, new ISIL.Register(null, "CF"), floatLeft, floatRight, Imm(floatWidth), Imm(9));
                 Add(instruction.IP, ISIL.OpCode.FloatCompare, new ISIL.Register(null, "ZF"), floatLeft, floatRight, Imm(floatWidth), Imm(10));
                 Add(instruction.IP, ISIL.OpCode.FloatCompare, new ISIL.Register(null, "PF"), floatLeft, floatRight, Imm(floatWidth), Imm(8));
@@ -1435,6 +1457,13 @@ public class X86InstructionSet : Cpp2IlInstructionSet
     {
         if (context == null || instruction.GetOpKind(operand) != OpKind.Memory)
             return ConvertOperand(instruction, operand);
+
+        if (single && operand == 1 && X64AggregateScalarOperandProof.Find(context, instruction) is { } component)
+        {
+            X64AggregateScalarOperandProof.Record(context, component);
+            return new ISIL.MemoryOperand(new ISIL.Register(null,
+                X86Utils.GetRegisterName(component.Shape.Store.Op1Register)), addend: component.Field.Offset);
+        }
 
         if (!instruction.IsIPRelativeMemoryOperand && instruction is not { MemoryBase: Register.None, MemoryIndex: Register.None })
             return ConvertOperand(instruction, operand);
