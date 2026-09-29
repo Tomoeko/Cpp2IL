@@ -11,6 +11,45 @@ namespace Cpp2IL.Core.InstructionSets;
 /// <summary>Reads a bounded, file-backed x64 helper prefix without crossing unsupported unwind data.</summary>
 internal static class X64NativeInstructionReader
 {
+    /// <summary>Authenticates a frameless leaf while preserving any existing cached bytes.</summary>
+    internal static Instruction[]? ReadFramelessLeaf(MethodAnalysisContext method, int count, int maxBytes)
+    {
+        if (method.AppContext.Binary is not PE pe || method.UnderlyingPointer == 0 ||
+            X64UnwindProof.ForApplication(method.AppContext) is not { } index)
+            return null;
+        try
+        {
+            if (method.RawBytes.Length == 0)
+                method.EnsureRawBytes();
+            if (Read(pe, index, method.UnderlyingPointer, count, maxBytes) is not { } read)
+                return null;
+            var body = read.ToArray();
+            var start = method.UnderlyingPointer;
+            var end = body[^1].NextIP;
+            if (body[^1].Code != Iced.Intel.Code.Retnq || body[^1].OpCount != 0 ||
+                body.Take(body.Length - 1).Any(instruction => instruction.FlowControl != FlowControl.Next) ||
+                index.ClassifySpan(start, end) is not
+                    { Kind: X64UnwindProof.SpanKind.NoEntry, Start: var provedStart, End: var provedEnd } ||
+                provedStart != start || provedEnd != end ||
+                method.AppContext.MethodsByAddress.Keys.Any(address => address > start && address < end))
+                return null;
+            var length = checked((int)(end - start));
+            var offset = pe.MapVirtualAddressToRaw(start, false);
+            var image = pe.GetRawBinaryContent();
+            if (offset < 0 || offset > image.Length - length || method.RawBytes.Length < length)
+                return null;
+            var bytes = image.Slice(checked((int)offset), length);
+            return bytes.SequenceEqual(method.RawBytes.AsSpan().Slice(0, length)) &&
+                   X64AncestorConstructorThunkProof.FileBackedExecutable(pe, index, bytes, start)
+                ? body : null;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
+                                          IndexOutOfRangeException or OverflowException)
+        {
+            return null;
+        }
+    }
+
     // Metadata-derived spans can include another function or omit terminal trap
     // padding. Authenticate the independent root .pdata boundary and correlate
     // the cached prefix before giving it to a native provenance proof.

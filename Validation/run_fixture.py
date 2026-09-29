@@ -115,6 +115,8 @@ import guarded_array_length
 import narrow_scalar_getter
 import final_interface_boolean_getter
 import integer_truncation
+import small_aggregate_getter
+import wide_field_low32
 import nested_literal_store
 import boolean_tail_field_call
 import call_result_boolean_store
@@ -195,6 +197,10 @@ PROFILES = {
     },
     "integer-truncation": {"assembly": "IntegerTruncationFixture",
                            "source": VALIDATION / "IntegerTruncationFixture", "methods": 7},
+    "small-aggregate-getter": {"assembly": "SmallAggregateGetterFixture",
+                               "source": VALIDATION / "SmallAggregateGetterFixture", "methods": 8},
+    "wide-field-low32": {"assembly": "WideFieldLow32Fixture",
+                         "source": VALIDATION / "WideFieldLow32Fixture", "methods": 6},
     "guarded-sink": {"assembly": "GuardedSinkFixture", "source": VALIDATION / "GuardedSinkFixture", "methods": 3},
     "folded-state-constructor": {"assembly": "FoldedStateConstructorFixture", "source": VALIDATION / "FoldedStateConstructorFixture", "methods": 2},
     "folded-literal-constructor": {"assembly": "FoldedLiteralConstructorFixture", "source": VALIDATION / "FoldedLiteralConstructorFixture", "methods": 3},
@@ -539,6 +545,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return final_interface_boolean_getter.verify(path, stage, VERSION)
     if profile == "integer-truncation":
         return integer_truncation.verify(path, stage, VERSION)
+    if profile == "small-aggregate-getter":
+        return small_aggregate_getter.verify(path, stage, VERSION)
+    if profile == "wide-field-low32":
+        return wide_field_low32.verify(path, stage, VERSION)
     if profile == "nested-literal-store":
         return nested_literal_store.verify(path, stage, VERSION)
     if profile == "parameter-class-test":

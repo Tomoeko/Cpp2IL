@@ -475,6 +475,8 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
 
         ReferenceFieldAddressStoreRecovery.Run(this);
         NarrowScalarFieldGetterRecovery.Run(this);
+        WideFieldLow32ReadRecovery.Run(this);
+        SmallAggregateFieldGetterRecovery.Run(this);
         FinalInterfaceBooleanFieldGetterRecovery.Run(this);
 
         LocalVariables.RemoveUnused(this);
