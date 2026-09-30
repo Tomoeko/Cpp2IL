@@ -56,9 +56,12 @@ def scaled_choice(value):
     return bits - 0x00800000 if bits & 0x7FFFFFFF else bits
 
 
-def state(count=43, divisor=-7, choice=29, first=0x80000000, second=0x00000001):
+def state(count=43, divisor=-7, choice=29, first=0x80000000, second=0x00000001, arrays=True):
     return {"count": count, "divisor": divisor, "choice": choice,
-            "firstBits": format(first, "08x"), "secondBits": format(second, "08x")}
+            "firstBits": format(first, "08x"), "secondBits": format(second, "08x"),
+            "samples": [5, -17] if arrays else None,
+            "batches": [[5, -17], None, [5, -17]] if arrays else None,
+            "firstBatchIsSamples": arrays, "repeatedBatchAlias": arrays}
 
 
 def operation(method, value, current, kind="operation"):
@@ -77,22 +80,26 @@ def operation(method, value, current, kind="operation"):
     else:
         raise ValueError("Unknown conversion operation")
     row = {"kind": kind, "method": method, "input": value, "exception": "none",
-           "resultBits": None if result is None else format(result, "08x"), **after}
+           "resultBits": None if result is None else format(result, "08x"), **after,
+           "sameSamples": True, "sameBatches": True, "sameFirstBatch": True}
     if kind == "reuse":
         row["sameOwner"] = True
     return row, after
 
 
 def observations():
-    rows = [{"kind": "declarations", "methods": 7, "fields": 9,
+    rows = [{"kind": "declarations", "methods": 7, "fields": 11,
              "countType": "System.Int32", "divisorType": "System.Int32",
              "choiceType": "ScalarInt32SingleConversionFixture.ConversionChoice",
              "firstType": "System.Single", "secondType": "System.Single",
+             "samplesType": "System.Int32[]", "samplesRank": 1, "samplesElement": "System.Int32",
+             "batchesType": "System.Int32[][]", "batchesRank": 1, "batchesElement": "System.Int32[]",
+             "batchesNestedRank": 1, "batchesNestedElement": "System.Int32",
              "enumUnderlying": "System.Int32", "enumValues": [0, 1, 2],
              "signatures": {method: ["System.Void" if method.startswith("Store") else "System.Single", "System.Int32"]
                             for method in METHODS} | {"Ratio": ["System.Single"], "ScaledChoice": ["System.Single"]},
              "instanceConvertIsStatic": False, "staticConvertIsStatic": True},
-            {"kind": "defaults", **state(0, 0, 0, 0, 0)}]
+            {"kind": "defaults", **state(0, 0, 0, 0, 0, arrays=False)}]
     for value in SAMPLES:
         for method in METHODS:
             rows.append(operation(method, value, state())[0])
@@ -114,4 +121,5 @@ def verify(path, stage, version):
     return verify_report(path, stage, version, "scalar-int32-single-conversion", observations(), 7,
                          "signed Int32-to-Single rounding and ABI slots; two own-field stores, separately rounded "
                          "integer-field ratio, enum decrement wrapping before exact half scaling; all marker bits, "
-                         "declarations, null receivers and shared-holder reuse; default rounding and masked invalid division")
+                         "declarations, unused nested-array identities, contents and aliases, null receivers and "
+                         "shared-holder reuse; default rounding and masked invalid division")

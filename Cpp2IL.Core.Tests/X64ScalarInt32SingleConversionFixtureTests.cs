@@ -11,6 +11,7 @@ using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.OutputFormats;
 using Cpp2IL.Core.Utils;
+using LibCpp2IL.BinaryStructures;
 using LibCpp2IL.PE;
 using NativeCode = Iced.Intel.Code;
 using NativeRegister = Iced.Intel.Register;
@@ -133,6 +134,84 @@ public class X64ScalarInt32SingleConversionFixtureTests
         var conversion = method.ControlFlowGraph!.Instructions.First(instruction => instruction.OpCode == OpCode.Int32ToSingle);
         Assert.Throws<InvalidOperationException>(() => conversion.CallSemantics = CallSemantics.NullCheckedInstance);
         Assert.That(conversion.CallSemantics, Is.EqualTo(CallSemantics.Direct));
+        Accept(method);
+    }
+
+    [TestCase("StoreFirst")]
+    [TestCase("StoreSecond")]
+    [TestCase("Ratio")]
+    public void RepeatedArraySiblingResolutionKeepsTheCompleteNativeProof(string name)
+    {
+        var method = _methods[name];
+        var samples = method.DeclaringType!.Fields.Single(field => field.Name == "Samples");
+        var batches = method.DeclaringType.Fields.Single(field => field.Name == "Batches");
+        var firstSamples = samples.FieldType;
+        var secondSamples = samples.FieldType;
+        var firstBatches = batches.FieldType;
+        var secondBatches = batches.FieldType;
+        Assert.That(firstSamples, Is.Not.SameAs(secondSamples));
+        Assert.That(firstBatches, Is.Not.SameAs(secondBatches));
+        var first = X64ScalarInt32ToSingleProof.Find(method)!;
+        var second = X64ScalarInt32ToSingleProof.Find(method)!;
+        Assert.That(first, Is.Not.Null);
+        Assert.That(second, Is.Not.Null);
+        Assert.That(first.Matches(second), Is.True);
+        Accept(method);
+    }
+
+    [TestCase("bits")]
+    [TestCase("modifiers")]
+    [TestCase("pinned")]
+    [TestCase("byref")]
+    [TestCase("element-kind")]
+    [TestCase("generic-element")]
+    [TestCase("unregistered-element")]
+    [TestCase("cyclic-element")]
+    public void NestedArraySiblingRawFactsCannotDriftOrRecurse(string mutation)
+    {
+        var method = _methods["StoreFirst"];
+        Accept(method);
+        var batches = method.DeclaringType!.Fields.Single(field => field.Name == "Batches");
+        var outer = batches.BackingData!.Field.RawFieldType!;
+        var inner = outer.GetEncapsulatedType();
+        Assert.That(inner.Type, Is.EqualTo(Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY));
+        var bits = inner.Bits;
+        var mods = inner.NumMods;
+        var pinned = inner.Pinned;
+        var byref = inner.Byref;
+        var kind = inner.Type;
+        var data = inner.Datapoint;
+        var union = inner.Data.Dummy;
+        try
+        {
+            switch (mutation)
+            {
+                case "bits": inner.Bits ^= 1; break;
+                case "modifiers": inner.NumMods = 1; break;
+                case "pinned": inner.Pinned = 1; break;
+                case "byref": inner.Byref = 1; break;
+                case "element-kind": inner.Type = Il2CppTypeEnum.IL2CPP_TYPE_PTR; break;
+                case "generic-element": inner.Type = Il2CppTypeEnum.IL2CPP_TYPE_GENERICINST; break;
+                case "unregistered-element": inner.Datapoint = inner.Data.Dummy = ulong.MaxValue; break;
+                case "cyclic-element":
+                    Assert.That(method.AppContext.Binary.TryGetTypeVirtualAddress(inner, out var address), Is.True);
+                    inner.Datapoint = inner.Data.Dummy = address;
+                    break;
+                default: throw new ArgumentOutOfRangeException(nameof(mutation));
+            }
+            Assert.That(X64ScalarInt32ToSingleProof.IsValidFor(method), Is.False, mutation);
+            Assert.Throws<DecompilerException>(() => IlGenerator.GenerateIl(method, Definition(method)), mutation);
+        }
+        finally
+        {
+            inner.Bits = bits;
+            inner.NumMods = mods;
+            inner.Pinned = pinned;
+            inner.Byref = byref;
+            inner.Type = kind;
+            inner.Datapoint = data;
+            inner.Data.Dummy = union;
+        }
         Accept(method);
     }
 

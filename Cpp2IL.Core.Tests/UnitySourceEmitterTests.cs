@@ -187,6 +187,7 @@ public class UnitySourceEmitterTests
     [TestCase("System.Xml", "4.0.0.0", "B77A5C561934E089")]
     [TestCase("System.Xml.Linq", "4.0.0.0", "B77A5C561934E089")]
     [TestCase("Microsoft.CSharp", "4.0.0.0", "B03F5F7F11D50A3A")]
+    [TestCase("Mono.Security", "4.0.0.0", "0738EB9F132ED756")]
     [TestCase("netstandard", "2.1.0.0", "CC7B13FFCD2DDD51")]
     [TestCase("System.Runtime", "4.1.2.0", "B03F5F7F11D50A3A")]
     [TestCase("System.Collections", "4.0.11.0", "B03F5F7F11D50A3A")]
@@ -223,13 +224,15 @@ public class UnitySourceEmitterTests
     [TestCase(true, "System.Core")]
     [TestCase(false, "System.Configuration")]
     [TestCase(true, "System.Configuration")]
+    [TestCase(false, "Mono.Security")]
+    [TestCase(true, "Mono.Security")]
     public void MismatchedFrameworkReferenceCannotClaimTargetProvidedStatus(bool explicitTargetMap, string name)
     {
         var assembly = CreateAssembly("Synthetic.Application");
         assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference(name, new Version(99, 0, 0, 0)));
         var references = WriteReference(name, new Version(99, 0, 0, 0), "references");
         var map = explicitTargetMap
-            ? WriteExternalReferenceMap("{\"references\":[{\"assembly\":\"System.Core\",\"kind\":\"target-provided\"}]}")
+            ? WriteExternalReferenceMap("{\"references\":[{\"assembly\":\"" + name + "\",\"kind\":\"target-provided\"}]}")
             : null;
 
         var report = UnitySourceProjectEmitter.Emit([assembly], ["Synthetic.Application"],
@@ -1040,6 +1043,7 @@ public class UnitySourceEmitterTests
 
     [TestCase("UnityEngine.CoreModule")]
     [TestCase("mscorlib")]
+    [TestCase("Mono.Security")]
     [TestCase("../Outside")]
     [TestCase("CON")]
     [TestCase("Trailing ")]

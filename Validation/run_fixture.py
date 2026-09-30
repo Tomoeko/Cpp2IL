@@ -172,6 +172,7 @@ import scalar_float_conversion_composition
 import native_null_checked_invocation
 import native_scalar_pair_invocation
 import native_scalar_field_invocation
+import native_scalar_producer_invocation
 import native_scalar_invocation_effects
 import native_subnormal_field_store
 import native_derived_receiver_invocation
@@ -261,6 +262,8 @@ PROFILES = {
                                      "source": VALIDATION / "NativeScalarPairInvocationFixture", "methods": 15},
     "native-scalar-field-invocation": {"assembly": "NativeScalarFieldInvocationFixture",
                                       "source": VALIDATION / "NativeScalarFieldInvocationFixture", "methods": 12},
+    "native-scalar-producer-invocation": {"assembly": "NativeScalarProducerInvocationFixture",
+                                        "source": VALIDATION / "NativeScalarProducerInvocationFixture", "methods": 7},
     "native-scalar-invocation-effects": {"assembly": "NativeScalarInvocationEffectsFixture",
                                        "source": VALIDATION / "NativeScalarInvocationEffectsFixture", "methods": 6},
     "native-subnormal-field-store": {"assembly": "NativeSubnormalFieldStoreFixture",
@@ -664,6 +667,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_scalar_pair_invocation.verify(path, stage, VERSION)
     if profile == "native-scalar-field-invocation":
         return native_scalar_field_invocation.verify(path, stage, VERSION)
+    if profile == "native-scalar-producer-invocation":
+        return native_scalar_producer_invocation.verify(path, stage, VERSION)
     if profile == "native-scalar-invocation-effects":
         return native_scalar_invocation_effects.verify(path, stage, VERSION)
     if profile == "native-subnormal-field-store":

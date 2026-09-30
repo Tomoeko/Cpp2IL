@@ -58,6 +58,14 @@ namespace RecoveryValidation
                 { "choiceType", type.GetField("Choice").FieldType.FullName },
                 { "firstType", type.GetField("First").FieldType.FullName },
                 { "secondType", type.GetField("Second").FieldType.FullName },
+                { "samplesType", type.GetField("Samples").FieldType.FullName },
+                { "samplesRank", type.GetField("Samples").FieldType.GetArrayRank() },
+                { "samplesElement", type.GetField("Samples").FieldType.GetElementType().FullName },
+                { "batchesType", type.GetField("Batches").FieldType.FullName },
+                { "batchesRank", type.GetField("Batches").FieldType.GetArrayRank() },
+                { "batchesElement", type.GetField("Batches").FieldType.GetElementType().FullName },
+                { "batchesNestedRank", type.GetField("Batches").FieldType.GetElementType().GetArrayRank() },
+                { "batchesNestedElement", type.GetField("Batches").FieldType.GetElementType().GetElementType().FullName },
                 { "enumUnderlying", Enum.GetUnderlyingType(typeof(ConversionChoice)).FullName },
                 { "enumValues", new[] { (int)ConversionChoice.Zero, (int)ConversionChoice.One, (int)ConversionChoice.Two } },
                 { "signatures", signatures },
@@ -109,11 +117,14 @@ namespace RecoveryValidation
 
         private static ConversionHolder NewHolder()
         {
+            var samples = new[] { 5, -17 };
             return new ConversionHolder
             {
                 Count = 43, Divisor = -7, Choice = (ConversionChoice)29,
                 First = BitConverter.ToSingle(BitConverter.GetBytes(0x80000000u), 0),
-                Second = BitConverter.ToSingle(BitConverter.GetBytes(0x00000001u), 0)
+                Second = BitConverter.ToSingle(BitConverter.GetBytes(0x00000001u), 0),
+                Samples = samples,
+                Batches = new[] { samples, null, samples }
             };
         }
 
@@ -127,8 +138,28 @@ namespace RecoveryValidation
             return new Dictionary<string, object>
             {
                 { "count", holder.Count }, { "divisor", holder.Divisor }, { "choice", (int)holder.Choice },
-                { "firstBits", Bits(holder.First) }, { "secondBits", Bits(holder.Second) }
+                { "firstBits", Bits(holder.First) }, { "secondBits", Bits(holder.Second) },
+                { "samples", holder.Samples == null ? null : new List<int>(holder.Samples) },
+                { "batches", BatchValues(holder.Batches) },
+                { "firstBatchIsSamples", holder.Batches != null && holder.Batches.Length > 0 &&
+                    ReferenceEquals(holder.Batches[0], holder.Samples) },
+                { "repeatedBatchAlias", holder.Batches != null && holder.Batches.Length > 2 &&
+                    ReferenceEquals(holder.Batches[0], holder.Batches[2]) }
             };
+        }
+
+        private static List<object> BatchValues(int[][] batches)
+        {
+            if (batches == null) return null;
+            var values = new List<object>();
+            foreach (var batch in batches)
+                values.Add(batch == null ? null : new List<int>(batch));
+            return values;
+        }
+
+        private static int[] FirstBatch(int[][] batches)
+        {
+            return batches == null || batches.Length == 0 ? null : batches[0];
         }
 
         private static float? Invoke(string method, ConversionHolder holder, int input)
@@ -150,6 +181,9 @@ namespace RecoveryValidation
         {
             float? result = null;
             var exception = "none";
+            var samples = holder.Samples;
+            var batches = holder.Batches;
+            var firstBatch = FirstBatch(batches);
             try { result = Invoke(method, holder, input); }
             catch (Exception error) { exception = error.GetType().FullName; }
             var row = State(holder);
@@ -158,6 +192,9 @@ namespace RecoveryValidation
             row.Add("input", input);
             row.Add("exception", exception);
             row.Add("resultBits", result.HasValue ? Bits(result.Value) : null);
+            row.Add("sameSamples", ReferenceEquals(holder.Samples, samples));
+            row.Add("sameBatches", ReferenceEquals(holder.Batches, batches));
+            row.Add("sameFirstBatch", ReferenceEquals(FirstBatch(holder.Batches), firstBatch));
             if (kind == "reuse")
                 row.Add("sameOwner", ReferenceEquals(holder, original));
             observations.Add(row);

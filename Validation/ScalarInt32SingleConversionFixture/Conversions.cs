@@ -16,6 +16,8 @@ namespace ScalarInt32SingleConversionFixture
         public ConversionChoice Choice;
         public float First;
         public float Second;
+        public int[] Samples;
+        public int[][] Batches;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public void StoreFirst(int value)

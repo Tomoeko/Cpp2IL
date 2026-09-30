@@ -105,6 +105,10 @@ internal static class X64ScalarInt32ToSingleProof
                 X64NativeInstructionReader.ReadFramelessBody(method, terminal + 1, 64) is not { } body ||
                 TryProveShape(body) != shape || X86CallerExceptionRegionProof.Check(method, body, new HashSet<ulong>()) != null)
                 return null;
+            // Authenticate raw sibling array chains before a layout query can
+            // resolve their wrappers, including fields before the accessed span.
+            var input = Snapshot(method);
+            if (input == null) return null;
             var system = method.AppContext.SystemTypes;
             FieldAnalysisContext? first = null, second = null;
             var parameter = -1;
@@ -143,7 +147,8 @@ internal static class X64ScalarInt32ToSingleProof
                     if ((bits.Value & 0x7F800000u) == 0x7F800000u) return null;
                 }
             }
-            var input = Snapshot(method, first, second);
+            if (first?.FieldType.IsEnumType == true)
+                input = Snapshot(method, first);
             return input == null ? null : new(shape, body, parameter, first, second, bits, input);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
@@ -374,11 +379,52 @@ internal static class X64ScalarInt32ToSingleProof
             {
                 if (field.Name != field.DefaultName || field.Attributes != field.DefaultAttributes || field.Offset != field.DefaultOffset ||
                     field.OverrideFieldType != null || field.BackingData?.Field.RawFieldType is not { } raw) return false;
-                values.AddRange([field, field.Name, field.Attributes, field.Offset, field.FieldType,
+                values.AddRange([field, field.Name, field.Attributes, field.Offset,
                     field.BackingData.Field.nameIndex, field.BackingData.Field.token, field.BackingData.Field.typeIndex]);
-                Raw(raw);
+                if (!FieldType(raw, new HashSet<Il2CppType>())) return false;
             }
             return true;
+        }
+
+        bool FieldType(Il2CppType raw, HashSet<Il2CppType> seen)
+        {
+            if (seen.Count >= 64 || !seen.Add(raw) || raw.Data == null || raw.Data.Dummy != raw.Datapoint)
+                return false;
+            Raw(raw);
+            if ((seen.Count > 1 || raw.Type is Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY or Il2CppTypeEnum.IL2CPP_TYPE_ARRAY) &&
+                (raw.NumMods != 0 || raw.Byref != 0 || raw.Pinned != 0)) return false;
+            try
+            {
+                // Array resolution creates a new wrapper on every read. Bind
+                // its raw element chain before resolving any context, so a
+                // cyclic descriptor cannot recurse through wrapper creation.
+                if (raw.Type == Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY)
+                    return raw.Datapoint != 0 && FieldType(raw.GetEncapsulatedType(), seen);
+                if (raw.Type == Il2CppTypeEnum.IL2CPP_TYPE_ARRAY)
+                {
+                    if (raw.Datapoint == 0) return false;
+                    var array = raw.GetArrayType();
+                    // The model records rank, but does not retain explicit
+                    // signature sizes or lower bounds. Do not normalize them.
+                    if (array.rank == 0 || array.numsizes != 0 || array.numlobounds != 0 ||
+                        array.sizes != 0 || array.lobounds != 0) return false;
+                    values.AddRange([array.rank, array.numsizes, array.numlobounds, array.sizes, array.lobounds]);
+                    return FieldType(array.ElementType, seen);
+                }
+                // Generic argument descriptors need their own raw closure;
+                // the cached constructed context cannot authenticate them.
+                if (seen.Count > 1 && raw.Type is (Il2CppTypeEnum.IL2CPP_TYPE_PTR or Il2CppTypeEnum.IL2CPP_TYPE_BYREF or
+                        Il2CppTypeEnum.IL2CPP_TYPE_BOXED or Il2CppTypeEnum.IL2CPP_TYPE_PINNED or
+                        Il2CppTypeEnum.IL2CPP_TYPE_GENERICINST))
+                    return false;
+                if (method.AppContext.ResolveIl2CppType(raw) is not { } type) return false;
+                values.Add(type);
+                return true;
+            }
+            catch (KeyNotFoundException)
+            {
+                return false;
+            }
         }
 
         void Raw(Il2CppType raw) => values.AddRange([raw.Bits, raw.Datapoint, raw.Data.Dummy,

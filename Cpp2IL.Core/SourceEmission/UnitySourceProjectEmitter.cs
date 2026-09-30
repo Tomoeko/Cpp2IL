@@ -312,6 +312,7 @@ public static class UnitySourceProjectEmitter
             : IsTargetProvidedAssembly(name) || Unity2021TargetAssemblies.HasTargetIdentity(reference));
 
     private static bool IsReservedSourceAssembly(string name) => IsTargetProvidedAssembly(name) ||
+        Unity2021TargetFrameworkAssemblies.IsKnownName(name) ||
         Unity2021TargetAssemblies.IsKnownName(name) ||
         name.StartsWith("System.", StringComparison.Ordinal) || name.StartsWith("UnityEngine.", StringComparison.Ordinal) ||
         name.StartsWith("UnityEditor.", StringComparison.Ordinal) || name.StartsWith("Unity.", StringComparison.Ordinal);

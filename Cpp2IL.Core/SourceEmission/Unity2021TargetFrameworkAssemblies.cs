@@ -15,6 +15,7 @@ internal static class Unity2021TargetFrameworkAssemblies
     private static readonly byte[] FrameworkToken = [0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89];
     private static readonly byte[] FacadeToken = [0xb0, 0x3f, 0x5f, 0x7f, 0x11, 0xd5, 0x0a, 0x3a];
     private static readonly byte[] NetstandardToken = [0xcc, 0x7b, 0x13, 0xff, 0xcd, 0x2d, 0xdd, 0x51];
+    private static readonly byte[] MonoSecurityToken = [0x07, 0x38, 0xeb, 0x9f, 0x13, 0x2e, 0xd7, 0x56];
 
     private static readonly IReadOnlyDictionary<string, (Version Version, byte[] Token)> Identities =
         new Dictionary<string, (Version, byte[])>(StringComparer.Ordinal)
@@ -27,6 +28,7 @@ internal static class Unity2021TargetFrameworkAssemblies
             ["System.Xml.Linq"] = (FrameworkVersion, FrameworkToken),
             ["System.Numerics"] = (FrameworkVersion, FrameworkToken),
             ["Microsoft.CSharp"] = (FrameworkVersion, FacadeToken),
+            ["Mono.Security"] = (FrameworkVersion, MonoSecurityToken),
             ["netstandard"] = (new Version(2, 1, 0, 0), NetstandardToken),
             ["System.Runtime"] = (new Version(4, 1, 2, 0), FacadeToken),
             ["System.Collections"] = (new Version(4, 0, 11, 0), FacadeToken),

@@ -46,7 +46,7 @@ class SignedSingleConversionOracleTests(unittest.TestCase):
         result = self.check(rows)
         self.assertEqual(result["methods"], 7)
         self.assertEqual(result["observations"], 195)
-        self.assertEqual(rows[0]["fields"], 9)
+        self.assertEqual(rows[0]["fields"], 11)
         self.assertEqual(rows[-4]["firstBits"], "4f000000")
         self.assertEqual(rows[-4]["secondBits"], "00000001")
         self.assertEqual(rows[-3]["firstBits"], "4f000000")
@@ -55,6 +55,32 @@ class SignedSingleConversionOracleTests(unittest.TestCase):
         self.assertTrue(all(row["sameOwner"] for row in rows[-4:]))
         self.assertTrue(all(row["count"] == 43 and row["divisor"] == -7 and row["choice"] == 29
                             for row in rows[-4:]))
+
+    def test_unused_array_siblings_preserve_null_defaults_rank_contents_and_aliases(self):
+        rows = observations()
+        self.assertIsNone(rows[1]["samples"])
+        self.assertIsNone(rows[1]["batches"])
+        self.assertFalse(rows[1]["firstBatchIsSamples"])
+        self.assertEqual(rows[0]["samplesRank"], 1)
+        self.assertEqual(rows[0]["batchesNestedElement"], "System.Int32")
+        for row in rows:
+            if row["kind"] not in ("operation", "reuse"):
+                continue
+            self.assertEqual(row["samples"], [5, -17])
+            self.assertEqual(row["batches"], [[5, -17], None, [5, -17]])
+            self.assertTrue(all(row[name] for name in ("firstBatchIsSamples", "repeatedBatchAlias",
+                                                     "sameSamples", "sameBatches", "sameFirstBatch")))
+        for index, field, value in ((0, "samplesRank", 2), (0, "batchesType", "System.Int32[,]"),
+                                    (0, "batchesNestedElement", "System.UInt32"),
+                                    (1, "samples", []), (2, "samples", [5, -18]),
+                                    (2, "batches", [[5, -17], None, [5, -18]]),
+                                    (2, "firstBatchIsSamples", False), (-1, "sameBatches", False),
+                                    (-1, "sameFirstBatch", False)):
+            with self.subTest(index=index, field=field):
+                changed = observations()
+                changed[index][field] = value
+                with self.assertRaises(ValueError):
+                    self.check(changed)
 
     def test_typed_bits_member_identity_and_failure_mutations_reject(self):
         for index, field, value in ((2, "firstBits", "80000000"), (3, "firstBits", "00000000"),

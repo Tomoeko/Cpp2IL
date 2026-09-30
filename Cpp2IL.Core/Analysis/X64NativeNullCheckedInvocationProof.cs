@@ -31,7 +31,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
         MethodAnalysisContext? Producer = null, FieldAnalysisContext? Field = null, int SourceEntry = -2,
         int Offset = 0, bool ReferenceWidened = false);
     private readonly record struct Argument(int? Entry, long? Literal, ScalarFieldArgument? Field = null,
-        BooleanToggleArgument? Toggle = null, BooleanPredicateArgument? Predicate = null);
+        BooleanToggleArgument? Toggle = null, BooleanPredicateArgument? Predicate = null,
+        ScalarProducerArgument? Producer = null);
     private sealed record ValueKey(string Kind, object? Value, ValueKey[] Children);
     private sealed record OrderedEffect(Instruction Operation, ulong Address, bool Before, bool After,
         CallSemantics Semantics, ValueKey Value);
@@ -88,7 +89,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                         out var nullCall, out var helper) ||
                     graph.Instructions.Where(instruction => instruction.OpCode == OpCode.RuntimeNullThrow).ToArray() is not
                         [{ NativeAddress: { } onlyNullCall }] || onlyNullCall != nullCall ||
-                    !BindInvocation(caller, invocation, target, origin, body, values, out var arguments) ||
+                    !BindInvocation(caller, invocation, target, origin, body, values, out var arguments, comparisonIp) ||
                     !TryReceiverDeclarations(origin, target, out var receiverDeclarations) ||
                     !TryEffects(caller, invocation, out var effects) ||
                     !TryControls(caller, branch, body, out var controls)) return false;
@@ -145,6 +146,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
     private static IOperand CanonicalArgument(MethodAnalysisContext caller, Argument argument) =>
         argument.Toggle is { } toggle ? toggle.Comparison.Destination! :
         argument.Predicate is { } predicate ? predicate.Comparison.Destination! :
+        argument.Producer is { } producer ? producer.Definition.Destination! :
         argument.Field is { } field ? field.Definition.Destination! :
         argument.Literal is { } literal ? new Immediate(literal) : caller.ParameterLocals.Single(local =>
             !local.IsThis && LocalVariables.GetIncomingParameterIndex(caller, local) == argument.Entry);
@@ -173,7 +175,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     !TryGuard(caller, body, values, origin, site.Comparison, site.Branch, call,
                         out var nullCall, out var helper, site.Helper, site.NullCall) ||
                     nullCall != site.NullCall || helper.NativeTarget != site.Helper.NativeTarget ||
-                    !BindInvocation(caller, call, target, origin, body, values, out var arguments) ||
+                    !BindInvocation(caller, call, target, origin, body, values, out var arguments, site.Comparison) ||
                     !arguments.SequenceEqual(site.Arguments) || !EffectsRetained(caller, call, site.Effects) ||
                     !ControlsRetained(caller, body, site.Controls) ||
                     site.Stores.Any(store => !ReferenceStoreRetained(caller, body, values, store)))
@@ -181,7 +183,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
             }
             return BooleanFieldArgumentLoadsRetained(caller, body, values, sites) &&
                    ScalarFieldArgumentUsesRetained(caller, sites) && ReferenceReceiverUsesRetained(caller, sites) &&
-                   BooleanToggleArgumentUsesRetained(caller, sites) && BooleanPredicateArgumentUsesRetained(caller, sites);
+                   BooleanToggleArgumentUsesRetained(caller, sites) && BooleanPredicateArgumentUsesRetained(caller, sites) &&
+                   ScalarProducerArgumentUsesRetained(caller, sites);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
@@ -279,7 +282,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
     }
 
     private static bool BindInvocation(MethodAnalysisContext caller, Instruction call, MethodAnalysisContext target,
-        Origin receiver, NativeInstruction[] body, X64NativeInvocationValues values, out Argument[] arguments)
+        Origin receiver, NativeInstruction[] body, X64NativeInvocationValues values, out Argument[] arguments,
+        ulong? comparison = null)
     {
         arguments = [];
         if (call.NativeAddress is not { } address || caller.ControlFlowGraph?.Instructions.Contains(call) != true ||
@@ -314,6 +318,9 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     !BindBooleanToggleArgument(caller, toggle, receiver, body, values, address, out source)) ||
                 managed.Predicate is { } predicate && (target.Parameters.Count != 1 ||
                     !BindBooleanPredicateArgument(caller, predicate, receiver, body, values, address, out source)) ||
+                managed.Producer is { } producer &&
+                    !BindScalarProducerArgument(caller, call, receiver, producer, body, values, address,
+                        comparison, out source) ||
                 !values.Matches(address, index == 0 ? NativeRegister.RDX : NativeRegister.R8,
                     parameter.ParameterType.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32, source))
                 return false;
@@ -455,6 +462,12 @@ internal static partial class X64NativeNullCheckedInvocationProof
             else if (TryScalarFieldArgument(method, local, definition, type, out var field))
             {
                 argument = new(null, null, field);
+                return true;
+            }
+            else if (TryScalarProducerArgument(method, local, definition, type, out var producer))
+            {
+                argument = new(null, null, Producer: producer);
+                source = new(NativeRegister.None, producer.Address, NativeRegister.RAX);
                 return true;
             }
             else if (TryBooleanToggleArgument(method, local, definition, type, out var toggle))

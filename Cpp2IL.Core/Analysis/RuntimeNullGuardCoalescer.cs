@@ -428,16 +428,18 @@ internal static class RuntimeNullGuardCoalescer
                         // A unique target alone cannot authenticate their ordered values.
                         var scalarArguments = requireNativeFieldBinding &&
                             X64NativeNullCheckedInvocationProof.HasScalarParameters(target);
+                        var scalarProducer = requireNativeFieldBinding &&
+                            X64NativeNullCheckedInvocationProof.IsScalarProducerForInvocation(method, instruction);
                         // Once a native site records this body's effects and controls,
                         // later guard removal must also retain its exact native site.
                         var retainedNativeInvocation = requireNativeFieldBinding &&
                             X64NativeNullCheckedInvocationProof.HasEvidence(method);
                         var targetBound = scalarArguments && HasGuardedArrayInvocationEvidence(method,
                             comparison, branch, instruction, target) ||
-                            (composedStore || scalarArguments || retainedNativeInvocation) &&
+                            (composedStore || scalarArguments || scalarProducer || retainedNativeInvocation) &&
                             X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
-                        if (!targetBound && !scalarArguments && !retainedNativeInvocation &&
+                        if (!targetBound && !scalarArguments && !scalarProducer && !retainedNativeInvocation &&
                             ordinaryTypedCall && !pendingTypedInvocationSetup &&
                             !(requireNativeFieldBinding && originKind is
                                 ReceiverOrigin.CopiedCallResult or ReceiverOrigin.InvalidCopyChain))
@@ -446,7 +448,7 @@ internal static class RuntimeNullGuardCoalescer
                                     receiver, origin!, instruction, target,
                                     requireTail: pendingTailArgumentSetup)
                                 : !pendingTailArgumentSetup && provesNativeTarget(target);
-                        if (!targetBound && requireNativeFieldBinding && !scalarArguments && !retainedNativeInvocation)
+                        if (!targetBound && requireNativeFieldBinding && !scalarArguments && !scalarProducer && !retainedNativeInvocation)
                             targetBound = X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
                         if (!targetBound)
