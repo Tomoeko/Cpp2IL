@@ -22,16 +22,21 @@ internal static class X64NativeInvocationFrameProof
     {
         if (body.Count < 3) return false;
         var cursor = 0;
-        Instruction? home = null;
-        if (body[0] is { Code: Code.Mov_rm64_r64, Op0Kind: OpKind.Memory, Op1Kind: OpKind.Register } save &&
+        var homes = new List<Instruction>();
+        while (cursor < body.Count && body[cursor] is { Code: Code.Mov_rm64_r64, Op0Kind: OpKind.Memory, Op1Kind: OpKind.Register } save &&
             save.MemoryBase == Register.RSP && save.MemoryIndex == Register.None && save.MemorySize.GetSize() == 8 &&
             save.MemoryDisplacement64 is >= 8 and <= 32 && (save.MemoryDisplacement64 & 7) == 0 && Nonvolatile(save.Op1Register))
-        { home = save; cursor++; }
+        {
+            if (homes.Any(previous => previous.Op1Register == save.Op1Register ||
+                    previous.MemoryDisplacement64 == save.MemoryDisplacement64)) return false;
+            homes.Add(save);
+            cursor++;
+        }
         var pushes = new List<Instruction>();
         while (cursor < body.Count && body[cursor] is { Code: Code.Push_r64 } push && Nonvolatile(push.Op0Register))
         {
-            if (pushes.Count >= 3 || pushes.Any(previous => previous.Op0Register == push.Op0Register) ||
-                home is { } saved && saved.Op1Register == push.Op0Register) return false;
+            if (pushes.Count >= 8 || pushes.Any(previous => previous.Op0Register == push.Op0Register) ||
+                homes.Any(saved => saved.Op1Register == push.Op0Register)) return false;
             pushes.Add(push);
             cursor++;
         }
@@ -45,7 +50,7 @@ internal static class X64NativeInvocationFrameProof
         var frameSize = allocated + (ulong)pushes.Count * 8;
         if (prologLength > byte.MaxValue) return false;
         var codes = new List<byte>();
-        if (home is { } homeSave)
+        foreach (var homeSave in homes.AsEnumerable().Reverse())
         {
             var slot = (homeSave.MemoryDisplacement64 + frameSize) / 8;
             if (slot > ushort.MaxValue) return false;
@@ -63,7 +68,7 @@ internal static class X64NativeInvocationFrameProof
         }
         if (!matchesUnwind((byte)prologLength, codes.ToArray())) return false;
         var savedRegisters = new HashSet<Register>(pushes.Select(push => push.Op0Register));
-        if (home is { } savedHome) savedRegisters.Add(savedHome.Op1Register);
+        savedRegisters.UnionWith(homes.Select(home => home.Op1Register));
         var stackWriters = new HashSet<ulong>(pushes.Select(push => push.IP)) { allocation.IP };
         var information = new InstructionInfoFactory();
         var exits = 0;
@@ -99,11 +104,22 @@ internal static class X64NativeInvocationFrameProof
                 body[previous].Op0Kind != OpKind.Register || body[previous].Op0Register != Register.RSP ||
                 body[previous].GetImmediate(1) != allocated || !values.Dominates(body[previous].IP, native.IP)) return false;
             stackWriters.Add(body[previous].IP);
-            if (home is { } original && (--previous < 0 || body[previous] is not { Code: Code.Mov_r64_rm64,
-                    Op0Kind: OpKind.Register, Op1Kind: OpKind.Memory } restore || restore.Op0Register != original.Op1Register ||
-                restore.MemoryBase != Register.RSP || restore.MemoryIndex != Register.None || restore.MemorySize.GetSize() != 8 ||
-                restore.MemoryDisplacement64 != original.MemoryDisplacement64 + frameSize ||
-                !values.Dominates(restore.IP, native.IP))) return false;
+            // Home restores can be interleaved with the return calculation. Each
+            // must be the final write of its register before this exit and must
+            // still read the original slot with the allocated stack offset.
+            foreach (var original in homes)
+            {
+                var restore = body.Take(previous).LastOrDefault(candidate => values.IsReachable(candidate.IP) &&
+                    information.GetInfo(candidate).GetUsedRegisters().Any(used =>
+                        used.Register.GetFullRegister() == original.Op1Register && used.Access is
+                            OpAccess.Write or OpAccess.CondWrite or OpAccess.ReadWrite or OpAccess.ReadCondWrite));
+                if (restore is not { Code: Code.Mov_r64_rm64, Op0Kind: OpKind.Register, Op1Kind: OpKind.Memory } ||
+                    restore.Op0Register != original.Op1Register || restore.MemoryBase != Register.RSP ||
+                    restore.MemoryIndex != Register.None || restore.MemorySize.GetSize() != 8 ||
+                    restore.MemoryDisplacement64 != original.MemoryDisplacement64 + frameSize ||
+                    !values.Dominates(restore.IP, native.IP) ||
+                    !values.HasStackOffset(restore.IP, -checked((int)frameSize))) return false;
+            }
         }
         foreach (var native in body.Where(native => values.IsReachable(native.IP)))
             if (native.FlowControl is not (FlowControl.Call or FlowControl.IndirectCall or FlowControl.Return) &&

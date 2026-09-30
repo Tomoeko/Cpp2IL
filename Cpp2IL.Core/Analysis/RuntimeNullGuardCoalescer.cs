@@ -423,9 +423,16 @@ internal static class RuntimeNullGuardCoalescer
                         // normalize that write before admitting this invocation.
                         var composedStore = requireNativeFieldBinding && graph.Instructions.Any(rawStore =>
                             rawStore is { OpCode: OpCode.Move, Operands: [MemoryOperand, _] });
-                        var targetBound = composedStore && X64NativeNullCheckedInvocationProof.TryRecord(method,
-                            comparison, branch, receiver, instruction, target);
-                        if (!targetBound && ordinaryTypedCall && !pendingTypedInvocationSetup &&
+                        // The two-scalar shape requires retained native argument evidence,
+                        // even when both operands already have their incoming managed types.
+                        // A unique target alone cannot authenticate their ordered values.
+                        var scalarPair = requireNativeFieldBinding &&
+                            X64NativeNullCheckedInvocationProof.HasTwoScalarParameters(target);
+                        var targetBound = scalarPair && HasGuardedArrayInvocationEvidence(method,
+                            comparison, branch, instruction, target) ||
+                            (composedStore || scalarPair) && X64NativeNullCheckedInvocationProof.TryRecord(method,
+                                comparison, branch, receiver, instruction, target);
+                        if (!targetBound && !scalarPair && ordinaryTypedCall && !pendingTypedInvocationSetup &&
                             !(requireNativeFieldBinding && originKind is
                                 ReceiverOrigin.CopiedCallResult or ReceiverOrigin.InvalidCopyChain))
                             targetBound = requireNativeFieldBinding && originKind == ReceiverOrigin.DirectCallResult
@@ -433,7 +440,7 @@ internal static class RuntimeNullGuardCoalescer
                                     receiver, origin!, instruction, target,
                                     requireTail: pendingTailArgumentSetup)
                                 : !pendingTailArgumentSetup && provesNativeTarget(target);
-                        if (!targetBound && requireNativeFieldBinding)
+                        if (!targetBound && requireNativeFieldBinding && !scalarPair)
                             targetBound = X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
                         if (!targetBound)
@@ -802,6 +809,42 @@ internal static class RuntimeNullGuardCoalescer
 
     internal static bool HasUnchangedNativeSignature(MethodAnalysisContext target)
         => HasUnchangedNativeSignature(target, requireUniqueBinding: true);
+
+    private static bool HasGuardedArrayInvocationEvidence(MethodAnalysisContext method, Instruction comparison,
+        Instruction branch, Instruction invocation, MethodAnalysisContext target)
+    {
+        if (!NativeRecoveryProofTracker.Has(method, X64GuardedArrayOperationProof.EvidenceKey) ||
+            method.GetExtraData<X64GuardedArrayOperationProof.Evidence>(X64GuardedArrayOperationProof.EvidenceKey)
+                is not { } evidence ||
+            X64GuardedArrayOperationProof.Find(method, evidence.Body) is not { } current ||
+            !current.Body.SequenceEqual(evidence.Body) || !current.Sites.SequenceEqual(evidence.Sites) ||
+            !current.RemovedAddresses.SetEquals(evidence.RemovedAddresses) ||
+            !current.IndexExtensions.SequenceEqual(evidence.IndexExtensions) ||
+            !current.NoReturnCallAddresses.SetEquals(evidence.NoReturnCallAddresses) ||
+            !current.EffectAddresses.SequenceEqual(evidence.EffectAddresses) ||
+            !current.NullCheckedCalls.SequenceEqual(evidence.NullCheckedCalls) ||
+            !current.InvocationArguments.SequenceEqual(evidence.InvocationArguments) ||
+            invocation.NativeAddress is not { } address || comparison.NativeAddress is not { } comparisonIp ||
+            branch.NativeAddress is not { } branchIp ||
+            evidence.NullCheckedCalls.Where(check => check.Ip == address).ToArray() is not [_] ||
+            evidence.EffectAddresses.Where(ip => ip > branchIp).DefaultIfEmpty(0UL).First() != address ||
+            evidence.Body.SingleOrDefault(native => native.IP == comparisonIp).NextIP != branchIp ||
+            evidence.Body.SingleOrDefault(native => native.IP == branchIp) is not
+                { Mnemonic: Iced.Intel.Mnemonic.Je, Op0Kind: Iced.Intel.OpKind.NearBranch64 } nativeBranch ||
+            !evidence.NoReturnCallAddresses.Contains(nativeBranch.NearBranchTarget) ||
+            evidence.Body.SingleOrDefault(native => native.IP == address).NearBranchTarget != target.UnderlyingPointer ||
+            !NullCheckedCall.TryGet(invocation, out var called, out _) || !ReferenceEquals(called, target))
+            return false;
+
+        // The complete array proof owns the original receiver and every argument.
+        // Its final validator rebinds these values and all ordered effects after
+        // SSA removal; neither a target signature nor a partial record is enough.
+        var arguments = evidence.InvocationArguments.Where(argument => argument.CallIp == address).ToArray();
+        return arguments.Length == target.Parameters.Count + 1 &&
+               arguments.Select(argument => argument.ParameterIndex)
+                   .SequenceEqual(Enumerable.Range(-1, target.Parameters.Count + 1)) &&
+               arguments.All(argument => ReferenceEquals(argument.Target, target));
+    }
 
     // A proof that binds the entire native body to this method's own metadata may
     // accept linker-folded code. Ordinary call targets still require one owner.

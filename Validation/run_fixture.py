@@ -163,8 +163,11 @@ import conditional_call_result_tail
 import lookup_guard_managed_throw
 import guarded_array_operations
 import array_call_origins
+import guarded_array_tail_invocation
 import scalar_float_selection
+import scalar_float_conversion
 import native_null_checked_invocation
+import native_scalar_pair_invocation
 import call_result_engine_false_tail
 import engine_component_false_tail
 import internal_call_field
@@ -227,10 +230,16 @@ PROFILES = {
                                  "source": VALIDATION / "GuardedArrayOperationsFixture", "methods": 9},
     "array-call-origins": {"assembly": "ArrayCallOriginsFixture",
                            "source": VALIDATION / "ArrayCallOriginsFixture", "methods": 9},
+    "guarded-array-tail-invocation": {"assembly": "GuardedArrayTailInvocationFixture",
+                                      "source": VALIDATION / "GuardedArrayTailInvocationFixture", "methods": 10},
     "scalar-float-selection": {"assembly": "ScalarFloatSelectionFixture",
                                "source": VALIDATION / "ScalarFloatSelectionFixture", "methods": 9},
+    "scalar-float-conversion": {"assembly": "ScalarFloatConversionFixture",
+                                "source": VALIDATION / "ScalarFloatConversionFixture", "methods": 2},
     "native-null-checked-invocation": {"assembly": "NativeNullCheckedInvocationFixture",
                                       "source": VALIDATION / "NativeNullCheckedInvocationFixture", "methods": 18},
+    "native-scalar-pair-invocation": {"assembly": "NativeScalarPairInvocationFixture",
+                                     "source": VALIDATION / "NativeScalarPairInvocationFixture", "methods": 15},
     "scalar-positive-zero-leaf": {"assembly": "ScalarPositiveZeroLeafFixture",
                                   "source": VALIDATION / "ScalarPositiveZeroLeafFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
@@ -565,10 +574,16 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return guarded_array_operations.verify(path, stage, VERSION)
     if profile == "array-call-origins":
         return array_call_origins.verify(path, stage, VERSION)
+    if profile == "guarded-array-tail-invocation":
+        return guarded_array_tail_invocation.verify(path, stage, VERSION)
     if profile == "scalar-float-selection":
         return scalar_float_selection.verify(path, stage, VERSION)
+    if profile == "scalar-float-conversion":
+        return scalar_float_conversion.verify(path, stage, VERSION)
     if profile == "native-null-checked-invocation":
         return native_null_checked_invocation.verify(path, stage, VERSION)
+    if profile == "native-scalar-pair-invocation":
+        return native_scalar_pair_invocation.verify(path, stage, VERSION)
     if profile == "scalar-positive-zero-leaf":
         return scalar_positive_zero_leaf.verify(path, stage, VERSION)
     if profile == "narrow-array":

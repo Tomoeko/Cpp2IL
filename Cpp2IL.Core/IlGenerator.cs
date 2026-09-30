@@ -9,6 +9,7 @@ using AsmResolver.PE.DotNet.Cil;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.ISIL;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 using Cpp2IL.Core.Utils.AsmResolver;
@@ -85,6 +86,9 @@ public static partial class IlGenerator
         if (X64ScalarFloatingFieldStoreProof.HasEvidence(context) &&
             !X64ScalarFloatingFieldStoreProof.IsValidFor(context))
             throw new DecompilerException("Floating field store lost its native width, receiver, value or control-flow proof");
+        if (X64ScalarFloatConversionProof.HasEvidence(context) &&
+            !X64ScalarFloatConversionProof.IsValidFor(context))
+            throw new DecompilerException("Floating conversion lost its complete native leaf, signature or typed parameter proof");
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
         ValidateGuardedArrayOperations(context);
@@ -576,6 +580,10 @@ public static partial class IlGenerator
 
             case OpCode.FloatProject:
                 EmitFloatingProjection(instruction, method, locals);
+                break;
+
+            case OpCode.FloatConvert:
+                EmitFloatingConversion(instruction, method, locals);
                 break;
 
             case OpCode.IntegerExtend:

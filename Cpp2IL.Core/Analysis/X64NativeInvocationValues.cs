@@ -209,12 +209,21 @@ internal sealed class X64NativeInvocationValues
         }
     }
 
-    internal bool HasCallFrame(ulong useAddress, bool tail)
+    internal bool HasCallFrame(ulong useAddress, bool tail) =>
+        TryStackFrame(useAddress, out var frame) && (tail ? frame.Delta == 0 :
+            frame.Reserved >= 32 && frame.Delta <= -32 && (frame.Delta & 15) == 8);
+
+    internal bool HasStackOffset(ulong useAddress, int offset) =>
+        TryStackFrame(useAddress, out var frame) && frame.Delta == offset;
+
+    private bool TryStackFrame(ulong useAddress, out (int Delta, int Reserved) frame)
     {
+        frame = default;
         if (!_addresses.TryGetValue(useAddress, out var use) || !_reachable.Contains(use)) return false;
         var visiting = new HashSet<int>();
-        return Before(use) is { } frame && (tail ? frame.Delta == 0 :
-            frame.Reserved >= 32 && frame.Delta <= -32 && (frame.Delta & 15) == 8);
+        if (Before(use) is not { } resolved) return false;
+        frame = resolved;
+        return true;
 
         (int Delta, int Reserved)? Before(int index)
         {

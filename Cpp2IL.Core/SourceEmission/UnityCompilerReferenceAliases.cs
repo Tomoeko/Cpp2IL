@@ -9,7 +9,7 @@ using ICSharpCode.Decompiler.Metadata;
 namespace Cpp2IL.Core.SourceEmission;
 
 /// <summary>
-/// Keeps original Unity module references that source simplification can make unused.
+/// Keeps original Unity target references that source simplification can make unused.
 /// Portable PDB assembly aliases cause the supplied Roslyn compiler to retain the
 /// AssemblyRef without introducing a type, attribute or executable dependency anchor.
 /// Unity's response-file parser removes aliases from ordinary -reference arguments,
@@ -29,15 +29,23 @@ internal static class UnityCompilerReferenceAliases
         {
             var reference = new ICSharpCode.Decompiler.Metadata.AssemblyReference(file, handle);
             var originals = module.AssemblyReferences.Where(original => original.Name?.ToString() == reference.Name).ToArray();
-            // This is an exact target-module mechanism. Package, application and framework
+            // Preserve only authenticated target identities. Package and application
             // dependencies keep their existing explicit compilation configuration.
-            if (originals.Length == 0 || !originals.All(Unity2021TargetAssemblies.HasTargetIdentity))
+            if (originals.Length == 0 || !originals.All(original =>
+                    Unity2021TargetAssemblies.HasTargetIdentity(original) ||
+                    Unity2021TargetFrameworkAssemblies.HasTargetIdentity(original)))
                 continue;
             if ((int)file.Metadata.GetAssemblyReference(handle).Flags != 0)
             {
                 diagnostics.Add($"SOURCE014: {module.Assembly?.Name}: {reference.Name}: Compiler aliases cannot establish preservation of nondefault AssemblyRef flags.");
                 continue;
             }
+
+            // The compiler intrinsically uses the target core library. An extra
+            // alias is unnecessary and can select it before Unity activates the
+            // project's configured API profile on the first import.
+            if (reference.Name == "mscorlib")
+                continue;
 
             var resolved = resolver.Resolve(reference) as PEFile ??
                 throw new InvalidOperationException("A target compiler reference must resolve to an explicit managed file.");

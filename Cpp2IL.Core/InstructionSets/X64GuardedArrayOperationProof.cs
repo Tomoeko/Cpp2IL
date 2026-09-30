@@ -74,11 +74,10 @@ internal static partial class X64GuardedArrayOperationProof
                 return null;
 
             var facts = new Facts(body);
-            foreach (var effect in native.Effects.Where(index =>
-                         body[index].FlowControl is FlowControl.Call or FlowControl.IndirectCall))
+            foreach (var effect in native.Effects.Where(index => IsInvocation(body[index])))
             {
                 var call = body[effect];
-                if (call.Code != Code.Call_rel32_64 ||
+                if (call.Code is not (Code.Call_rel32_64 or Code.Jmp_rel32_64 or Code.Jmp_rel8_64) ||
                     !method.AppContext.MethodsByAddress.TryGetValue(call.NearBranchTarget, out var targets) ||
                     targets is not [{ } target] || target.UnderlyingPointer != call.NearBranchTarget ||
                     !ReferenceEquals(target.AppContext, method.AppContext) || !HasEligibleEffectCall(target) ||
@@ -151,7 +150,7 @@ internal static partial class X64GuardedArrayOperationProof
                 var effect = native.Effects.Where(index => index > branch).DefaultIfEmpty(-1).First();
                 if (effect < 0)
                     return null;
-                if (body[effect].FlowControl != FlowControl.Call)
+                if (!IsInvocation(body[effect]))
                     continue; // The existing field-null provenance validator retains field probes.
                 var target = method.AppContext.MethodsByAddress[body[effect].NearBranchTarget].Single();
                 var guardedWriter = facts.TraceCopies(branch - 1,
@@ -165,6 +164,9 @@ internal static partial class X64GuardedArrayOperationProof
             var noReturn = new HashSet<ulong>
                 { body[native.NullCall].IP, body[native.BoundsCall].IP };
             if (X86CallerExceptionRegionProof.Check(method, body, noReturn) != null ||
+                IsTailInvocation(body[native.SuccessEnd]) &&
+                (X64NativeInvocationValues.Create(body, noReturn) is not { } tailValues ||
+                 !X64NativeInvocationFrameProof.IsValid(method, body, tailValues)) ||
                 !TryInvocationArguments(method, facts, native, sites, noReturn, out var arguments))
                 return null;
             return new Evidence(body, sites, removed,
@@ -373,7 +375,10 @@ internal static partial class X64GuardedArrayOperationProof
                 successEnd = index;
                 break;
             }
-        if (successEnd < 0 || body[successEnd].Code != Code.Retnq ||
+        if (successEnd < 0 ||
+            !(body[successEnd].Code == Code.Retnq || IsTailInvocation(body[successEnd]) &&
+                (body[successEnd].NearBranchTarget < body[0].IP ||
+                 body[successEnd].NearBranchTarget >= body[^1].NextIP)) ||
             body.Count < successEnd + 4 || body.Count > successEnd + 8 ||
             body[successEnd + 1].Code != Code.Call_rel32_64 ||
             body[successEnd + 2].Code != Code.Int3 ||
@@ -457,11 +462,19 @@ internal static partial class X64GuardedArrayOperationProof
                 site.OffsetPreparation is { } preparation &&
                 !OnlyOffsetUses(facts, preparation, successEnd, sites))
                 return null;
-        var effects = Enumerable.Range(0, successEnd).Where(index =>
+        var effects = Enumerable.Range(0, successEnd + 1).Where(index =>
             !sites.Any(site => site.BoundsCompare == index || site.NullTest == index) &&
             facts.IsEffect(index)).ToArray();
         return new NativeEvidence(successEnd, nullCall, boundsCall, sites, effects);
     }
+
+    internal static bool IsTailInvocation(NativeInstruction instruction) =>
+        instruction.Code is Code.Jmp_rel32_64 or Code.Jmp_rel8_64 &&
+        instruction.Op0Kind == OpKind.NearBranch64;
+
+    private static bool IsInvocation(NativeInstruction instruction) =>
+        instruction.FlowControl is FlowControl.Call or FlowControl.IndirectCall ||
+        IsTailInvocation(instruction);
 
     private static bool OnlyIndexUses(Facts facts, int extension, int end,
         NativeRegister register, ulong operationIp, IReadOnlyList<NativeSite> sites)
@@ -637,7 +650,7 @@ internal static partial class X64GuardedArrayOperationProof
         }
 
         internal bool IsEffect(int index) =>
-            body[index].FlowControl is FlowControl.Call or FlowControl.IndirectCall ||
+            IsInvocation(body[index]) ||
             body[index].Mnemonic is Mnemonic.Div or Mnemonic.Idiv ||
             Info(index).GetUsedMemory().Any(memory => memory.Base != NativeRegister.RSP &&
                 memory.Access is not (OpAccess.None or OpAccess.NoMemAccess));

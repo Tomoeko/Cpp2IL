@@ -37,12 +37,15 @@ internal static partial class X64NativeNullCheckedInvocationProof
     private sealed record Control(Instruction Operation, ulong Address, OpCode Code, Block Owner,
         Block Taken, Block? Other, ValueKey? Condition);
     private sealed record Site(Instruction Invocation, MethodAnalysisContext Target, Origin Receiver,
-        Argument? Argument, ulong Comparison, ulong Branch, ulong NullCall, RuntimeNullThrowEvidence Helper,
+        Argument[] Arguments, ulong Comparison, ulong Branch, ulong NullCall, RuntimeNullThrowEvidence Helper,
         Instruction GuardBranch, Block GuardOwner, Block NormalArm, NativeInstruction[] Body,
         OrderedEffect[] Effects, Control[] Controls, ReferenceStore[] Stores);
 
     internal static bool HasEvidence(MethodAnalysisContext method) =>
         NativeRecoveryProofTracker.Has(method, EvidenceKey) || method.GetExtraData<List<Site>>(EvidenceKey) != null;
+
+    internal static bool HasTwoScalarParameters(MethodAnalysisContext target) =>
+        target.Parameters.Count == 2 && target.Parameters.All(parameter => Scalar(parameter.ParameterType));
 
     internal static bool TryRecord(MethodAnalysisContext caller, Instruction comparison, Instruction branch,
         LocalVariable receiver, Instruction invocation, MethodAnalysisContext target)
@@ -73,15 +76,16 @@ internal static partial class X64NativeNullCheckedInvocationProof
                         out var nullCall, out var helper) ||
                     graph.Instructions.Where(instruction => instruction.OpCode == OpCode.RuntimeNullThrow).ToArray() is not
                         [{ NativeAddress: { } onlyNullCall }] || onlyNullCall != nullCall ||
-                    !BindInvocation(caller, invocation, target, origin, body, values, out var argument) ||
+                    !BindInvocation(caller, invocation, target, origin, body, values, out var arguments) ||
                     !TryEffects(caller, invocation, out var effects) ||
                     !TryControls(caller, branch, body, out var controls)) return false;
                 var sites = caller.GetExtraData<List<Site>>(EvidenceKey) ?? [];
                 if (sites.Any(site => ReferenceEquals(site.Invocation, invocation))) return false;
-                sites.Add(new(invocation, target, origin, argument, comparisonIp, branchIp, nullCall, helper,
+                sites.Add(new(invocation, target, origin, arguments, comparisonIp, branchIp, nullCall, helper,
                     branch, guardOwner, normalArm, body, effects, controls, stores));
-                if (argument is { } normalized)
-                    invocation.SetOperand(invocation.OpCode == OpCode.Call ? 3 : 2, CanonicalArgument(caller, normalized));
+                var argumentIndex = invocation.OpCode == OpCode.Call ? 3 : 2;
+                for (var index = 0; index < arguments.Length; index++)
+                    invocation.SetOperand(argumentIndex + index, CanonicalArgument(caller, arguments[index]));
                 caller.PutExtraData(EvidenceKey, sites);
                 NativeRecoveryProofTracker.Mark(caller, EvidenceKey);
                 admitted = true;
@@ -109,14 +113,18 @@ internal static partial class X64NativeNullCheckedInvocationProof
         target = null!;
         receiver = null!;
         if (!call.IsCall || call.Operands.Count == 0 || call.Operands[0] is not MethodAnalysisContext candidate ||
-            candidate.IsStatic || candidate.Parameters.Count != 1 || !OriginalParameter(candidate, 0) ||
-            !Scalar(candidate.Parameters[0].ParameterType)) return false;
+            candidate.IsStatic || candidate.Parameters.Count is < 1 or > 2) return false;
         var argumentIndex = call.OpCode == OpCode.Call ? 3 : 2;
-        if (call.Operands.Count <= argumentIndex ||
-            !TryArgument(caller, call.Operands[argumentIndex], call, candidate.Parameters[0].ParameterType,
-                out _, out var argument)) return false;
+        if (call.Operands.Count < argumentIndex + candidate.Parameters.Count) return false;
         var operands = call.Operands.ToList();
-        operands[argumentIndex] = CanonicalArgument(caller, argument);
+        for (var index = 0; index < candidate.Parameters.Count; index++)
+        {
+            var type = candidate.Parameters[index].ParameterType;
+            if (!OriginalParameter(candidate, index) || !Scalar(type) ||
+                !TryArgument(caller, call.Operands[argumentIndex + index], call, type, out _, out var argument))
+                return false;
+            operands[argumentIndex + index] = CanonicalArgument(caller, argument);
+        }
         return NullCheckedCall.TryGet(new(-1, call.OpCode, operands)
             { IntegerBitWidth = call.IntegerBitWidth }, out target, out receiver);
     }
@@ -146,8 +154,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     !TryGuard(caller, body, values, origin, site.Comparison, site.Branch, call,
                         out var nullCall, out var helper, site.Helper, site.NullCall) ||
                     nullCall != site.NullCall || helper.NativeTarget != site.Helper.NativeTarget ||
-                    !BindInvocation(caller, call, target, origin, body, values, out var argument) ||
-                    argument != site.Argument || !EffectsRetained(caller, call, site.Effects) ||
+                    !BindInvocation(caller, call, target, origin, body, values, out var arguments) ||
+                    !arguments.SequenceEqual(site.Arguments) || !EffectsRetained(caller, call, site.Effects) ||
                     !ControlsRetained(caller, body, site.Controls) ||
                     site.Stores.Any(store => !ReferenceStoreRetained(caller, body, values, store)))
                     return false;
@@ -244,32 +252,41 @@ internal static partial class X64NativeNullCheckedInvocationProof
     }
 
     private static bool BindInvocation(MethodAnalysisContext caller, Instruction call, MethodAnalysisContext target,
-        Origin receiver, NativeInstruction[] body, X64NativeInvocationValues values, out Argument? argument)
+        Origin receiver, NativeInstruction[] body, X64NativeInvocationValues values, out Argument[] arguments)
     {
-        argument = null;
+        arguments = [];
         if (call.NativeAddress is not { } address || caller.ControlFlowGraph?.Instructions.Contains(call) != true ||
-            !EligibleTarget(caller, target, receiver.Type) || target.Parameters.Count > 1 ||
+            !EligibleTarget(caller, target, receiver.Type) || target.Parameters.Count > 2 ||
             body.SingleOrDefault(native => native.IP == address) is not { Op0Kind: OpKind.NearBranch64 } native ||
             native.Code is not (Code.Call_rel32_64 or Code.Jmp_rel32_64) ||
             native.NearBranchTarget != target.UnderlyingPointer ||
             !values.HasCallFrame(address, native.Code == Code.Jmp_rel32_64) ||
-            !BindReceiver(caller, receiver, body, values, address, NativeRegister.RCX) ||
-            !values.Matches(address, target.Parameters.Count == 0 ? NativeRegister.RDX : NativeRegister.R8,
-                64, new(NativeRegister.None, Literal: 0)))
+            !BindReceiver(caller, receiver, body, values, address, NativeRegister.RCX))
             return false;
+        var methodInfo = target.Parameters.Count switch
+        {
+            0 => NativeRegister.RDX, 1 => NativeRegister.R8, _ => NativeRegister.R9,
+        };
+        if (!values.Matches(address, methodInfo, 64, new(NativeRegister.None, Literal: 0))) return false;
         if (native.Code == Code.Jmp_rel32_64 &&
             (native.NearBranchTarget >= body[0].IP && native.NearBranchTarget < body[^1].NextIP ||
              caller.ReturnType != target.ReturnType))
             return false;
-        if (target.Parameters.Count == 0) return true;
-        var parameter = target.Parameters[0];
-        if (!Scalar(parameter.ParameterType) || parameter.Definition?.RawType?.Type != parameter.ParameterType.Type ||
-            !TryArgument(caller, call.Operands[call.OpCode == OpCode.Call ? 3 : 2], call,
-                parameter.ParameterType, out var source, out var managed) ||
-            !values.Matches(address, NativeRegister.RDX,
-                parameter.ParameterType.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32, source))
-            return false;
-        argument = managed;
+        var argumentIndex = call.OpCode == OpCode.Call ? 3 : 2;
+        if (call.Operands.Count < argumentIndex + target.Parameters.Count) return false;
+        var bound = new Argument[target.Parameters.Count];
+        for (var index = 0; index < target.Parameters.Count; index++)
+        {
+            var parameter = target.Parameters[index];
+            if (!Scalar(parameter.ParameterType) || parameter.Definition?.RawType?.Type != parameter.ParameterType.Type ||
+                !TryArgument(caller, call.Operands[argumentIndex + index], call,
+                    parameter.ParameterType, out var source, out var managed) ||
+                !values.Matches(address, index == 0 ? NativeRegister.RDX : NativeRegister.R8,
+                    parameter.ParameterType.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32, source))
+                return false;
+            bound[index] = managed;
+        }
+        arguments = bound;
         return true;
     }
 

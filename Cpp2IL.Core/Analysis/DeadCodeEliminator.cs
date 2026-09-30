@@ -87,6 +87,7 @@ public static class DeadCodeEliminator
             OpCode.IntegerExtend => IntegerExtension.IsPureAndValid(instruction),
             OpCode.FloatSelect => FloatSelection.TryGet(instruction, out _),
             OpCode.FloatProject => FloatProjection.TryGet(instruction, out _),
+            OpCode.FloatConvert => FloatConversion.TryGet(instruction, out _),
             _ => false
         };
         if (!pureOperation)

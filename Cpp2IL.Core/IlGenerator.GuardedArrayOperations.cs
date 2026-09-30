@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cpp2IL.Core.Analysis;
+using Cpp2IL.Core.Graphs;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
@@ -17,7 +18,11 @@ public static partial class IlGenerator
     {
         if (method.GetExtraData<X64GuardedArrayOperationProof.Evidence>(
                 X64GuardedArrayOperationProof.EvidenceKey) is not { } evidence)
+        {
+            if (NativeRecoveryProofTracker.Has(method, X64GuardedArrayOperationProof.EvidenceKey))
+                throw ArrayOperationFailure("the admitted native evidence disappeared");
             return;
+        }
         var current = X64GuardedArrayOperationProof.Find(method, evidence.Body);
         if (current == null || !current.Body.SequenceEqual(evidence.Body) ||
             !current.Sites.SequenceEqual(evidence.Sites) ||
@@ -25,7 +30,8 @@ public static partial class IlGenerator
             !current.NullCheckedCalls.SequenceEqual(evidence.NullCheckedCalls) ||
             !current.InvocationArguments.SequenceEqual(evidence.InvocationArguments) ||
             !current.EffectAddresses.SequenceEqual(evidence.EffectAddresses) ||
-            LinearInstructions(method.ControlFlowGraph!) is not { } instructions)
+            LinearInstructions(method.ControlFlowGraph!) is not { } instructions ||
+            !ValidArrayCompositionJumps(method, instructions))
             throw ArrayOperationFailure("the native evidence or successful linear path changed");
 
         var operations = new HashSet<Instruction>();
@@ -74,7 +80,7 @@ public static partial class IlGenerator
             var native = evidence.Body.Single(instruction => instruction.IP == effect.NativeAddress);
             var target = effect.Operands.OfType<MethodAnalysisContext>().SingleOrDefault();
             var check = evidence.NullCheckedCalls.SingleOrDefault(call => call.Ip == native.IP);
-            if (native.Code != Code.Call_rel32_64 || target == null ||
+            if (!(native.Code == Code.Call_rel32_64 || X64GuardedArrayOperationProof.IsTailInvocation(native)) || target == null ||
                 target.UnderlyingPointer != native.NearBranchTarget ||
                 !ReferenceEquals(target.AppContext, method.AppContext) ||
                 !X64GuardedArrayOperationProof.HasEligibleEffectCall(target) ||
@@ -95,10 +101,56 @@ public static partial class IlGenerator
                     !ValidInvocationArgument(method, instructions, effect.Operands[start + index],
                         instructions.IndexOf(effect), argument, operations)).Any())
                 throw ArrayOperationFailure("an intervening call lost its original typed argument value");
+            if (X64GuardedArrayOperationProof.IsTailInvocation(native) &&
+                (!ValidArrayTailReturn(method, instructions, effect, target) ||
+                 !ValidArrayTailFieldEffects(method, instructions, evidence)))
+                throw ArrayOperationFailure("the terminal invocation lost its original return or field effect");
         }
         if (instructions.Any(instruction => instruction.Destination is FieldReference field &&
                 (field.Field.Attributes & System.Reflection.FieldAttributes.InitOnly) != 0))
             throw ArrayOperationFailure("a field store has readonly metadata outside a constructor");
+    }
+
+    private static bool ValidArrayTailReturn(MethodAnalysisContext method, List<Instruction> instructions,
+        Instruction call, MethodAnalysisContext target)
+    {
+        if (!NullCheckedCall.SameOrdinaryType(method.ReturnType, method.DefaultReturnType) ||
+            !NullCheckedCall.SameOrdinaryType(target.ReturnType, target.DefaultReturnType) ||
+            !NullCheckedCall.SameOrdinaryType(method.ReturnType, target.ReturnType) ||
+            instructions.Where(instruction => instruction.OpCode == OpCode.Return).ToArray() is not [var finalReturn] ||
+            !ReferenceEquals(instructions.Last(), finalReturn) ||
+            finalReturn.NativeAddress != call.NativeAddress || finalReturn.IntegerBitWidth != 0 ||
+            finalReturn.CallSemantics != CallSemantics.Direct)
+            return false;
+
+        var returnPosition = instructions.IndexOf(finalReturn);
+        if (instructions.IndexOf(call) >= returnPosition)
+            return false;
+        if (method.IsVoid)
+            return call.OpCode == OpCode.CallVoid && finalReturn.Operands.Count == 0;
+
+        return call.OpCode == OpCode.Call && call.Destination is LocalVariable result &&
+               NullCheckedCall.SameOrdinaryType(result.Type, method.ReturnType) &&
+               finalReturn.Operands is [LocalVariable returned] &&
+               ReachesDefinition(instructions, returned, returnPosition, call, method.ReturnType);
+    }
+
+    private static bool ValidArrayCompositionJumps(MethodAnalysisContext method, List<Instruction> instructions)
+    {
+        // Null-guard removal can leave a forward block bridge. Its emitted
+        // operand must agree with the already authenticated linear graph path.
+        foreach (var instruction in instructions.Where(instruction => instruction.OpCode == OpCode.Jump))
+        {
+            var owner = method.ControlFlowGraph!.FindBlockByInstruction(instruction);
+            if (owner == null || !ReferenceEquals(owner.Instructions.LastOrDefault(), instruction) ||
+                instruction.Operands.Count != 1 || owner.Successors is not [var next])
+                return false;
+            var target = instruction.Operands[0];
+            if (!ReferenceEquals(target, next) &&
+                !ReferenceEquals(target, next.Instructions.FirstOrDefault()))
+                return false;
+        }
+        return true;
     }
 
     private static bool IsArrayCompositionEffect(Instruction instruction) =>

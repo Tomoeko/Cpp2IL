@@ -25,13 +25,16 @@ internal static partial class X64GuardedArrayOperationProof
         arguments = [];
         if (X64NativeInvocationValues.Create(facts.Body, noReturn) is not { } values) return false;
         var results = new List<InvocationArgument>();
-        foreach (var index in native.Effects.Where(index => facts.Body[index].FlowControl == FlowControl.Call))
+        foreach (var index in native.Effects.Where(index => IsInvocation(facts.Body[index])))
         {
             var call = facts.Body[index];
             var target = caller.AppContext.MethodsByAddress[call.NearBranchTarget].Single();
             var first = target.IsStatic ? 0 : -1;
             var managedCount = target.Parameters.Count - first;
-            if (managedCount >= Arguments.Length || !values.Matches(call.IP, Arguments[managedCount], 64,
+            if (managedCount >= Arguments.Length ||
+                !values.HasCallFrame(call.IP, IsTailInvocation(call)) ||
+                IsTailInvocation(call) && !NullCheckedCall.SameOrdinaryType(caller.ReturnType, target.ReturnType) ||
+                !values.Matches(call.IP, Arguments[managedCount], 64,
                     new(NativeRegister.None, Literal: 0))) return false;
             for (var parameter = first; parameter < target.Parameters.Count; parameter++)
             {

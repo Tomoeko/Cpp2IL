@@ -816,6 +816,85 @@ public class UnitySourceEmitterTests
         });
     }
 
+    [TestCase("System.Runtime", "4.1.2.0")]
+    [TestCase("System.Collections", "4.0.11.0")]
+    public void UnusedExactFrameworkReferenceIsRetainedWithoutChangingManagedSource(string name, string version)
+    {
+        // Use a synthetic identity carrier with this test's explicit host dependency.
+        // Host facades themselves can reference historical identities that do not
+        // match the current runtime; they are not a Unity reference set.
+        var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        var identity = System.Reflection.AssemblyName.GetAssemblyName(Path.Combine(runtimeDirectory, name + ".dll"));
+        var references = Path.Combine(_directory, "references");
+        Directory.CreateDirectory(references);
+        var referencePath = Path.Combine(references, name + ".dll");
+        var target = CreateAssembly(name);
+        target.Version = Version.Parse(version);
+        target.PublicKey = identity.GetPublicKey();
+        target.HasPublicKey = true;
+        using (var stream = File.Create(referencePath))
+            target.WriteManifest(stream);
+        var reference = new AsmResolver.DotNet.AssemblyReference(identity.Name, target.Version)
+        {
+            PublicKeyOrToken = identity.GetPublicKeyToken(),
+        };
+        Assert.That(Unity2021TargetFrameworkAssemblies.HasTargetIdentity(reference), Is.True);
+        var application = CreateAssembly("Synthetic.Application");
+        application.ManifestModule!.AssemblyReferences.Add(reference);
+        application.ManifestModule.TokenAllocator.AssignNextAvailableToken(reference);
+        var project = Path.Combine(_directory, "project");
+        var report = UnitySourceProjectEmitter.Emit([application], ["Synthetic.Application"],
+            [references, runtimeDirectory], project);
+        var original = UnitySourceProjectEmitter.Emit([CreateAssembly("Synthetic.Application")],
+            ["Synthetic.Application"], [runtimeDirectory], Path.Combine(_directory, "without-reference"));
+        var entry = report.Assemblies.Single();
+        var directory = Path.GetDirectoryName(Path.Combine(project, entry.SourceFile))!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(report.SourceGeneration, Is.EqualTo("generated"));
+            Assert.That(entry.CompilerReferenceAliases, Is.EqualTo(new[] { name }));
+            Assert.That(File.ReadAllText(Path.Combine(directory, "ReferenceAliases.rsp")),
+                Is.EqualTo("-reference:Cpp2ILReference0=\"" + referencePath.Replace('\\', '/') + "\"\n"));
+            Assert.That(File.ReadAllText(Path.Combine(project, entry.SourceFile)),
+                Is.EqualTo(File.ReadAllText(Path.Combine(_directory, "without-reference", original.Assemblies.Single().SourceFile))));
+            Assert.That(Directory.GetFiles(Path.Combine(project, "Assets"), "*.dll", SearchOption.AllDirectories), Is.Empty);
+            Assert.That(report.UnityCompilation, Is.EqualTo("unverified"));
+        });
+    }
+
+    [Test]
+    public void IntrinsicTargetCoreLibraryDoesNotRequireACompilerAlias()
+    {
+        var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        var identity = System.Reflection.AssemblyName.GetAssemblyName(Path.Combine(runtimeDirectory, "mscorlib.dll"));
+        var assembly = CreateAssembly("Synthetic.Application");
+        var reference = new AsmResolver.DotNet.AssemblyReference("mscorlib", identity.Version!)
+        {
+            PublicKeyOrToken = identity.GetPublicKeyToken(),
+        };
+        Assert.That(Unity2021TargetFrameworkAssemblies.HasTargetIdentity(reference), Is.True);
+        assembly.ManifestModule!.AssemblyReferences.Add(reference);
+        assembly.ManifestModule.TokenAllocator.AssignNextAvailableToken(reference);
+        var path = Path.Combine(_directory, "Synthetic.Application.dll");
+        using (var stream = File.Create(path))
+            assembly.WriteManifest(stream);
+        using var file = new PEFile(path);
+        using var resolver = new ExplicitAssemblyResolver([path], [runtimeDirectory]);
+        var diagnostics = new List<string>();
+
+        var aliases = UnityCompilerReferenceAliases.Write(assembly.ManifestModule, file, resolver,
+            "Assets/Recovered/Synthetic.Application", _directory, diagnostics);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(aliases, Is.Empty);
+            Assert.That(diagnostics, Is.Empty);
+            Assert.That(File.Exists(Path.Combine(_directory, "ReferenceAliases.rsp")), Is.False);
+            Assert.That(File.ReadAllText(Path.Combine(_directory, "csc.rsp")), Does.Not.Contain("-debug:portable"));
+        });
+    }
+
     [Test]
     public void NondefaultReferenceFlagsCannotClaimCompilerAliasPreservation()
     {

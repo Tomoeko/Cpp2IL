@@ -183,4 +183,10 @@ public enum OpCode
     FloatSelect,
     /// <summary>Proved scalar vector copy/positive zero: destination, typed source, width (32/64).</summary>
     FloatProject,
+
+    /// <summary>
+    /// Converts floating op 2 from the width in op 3 to the width in op 4, storing op 1.
+    /// Models result bits under default rounding and masked exceptions, not floating control/status effects.
+    /// </summary>
+    FloatConvert,
 }

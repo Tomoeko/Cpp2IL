@@ -54,6 +54,15 @@ public class X64ArrayCallOriginFixtureTests
             method.Analyze();
             IlGenerator.ValidateGuardedArrayOperations(method);
             var instructions = method.ControlFlowGraph!.Instructions.ToArray();
+            var bridge = instructions.First(instruction => instruction.OpCode == OpCode.Jump);
+            var bridgeTarget = bridge.Operands[0];
+            try
+            {
+                bridge.SetOperand(0, bridge);
+                Assert.Throws<DecompilerException>(() => IlGenerator.ValidateGuardedArrayOperations(method),
+                    "The emitted bridge must agree with its authenticated successor, not just cached graph edges.");
+            }
+            finally { bridge.SetOperand(0, bridgeTarget); }
             var calls = origins.Select(origin => instructions.Single(instruction =>
                 instruction.NativeAddress == origin.Ip && instruction.OpCode == OpCode.Call)).ToArray();
             var accesses = evidence.Sites.Select(site => instructions.Single(instruction =>
@@ -136,6 +145,21 @@ public class X64ArrayCallOriginFixtureTests
                 Assert.That(evidence.InvocationArguments.Count(argument => argument.CallIp == effect.NativeAddress),
                     Is.EqualTo(3), "The receiver and both scalar operands have independent native origins.");
                 var argumentStart = effect.OpCode == OpCode.Call ? 3 : 2;
+                if (name == "ReadAfterEffect")
+                {
+                    Assert.That(effect.CallSemantics, Is.EqualTo(CallSemantics.NullCheckedInstance),
+                        "The complete array proof authenticates this two-scalar receiver check.");
+                    Assert.That(evidence.InvocationArguments.Where(argument => argument.CallIp == effect.NativeAddress)
+                        .Select(argument => argument.ParameterIndex), Is.EqualTo(new[] { -1, 0, 1 }));
+                    var originalOperands = effect.Operands.ToList();
+                    try
+                    {
+                        effect.RemoveOperandAt(argumentStart + 1);
+                        Assert.Throws<DecompilerException>(() => IlGenerator.ValidateGuardedArrayOperations(method),
+                            "The checked array-composition call must retain both scalar arguments.");
+                    }
+                    finally { effect.SetOperands(originalOperands); }
+                }
                 for (var index = argumentStart; index < argumentStart + 2; index++)
                 {
                     var original = effect.Operands[index];

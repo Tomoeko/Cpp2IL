@@ -98,6 +98,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return byteMaskBoolean; // Complete Boolean leaf proves the second argument's low-byte mask.
         if (X64ScalarZeroReturnProof.TryLift(context, nativeInstructions) is { } scalarZero)
             return scalarZero; // The complete leaf clears all XMM0 bits before a scalar return.
+        if (X64ScalarFloatConversionProof.TryLift(context, nativeInstructions) is { } scalarFloatConversion)
+            return scalarFloatConversion; // The complete leaf binds the incoming and returned floating widths.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
         if (X64ReferencePropertySetterProof.TryLift(context, nativeInstructions) is { } propertyStore)
@@ -216,6 +218,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         {
             nativeInstructions = composedArray.Body.ToArray();
             context.PutExtraData(X64GuardedArrayOperationProof.EvidenceKey, composedArray);
+            NativeRecoveryProofTracker.Mark(context, X64GuardedArrayOperationProof.EvidenceKey);
             suppressedArrayGuards = new HashSet<ulong>(composedArray.RemovedAddresses);
             arrayIndexExtensions = new HashSet<ulong>(composedArray.IndexExtensions.Select(extension => extension.Ip));
             noReturnCalls.UnionWith(composedArray.NoReturnCallAddresses);
