@@ -35,7 +35,7 @@ internal static class X64BooleanArrayFillLoopProof
         {
             var app = method.AppContext;
             if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
-                app.Binary is not PE || !OrdinaryMethod(method) ||
+                app.Binary is not PE || !HasCandidateShape(method) || !OrdinaryMethod(method) ||
                 ReadBody(method) is not { } body ||
                 TryProveShape(body) is not { } shape ||
                 method.Parameters.Count != (shape.UsesParameter ? 1 : 0) ||
@@ -77,6 +77,17 @@ internal static class X64BooleanArrayFillLoopProof
         {
             return null;
         }
+    }
+
+    private static bool HasCandidateShape(MethodAnalysisContext method)
+    {
+        if (method.UnderlyingPointer is 0 or ulong.MaxValue)
+            return false;
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
+        var prefix = method.RawBytes.AsSpan()[..Math.Min(method.RawBytes.Length, 128)];
+        var decoded = X86Utils.Iterate(prefix, method.UnderlyingPointer, false).Take(29).ToArray();
+        return TryProveShape(decoded.Take(28).ToArray()) != null || TryProveShape(decoded) != null;
     }
 
     private static NativeInstruction[]? ReadBody(MethodAnalysisContext method)

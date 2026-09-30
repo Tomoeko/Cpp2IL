@@ -68,11 +68,16 @@ internal static class X64TypeFromHandleProof
                         region.Start + (ulong)offset)))
                 return null;
 
-            method.EnsureRawBytes();
+            if (method.RawBytes.Length == 0)
+                method.EnsureRawBytes();
             var rawStart = pe.MapVirtualAddressToRaw(region.Start, false);
             var bodyLength = checked((int)(region.End - region.Start));
             if (rawStart < 0 || method.RawBytes.Length < bodyLength ||
                 rawStart > pe.GetRawBinaryContent().Length - bodyLength ||
+                !unwind.IsUnaffectedByBaseRelocation(region.Start,
+                    checked((uint)bodyLength)) ||
+                !X64AncestorConstructorThunkProof.FileBackedExecutable(pe, unwind,
+                    method.RawBytes.AsSpan().Slice(0, bodyLength), region.Start) ||
                 !pe.GetRawBinaryContent().Slice((int)rawStart, bodyLength)
                     .SequenceEqual(method.RawBytes.AsSpan().Slice(0, bodyLength)) ||
                 !X86Utils.Iterate(method).Take(body.Length).SequenceEqual(body))
@@ -109,9 +114,11 @@ internal static class X64TypeFromHandleProof
                     unwind, shape.TypeSlot, 8) ||
                 !X64MetadataStaticGetterProof.FileBackedWritableData(pe,
                     unwind, shape.TypeInfoSlot, 8) ||
+                !unwind.IsUnaffectedByBaseRelocation(shape.TypeSlot, 8) ||
+                !unwind.IsUnaffectedByBaseRelocation(shape.TypeInfoSlot, 8) ||
                 shape.MetadataInitializer != app.GetOrCreateKeyFunctionAddresses()
                     .il2cpp_codegen_initialize_runtime_metadata ||
-                !X64MetadataInitializationHelperProof.TryIdentify(app, pe,
+                !X64MetadataInitializationHelperProof.TryIdentifyType(app, pe,
                     unwind, shape.MetadataInitializer) ||
                 shape.ClassInitializer != app.GetOrCreateKeyFunctionAddresses()
                     .il2cpp_runtime_class_init_export ||
@@ -210,7 +217,8 @@ internal static class X64TypeFromHandleProof
             MethodAttributes.PinvokeImpl)) == 0 &&
         (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
             MethodImplAttributes.ManagedMask |
-            MethodImplAttributes.InternalCall)) == 0 &&
+            MethodImplAttributes.InternalCall |
+            MethodImplAttributes.Synchronized)) == 0 &&
         !RuntimeNullGuardCoalescer.HasOutputOptions(method) &&
         RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) &&
         method.UnderlyingPointer != 0;

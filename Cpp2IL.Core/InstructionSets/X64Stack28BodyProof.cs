@@ -33,8 +33,7 @@ internal static class X64Stack28BodyProof
             !unwind.MatchesUnwind(start, region.End, 4, 0, [4, 0x42]) ||
             !unwind.IsUnaffectedByBaseRelocation(start,
                 checked((uint)(region.End - start))) ||
-            method.AppContext.MethodsByAddress.Keys.Any(address =>
-                address > start && address < region.End))
+            X64NativeInstructionReader.HasInteriorManagedEntry(method.AppContext, start, region.End))
             return null;
 
         var native = X86Utils.Iterate(method)

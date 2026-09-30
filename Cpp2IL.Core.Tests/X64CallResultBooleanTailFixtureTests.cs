@@ -11,7 +11,7 @@ namespace Cpp2IL.Core.Tests;
 
 /// <summary>Optional player controls for direct engine calls and their ordered null guards.</summary>
 [NonParallelizable]
-public class X64CallResultBooleanFalseTailFixtureTests
+public class X64CallResultBooleanTailFixtureTests
 {
     [TestCase("CPP2IL_CALL_RESULT_ENGINE_FALSE_TAIL_FIXTURE_INPUT",
         "CallResultEngineFalseTailFixture", "ActivityBehaviour", "DisableSelf", false)]
@@ -37,12 +37,12 @@ public class X64CallResultBooleanFalseTailFixtureTests
             var method = app.GetAssemblyByName(assemblyName)!.Types
                 .Single(type => type.Name == typeName).Methods
                 .Single(candidate => candidate.Name == methodName);
-            var body = X64CallResultBooleanFalseTailProof.ReadBody(method);
+            var body = X64CallResultBooleanTailProof.ReadBody(method);
             TestContext.Out.WriteLine($"Caller: {method.UnderlyingPointer:X}; cached bytes: {method.RawBytes.Length}");
             foreach (var native in body ?? X86Utils.Iterate(method).Take(13).ToArray())
                 TestContext.Out.WriteLine($"{native.IP:X}: {native}");
             Assert.That(body, Has.Length.EqualTo(checksProducerReceiver ? 13 : 11));
-            var evidence = X64CallResultBooleanFalseTailProof.Find(method);
+            var evidence = X64CallResultBooleanTailProof.Find(method);
             Assert.That(evidence, Is.Not.Null,
                 "The complete native body, guards and callee identities must all authenticate.");
             Assert.Multiple(() =>
@@ -73,12 +73,12 @@ public class X64CallResultBooleanFalseTailFixtureTests
                 {
                     definition.iflags |= 0xF000;
                     Assert.That(definition.IsUnmanagedCallersOnly, Is.True);
-                    Assert.That(X64CallResultBooleanFalseTailProof.Find(method), Is.Null,
+                    Assert.That(X64CallResultBooleanTailProof.Find(method), Is.Null,
                         "a complete extension marker cannot authenticate an ordinary managed caller or callee ABI");
                 }
                 finally { definition.iflags = originalImplementation; }
             }
-            Assert.That(X64CallResultBooleanFalseTailProof.Find(method), Is.Not.Null);
+            Assert.That(X64CallResultBooleanTailProof.Find(method), Is.Not.Null);
 
             var cachedBytes = method.RawBytes;
             var mismatch = cachedBytes.AsSpan().ToArray();
@@ -86,7 +86,7 @@ public class X64CallResultBooleanFalseTailFixtureTests
             method.RawBytes = new BinarySlice(mismatch);
             try
             {
-                Assert.That(X64CallResultBooleanFalseTailProof.Find(method), Is.Null,
+                Assert.That(X64CallResultBooleanTailProof.Find(method), Is.Null,
                     "The metadata slice must agree with the independently authenticated PE prefix.");
             }
             finally { method.RawBytes = cachedBytes; }
@@ -126,6 +126,7 @@ public class X64CallResultBooleanFalseTailFixtureTests
                         Assert.That(target.ImplAttributes, Is.EqualTo(target.DefaultImplAttributes));
                         Assert.That(NullCheckedCall.TryGet(call, out _, out _), Is.False,
                             "Only the exact original InternalCall implementation class is admitted.");
+                        Assert.That(X64CallResultBooleanTailProof.Find(method), Is.Null);
                     }
                     finally { target.Definition.iflags = implementation; }
                 }
@@ -136,7 +137,7 @@ public class X64CallResultBooleanFalseTailFixtureTests
                 {
                     Assert.That(NullCheckedCall.TryGet(call, out _, out _), Is.False,
                         "InternalCall eligibility must revalidate unique native ownership.");
-                    Assert.That(X64CallResultBooleanFalseTailProof.Find(method), Is.Null,
+                    Assert.That(X64CallResultBooleanTailProof.Find(method), Is.Null,
                         "A duplicate managed call identity does not establish a unique callee.");
                 }
                 finally { bindings.RemoveAt(bindings.Count - 1); }
@@ -167,7 +168,7 @@ public class X64CallResultBooleanFalseTailFixtureTests
                 target.OverrideName = "ChangedCallIdentity";
                 try
                 {
-                    Assert.That(X64CallResultBooleanFalseTailProof.Find(method), Is.Null);
+                    Assert.That(X64CallResultBooleanTailProof.Find(method), Is.Null);
                 }
                 finally { target.OverrideName = name; }
             }
@@ -176,7 +177,7 @@ public class X64CallResultBooleanFalseTailFixtureTests
             parameter.OverrideParameterType = app.SystemTypes.SystemByteType;
             try
             {
-                Assert.That(X64CallResultBooleanFalseTailProof.Find(method), Is.Null,
+                Assert.That(X64CallResultBooleanTailProof.Find(method), Is.Null,
                     "The zero argument is an evidenced Boolean, not an arbitrary numeric parameter.");
             }
             finally { parameter.OverrideParameterType = null; }
@@ -193,7 +194,7 @@ public class X64CallResultBooleanFalseTailFixtureTests
                     else raw.Pinned = 1;
                     try
                     {
-                        Assert.That(X64CallResultBooleanFalseTailProof.Find(method), Is.Null,
+                        Assert.That(X64CallResultBooleanTailProof.Find(method), Is.Null,
                             $"A {flag} class descriptor cannot authenticate an ordinary reference receiver.");
                     }
                     finally { (raw.NumMods, raw.Byref, raw.Pinned) = previous; }

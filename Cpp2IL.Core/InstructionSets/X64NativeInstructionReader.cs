@@ -11,6 +11,22 @@ namespace Cpp2IL.Core.InstructionSets;
 /// <summary>Reads a bounded, file-backed x64 helper prefix without crossing unsupported unwind data.</summary>
 internal static class X64NativeInstructionReader
 {
+    internal static bool HasInteriorManagedEntry(ApplicationAnalysisContext app, ulong start, ulong end) =>
+        HasInteriorManagedEntry(app.MethodsByAddress, start, end);
+
+    internal static bool HasInteriorManagedEntry(
+        IReadOnlyDictionary<ulong, List<MethodAnalysisContext>> entries, ulong start, ulong end)
+    {
+        // Native proofs supply small independent bounds. Probe those byte addresses
+        // directly, keeping mutations visible without enumerating every managed entry.
+        if (start == 0 || end <= start || end - start > 4096)
+            return true;
+        for (var address = start + 1; address < end; address++)
+            if (entries.ContainsKey(address))
+                return true;
+        return false;
+    }
+
     /// <summary>Authenticates a frameless leaf while preserving any existing cached bytes.</summary>
     internal static Instruction[]? ReadFramelessLeaf(MethodAnalysisContext method, int count, int maxBytes)
     {
@@ -31,7 +47,7 @@ internal static class X64NativeInstructionReader
                 index.ClassifySpan(start, end) is not
                     { Kind: X64UnwindProof.SpanKind.NoEntry, Start: var provedStart, End: var provedEnd } ||
                 provedStart != start || provedEnd != end ||
-                method.AppContext.MethodsByAddress.Keys.Any(address => address > start && address < end))
+                HasInteriorManagedEntry(method.AppContext, start, end))
                 return null;
             var length = checked((int)(end - start));
             var offset = pe.MapVirtualAddressToRaw(start, false);
@@ -63,7 +79,7 @@ internal static class X64NativeInstructionReader
             var span = index.ClassifySpan(method.UnderlyingPointer, method.UnderlyingPointer + 1);
             if (span.Kind != X64UnwindProof.SpanKind.HandlerFree || span.Start != method.UnderlyingPointer ||
                 span.RootStart != span.Start || span.End <= span.Start || span.End - span.Start > 4096 ||
-                method.AppContext.MethodsByAddress.Keys.Any(address => address > span.Start && address < span.End))
+                HasInteriorManagedEntry(method.AppContext, span.Start, span.End))
                 return null;
             var length = checked((int)(span.End - span.Start));
             var offset = pe.MapVirtualAddressToRaw(span.Start, false);

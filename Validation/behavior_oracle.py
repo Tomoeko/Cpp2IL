@@ -28,9 +28,13 @@ def _same_type_and_value(actual, expected):
     return actual == expected
 
 
+def read_report(path):
+    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object,
+                      parse_constant=_invalid_constant)
+
+
 def verify_report(path, stage, version, profile, expected, methods, scope):
-    report = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object,
-                        parse_constant=_invalid_constant)
+    report = read_report(path)
     platform = {"editor": "WindowsEditor", "player": "WindowsPlayer"}.get(stage)
     if (not isinstance(report, dict) or platform is None or report.get("unityVersion") != version or
             report.get("stage") != stage or report.get("platform") != platform or report.get("profile") != profile):

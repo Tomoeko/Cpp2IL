@@ -50,11 +50,14 @@ internal static class X64MetadataStaticGetterProof
             region.End <= region.Start || region.End - region.Start is < 36 or > 96)
             return null;
 
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         var native = X86Utils.Iterate(method).TakeWhile(instruction => instruction.IP < region.End).ToArray();
         var rawStart = pe.MapVirtualAddressToRaw(region.Start, false);
         var rawEnd = pe.MapVirtualAddressToRaw(region.End - 1, false);
-        if (native.Length is < 11 or > 32 || rawStart < 0 || rawEnd < rawStart ||
+        if (!FileBackedExecutableBody(method, pe, unwind, region.Start, region.End,
+                allowInt3Tail: true) ||
+            native.Length is < 11 or > 32 || rawStart < 0 || rawEnd < rawStart ||
             (ulong)(rawEnd - rawStart) != region.End - region.Start - 1 ||
             rawEnd >= pe.GetRawBinaryContent().Length || native[0].IP != region.Start ||
             native[10].NextIP > region.End ||
@@ -83,10 +86,12 @@ internal static class X64MetadataStaticGetterProof
         var flag = native[1].IPRelativeMemoryAddress;
         if (slot <= flag && flag - slot < 8 ||
             !FileBackedWritableData(pe, unwind, slot, 8) ||
+            !unwind.IsUnaffectedByBaseRelocation(slot, 8) ||
             !ZeroInitializedWritableData(unwind, flag, 1) ||
+            !unwind.IsUnaffectedByBaseRelocation(flag, 1) ||
             native[4].NearBranchTarget != app.GetOrCreateKeyFunctionAddresses()
                 .il2cpp_codegen_initialize_runtime_metadata ||
-            !X64MetadataInitializationHelperProof.TryIdentify(app, pe, unwind,
+            !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe, unwind,
                 native[4].NearBranchTarget))
             return null;
 
@@ -112,7 +117,8 @@ internal static class X64MetadataStaticGetterProof
         method.Attributes == method.DefaultAttributes && method.ImplAttributes == method.DefaultImplAttributes &&
         (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) == 0 &&
         (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
-                                  MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) == 0;
+                                  MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall |
+                                  MethodImplAttributes.Synchronized)) == 0;
 
     internal static bool OrdinaryOwner(TypeAnalysisContext owner) =>
         !owner.IsValueType && !owner.IsInterface && !owner.IsGenericInstance &&
@@ -212,6 +218,34 @@ internal static class X64MetadataStaticGetterProof
                instruction.Op0Register == NativeRegister.EAX && instruction.Op1Kind == OpKind.Memory &&
                instruction.MemoryBase == NativeRegister.RCX && instruction.MemoryIndex == NativeRegister.None &&
                instruction.MemorySize.GetSize() == 1;
+    }
+
+    internal static bool FileBackedExecutableBody(MethodAnalysisContext method,
+        PE pe, X64UnwindProof.Index unwind, ulong start, ulong end,
+        bool allowInt3Tail = false)
+    {
+        if (start < unwind.ImageBase || end <= start || end - start > int.MaxValue ||
+            start - unwind.ImageBase > uint.MaxValue - (end - start - 1))
+            return false;
+        var length = (int)(end - start);
+        var cachedLength = Math.Min(method.RawBytes.Length, length);
+        var first = pe.MapVirtualAddressToRaw(start, false);
+        var image = pe.GetRawBinaryContent();
+        if (cachedLength == 0 || first < 0 || first > image.Length - length ||
+            !unwind.IsUnaffectedByBaseRelocation(start, (uint)length) ||
+            !method.RawBytes.AsSpan().Slice(0, cachedLength)
+                .SequenceEqual(image.Slice((int)first, cachedLength)) ||
+            cachedLength < length && (!allowInt3Tail ||
+                !X64NativePaddingProof.HasInt3Padding(pe, start + (ulong)cachedLength, end)))
+            return false;
+        for (var offset = 0; offset < length; offset++)
+        {
+            var address = start + (ulong)offset;
+            if (!unwind.IsExecutableRva((uint)(address - unwind.ImageBase)) ||
+                pe.MapVirtualAddressToRaw(address, false) != first + offset)
+                return false;
+        }
+        return true;
     }
 
     internal static bool FileBackedWritableData(PE pe, X64UnwindProof.Index unwind,

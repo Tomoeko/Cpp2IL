@@ -66,6 +66,8 @@ public class X64TypeFromHandleProofTests
                         .il2cpp_runtime_class_init_export));
                 Assert.That(app.SystemTypes.SystemTypeType.Definition?.HasCctor,
                     Is.True);
+                Assert.That(X64MetadataInitializationHelperProof.TryIdentifyType(
+                    app, pe, unwind, shape.MetadataInitializer), Is.True);
             });
 
             var bound = X64TypeFromHandleProof.BindProvedShape(method, shape!);
@@ -193,6 +195,19 @@ public class X64TypeFromHandleProofTests
                 Is.Not.Null);
             Assert.That(X64TypeFromHandleProof.Find(method, retargeted), Is.Null,
                 "A supplied decoded body must match the PE-backed bytes.");
+
+            var originalCache = method.RawBytes;
+            var changedCache = originalCache.AsSpan().ToArray();
+            changedCache[checked((int)(body[5].NextIP - method.UnderlyingPointer)) - 4] ^= 1;
+            try
+            {
+                method.RawBytes = new BinarySlice(changedCache);
+                Assert.That(X64TypeFromHandleProof.Find(method, body), Is.Null,
+                    "Existing altered cached bytes must not be replaced before their PE identity is checked.");
+                Assert.That(method.RawBytes.AsSpan().ToArray(), Is.EqualTo(changedCache));
+            }
+            finally { method.RawBytes = originalCache; }
+            Assert.That(X64TypeFromHandleProof.Find(method, body), Is.Not.Null);
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }

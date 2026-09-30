@@ -33,7 +33,8 @@ internal static class X64MetadataStaticInt32SetterProof
             !OrdinaryMethod(method, method.AppContext) ||
             method.UnderlyingPointer is 0 or ulong.MaxValue)
             return null;
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         return Find(method, X86Utils.Iterate(method).ToArray());
     }
 
@@ -62,9 +63,10 @@ internal static class X64MetadataStaticInt32SetterProof
             !unwind.MatchesUnwind(start, region.End, 6, 0, SavedRbxFrame))
             return null;
 
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         if (method.RawBytes.Length < 59 || decoded.Count < 14 ||
-            !FileBackedExecutableBody(method, pe, unwind, start, region.End) ||
+            !X64MetadataStaticGetterProof.FileBackedExecutableBody(method, pe, unwind, start, region.End) ||
             !decoded.SequenceEqual(X86Utils.Iterate(method)))
             return null;
 
@@ -85,11 +87,13 @@ internal static class X64MetadataStaticInt32SetterProof
         if (shape.TypeInfoSlot <= shape.Flag && shape.Flag - shape.TypeInfoSlot < 8 ||
             !X64MetadataStaticGetterProof.FileBackedWritableData(pe, unwind,
                 shape.TypeInfoSlot, 8) ||
+            !unwind.IsUnaffectedByBaseRelocation(shape.TypeInfoSlot, 8) ||
             !X64MetadataStaticGetterProof.ZeroInitializedWritableData(unwind,
                 shape.Flag, 1) ||
+            !unwind.IsUnaffectedByBaseRelocation(shape.Flag, 1) ||
             app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata !=
                 shape.Initializer ||
-            !X64MetadataInitializationHelperProof.TryIdentify(app, pe, unwind,
+            !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe, unwind,
                 shape.Initializer) ||
             app.LibCpp2IlContext.GetRawTypeGlobalByAddress(shape.TypeInfoSlot) is not
                 { Type: MetadataUsageType.TypeInfo, IsValid: true } usage ||
@@ -146,7 +150,8 @@ internal static class X64MetadataStaticInt32SetterProof
             (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
             (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                                       MethodImplAttributes.ManagedMask |
-                                      MethodImplAttributes.InternalCall)) != 0 ||
+                                      MethodImplAttributes.InternalCall |
+                                      MethodImplAttributes.Synchronized)) != 0 ||
             method.Definition is not { GenericContainer: null, parameterCount: 1,
                 RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
                     NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
@@ -212,25 +217,6 @@ internal static class X64MetadataStaticInt32SetterProof
             _ when !type.IsValueType => pointerSize,
             _ => TypeSizes.UnboxedSize(type, pointerSize),
         };
-
-    private static bool FileBackedExecutableBody(MethodAnalysisContext method,
-        PE pe, X64UnwindProof.Index unwind, ulong start, ulong end)
-    {
-        if (start < unwind.ImageBase || end != start + 59 ||
-            start - unwind.ImageBase > uint.MaxValue - 58)
-            return false;
-        var first = pe.MapVirtualAddressToRaw(start, false);
-        var last = pe.MapVirtualAddressToRaw(end - 1, false);
-        var bytes = pe.GetRawBinaryContent();
-        return first >= 0 && last == first + 58 && first <= bytes.Length - 59 &&
-               method.RawBytes.AsSpan().Slice(0, 59)
-                   .SequenceEqual(bytes.Slice((int)first, 59)) &&
-               Enumerable.Range(0, 59).All(offset =>
-                   unwind.IsExecutableRva(checked((uint)(
-                       start + (ulong)offset - unwind.ImageBase))) &&
-                   pe.MapVirtualAddressToRaw(start + (ulong)offset, false) ==
-                       first + offset);
-    }
 
     private static bool Stack(NativeInstruction instruction, Mnemonic mnemonic) =>
         instruction.Mnemonic == mnemonic && instruction.Op0Kind == OpKind.Register &&

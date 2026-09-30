@@ -28,6 +28,8 @@ internal static class X64ScalarZeroReturnProof
     internal static List<ManagedInstruction>? TryLift(MethodAnalysisContext method,
         IReadOnlyList<Iced.Intel.Instruction> native)
     {
+        if (!MatchesBody(native, method.UnderlyingPointer))
+            return null;
         var app = method.AppContext;
         var returnType = method.ReturnType;
         var single = ReferenceEquals(returnType, app.SystemTypes.SystemSingleType);
@@ -74,7 +76,6 @@ internal static class X64ScalarZeroReturnProof
                 : CallingConventions.ResolveForManaged(method) is
                     [IsilRegister { Name: "rcx" }, IsilRegister { Name: "rdx" }]) ||
             method.UnderlyingPointer == 0 ||
-            !MatchesBody(native, method.UnderlyingPointer) ||
             !HasAuthenticatedBody(method, native, pe, unwind) ||
             X86CallerExceptionRegionProof.Check(method, native, new HashSet<ulong>()) != null)
             return null;
@@ -115,7 +116,7 @@ internal static class X64ScalarZeroReturnProof
                    unwind.ClassifySpan(start, paddedEnd) is
                        { Kind: X64UnwindProof.SpanKind.NoEntry, Start: var provedStart, End: var provedEnd } &&
                    provedStart == start && provedEnd == paddedEnd &&
-                   !method.AppContext.MethodsByAddress.Keys.Any(address => address > start && address < paddedEnd);
+                   !X64NativeInstructionReader.HasInteriorManagedEntry(method.AppContext, start, paddedEnd);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)

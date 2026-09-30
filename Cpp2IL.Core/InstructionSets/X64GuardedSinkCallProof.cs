@@ -76,10 +76,12 @@ internal static class X64GuardedSinkCallProof
                 checked((region.End + 15) & ~15UL)))
             return false;
 
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         var rawStart = pe.MapVirtualAddressToRaw(start, false);
         var image = pe.GetRawBinaryContent();
-        if (method.RawBytes.Length < BodyLength || rawStart < 0 ||
+        if (!X64MetadataStaticGetterProof.FileBackedExecutableBody(method, pe, unwind, start, region.End) ||
+            method.RawBytes.Length < BodyLength || rawStart < 0 ||
             rawStart > image.Length - BodyLength ||
             !image.Slice((int)rawStart, BodyLength).SequenceEqual(
                 method.RawBytes.AsSpan().Slice(0, BodyLength)) ||
@@ -163,8 +165,6 @@ internal static class X64GuardedSinkCallProof
                 shape.MetadataInitializer == 0 ||
                 shape.MetadataInitializer != app.GetOrCreateKeyFunctionAddresses()
                     .il2cpp_codegen_initialize_runtime_metadata ||
-                !X64MetadataInitializationHelperProof.TryIdentify(app, pe,
-                    unwind, shape.MetadataInitializer) ||
                 !X64MetadataInitializationHelperProof.TryIdentifyStringLiteral(
                     app, pe, unwind, shape.MetadataInitializer) ||
                 shape.ClassInitializer == 0 ||
@@ -238,7 +238,8 @@ internal static class X64GuardedSinkCallProof
                 MethodAttributes.PinvokeImpl)) != 0 ||
             (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                 MethodImplAttributes.ManagedMask |
-                MethodImplAttributes.InternalCall)) != 0 ||
+                MethodImplAttributes.InternalCall |
+                MethodImplAttributes.Synchronized)) != 0 ||
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
             method.UnderlyingPointer == 0)
@@ -297,7 +298,8 @@ internal static class X64GuardedSinkCallProof
                 MethodAttributes.PinvokeImpl)) != 0 ||
             (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                 MethodImplAttributes.ManagedMask |
-                MethodImplAttributes.InternalCall)) != 0)
+                MethodImplAttributes.InternalCall |
+                MethodImplAttributes.Synchronized)) != 0)
             return false;
         return true;
     }

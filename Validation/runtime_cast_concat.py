@@ -1,6 +1,6 @@
 """Independent finite behavior oracle for the neutral class-cast control."""
 
-import json
+from behavior_oracle import verify_report
 
 
 def _state(current_type, text, marker, detail, extra, neighbor):
@@ -114,16 +114,6 @@ def observations():
 
 
 def verify(path, stage, version):
-    report = json.loads(path.read_text(encoding="utf-8"))
-    platform = {"editor": "WindowsEditor", "player": "WindowsPlayer"}.get(stage)
-    if (platform is None or report.get("unityVersion") != version or
-            report.get("stage") != stage or
-            report.get("profile") != "runtime-cast-concat" or
-            report.get("platform") != platform):
-        raise ValueError("Runtime-cast report has the wrong version, stage, profile or platform")
-    expected = observations()
-    if report.get("observations") != expected:
-        raise ValueError("Runtime-cast behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 21,
-            "platform": platform, "profile": "runtime-cast-concat",
-            "scope": "literal and TypeInfo loading, inherited property getter, cast identity, null and incompatible references, aliases and neighbors"}
+    return verify_report(path, stage, version, "runtime-cast-concat",
+                         observations(), 21,
+                         "literal, Type and TypeInfo loading, repeated managed type identity, inherited property getter, cast identity, null and incompatible references, aliases and neighbors")

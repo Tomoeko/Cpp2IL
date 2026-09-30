@@ -9,6 +9,7 @@ import array_read_increment
 import array_sequence
 import array_call
 import boolean_parameter_branch
+from behavior_oracle import read_report
 import enum_passthrough
 import external_references
 import numerics_reference
@@ -157,6 +158,7 @@ import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
 import call_result_false_tail
+import call_result_boolean_tail
 import call_result_engine_false_tail
 import engine_component_false_tail
 import internal_call_field
@@ -209,6 +211,8 @@ PROFILES = {
                                 "source": VALIDATION / "BooleanArrayFillLoopFixture", "methods": 3},
     "base-effect-boolean-tail": {"assembly": "BaseEffectBooleanTailFixture",
                                 "source": VALIDATION / "BaseEffectBooleanTailFixture", "methods": 13},
+    "call-result-boolean-tail": {"assembly": "CallResultBooleanTailFixture",
+                                "source": VALIDATION / "CallResultBooleanTailFixture", "methods": 10},
     "scalar-positive-zero-leaf": {"assembly": "ScalarPositiveZeroLeafFixture",
                                   "source": VALIDATION / "ScalarPositiveZeroLeafFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
@@ -488,6 +492,9 @@ def int32(value):
 
 
 def verify_behavior(path, stage, profile="arithmetic"):
+    report = read_report(path)
+    if not isinstance(report, dict):
+        raise ValueError("Behavior report must contain a JSON object")
     if profile == "alias-ambiguity":
         return alias_ambiguity.verify(path, stage, VERSION)
     if profile == "boolean-parameter-branch":
@@ -524,6 +531,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return boolean_array_fill_loop.verify(path, stage, VERSION)
     if profile == "base-effect-boolean-tail":
         return base_effect_boolean_tail.verify(path, stage, VERSION)
+    if profile == "call-result-boolean-tail":
+        return call_result_boolean_tail.verify(path, stage, VERSION)
     if profile == "scalar-positive-zero-leaf":
         return scalar_positive_zero_leaf.verify(path, stage, VERSION)
     if profile == "narrow-array":
@@ -1144,7 +1153,9 @@ def run_process(command, environment, log, timeout, cwd=None):
 
 
 @contextmanager
-def wine_editor_slot(enabled):
+def wine_editor_slot(enabled, timeout=None):
+    if timeout is not None and timeout <= 0:
+        raise ValueError("Editor queue timeout must be positive")
     if not enabled or os.name == "nt":
         yield 0.0
         return
@@ -1156,7 +1167,18 @@ def wine_editor_slot(enabled):
     lock_path = ROOT / "Files" / "windows-unity-editor.lock"
     with lock_path.open("a+b") as lock:
         waiting_since = time.monotonic()
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if timeout is None:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        else:
+            while True:
+                try:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    remaining = timeout - (time.monotonic() - waiting_since)
+                    if remaining <= 0:
+                        raise TimeoutError("Windows editor queue exceeded the validation budget")
+                    time.sleep(min(0.1, remaining))
         try:
             yield round(time.monotonic() - waiting_since, 3)
         finally:

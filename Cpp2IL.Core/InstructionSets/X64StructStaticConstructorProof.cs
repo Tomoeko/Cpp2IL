@@ -58,11 +58,14 @@ internal static class X64StructStaticConstructorProof
             !unwind.MatchesUnwind(region.Start, region.End, 4, 0, new byte[] { 4, 0x42 }))
             return null;
 
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         var native = X86Utils.Iterate(method).TakeWhile(instruction => instruction.IP < region.End).ToArray();
         var rawStart = pe.MapVirtualAddressToRaw(region.Start, false);
         var rawEnd = pe.MapVirtualAddressToRaw(region.End - 1, false);
-        if (native.Length != 19 || method.RawBytes.Length != 106 ||
+        if (!X64MetadataStaticGetterProof.FileBackedExecutableBody(method, pe, unwind,
+                region.Start, region.End) ||
+            native.Length != 19 || method.RawBytes.Length != 106 ||
             rawStart < 0 || rawEnd < rawStart || rawEnd - rawStart != 105 ||
             rawEnd >= pe.GetRawBinaryContent().Length ||
             !pe.GetRawBinaryContent().Slice(checked((int)rawStart), 106)
@@ -82,11 +85,14 @@ internal static class X64StructStaticConstructorProof
             !Disjoint(shape.Flag, 1, shape.WitnessSlot, 8) ||
             !Disjoint(shape.OwnerSlot, 8, shape.WitnessSlot, 8) ||
             !X64MetadataStaticGetterProof.ZeroInitializedWritableData(unwind, shape.Flag, 1) ||
+            !unwind.IsUnaffectedByBaseRelocation(shape.Flag, 1) ||
             !X64MetadataStaticGetterProof.FileBackedWritableData(pe, unwind, shape.OwnerSlot, 8) ||
+            !unwind.IsUnaffectedByBaseRelocation(shape.OwnerSlot, 8) ||
             !X64MetadataStaticGetterProof.FileBackedWritableData(pe, unwind, shape.WitnessSlot, 8) ||
+            !unwind.IsUnaffectedByBaseRelocation(shape.WitnessSlot, 8) ||
             app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata !=
                 shape.Initializer ||
-            !X64MetadataInitializationHelperProof.TryIdentify(app, pe, unwind, shape.Initializer))
+            !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe, unwind, shape.Initializer))
             return null;
 
         var ownerUsage = app.LibCpp2IlContext.GetRawTypeGlobalByAddress(shape.OwnerSlot);
@@ -177,7 +183,8 @@ internal static class X64StructStaticConstructorProof
         method.ImplAttributes == method.DefaultImplAttributes &&
         (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) == 0 &&
         (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
-                                  MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) == 0;
+                                  MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall |
+                                  MethodImplAttributes.Synchronized)) == 0;
 
     private static bool OrdinaryOwner(TypeAnalysisContext owner,
         MethodAnalysisContext constructor) =>

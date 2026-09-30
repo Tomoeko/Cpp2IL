@@ -27,6 +27,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "folded-boolean-array-store",
     "boolean-array-fill-loop",
     "base-effect-boolean-tail",
+    "call-result-boolean-tail",
     "scalar-positive-zero-leaf",
     "fixed-boolean-conjunction",
     "boolean-literal-store",
@@ -116,9 +117,39 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def owned_snapshot_file(directory, path):
+    """Require an ordinary file without links at any level inside the snapshot."""
+    try:
+        relative = path.relative_to(directory)
+    except ValueError:
+        return False
+    if directory.is_symlink() or ".." in relative.parts:
+        return False
+    current = directory
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return False
+    return path.is_file()
+
+
+def verify_snapshot_inputs(directory, receipt):
+    """Authenticate the isolated player, tools, oracles and recovered artifacts."""
+    for key, root in (("inputFiles", "recovery-input"), ("toolFiles", "tool"),
+                      ("comparisonToolFiles", "declaration-comparer"), ("artifacts", "")):
+        for item in receipt[key]:
+            relative = Path(item["path"])
+            path = directory / root / relative
+            if (relative.is_absolute() or ".." in relative.parts or
+                    not path.resolve().is_relative_to((directory / root).resolve()) or
+                    not owned_snapshot_file(directory, path) or digest(path) != item["sha256"]):
+                raise ValueError("Validation snapshot changed: " + key)
+    checked_managed_oracle_snapshots(directory, receipt["scope"], receipt["managedOracles"]["files"])
+
+
 def managed_oracle(run_directory, assembly):
     path = run_directory / "player/RecoveryFixture_BackUpThisFolder_ButDontShipItWithYourGame/Managed" / (assembly + ".dll")
-    if not path.is_file():
+    if not owned_snapshot_file(run_directory, path):
         raise ValueError("The original or rebuilt native run did not retain its managed declaration oracle")
     return path
 
@@ -156,8 +187,7 @@ def checked_managed_oracle_snapshots(directory, assembly, snapshots):
     for kind in ("stripped", "unstripped"):
         path = directory / "validation-oracles" / kind / (assembly + ".dll")
         record = snapshots.get(kind, {})
-        if (record.get("path") != str(path.relative_to(directory)) or not path.is_file() or
-                path.is_symlink() or
+        if (record.get("path") != str(path.relative_to(directory)) or not owned_snapshot_file(directory, path) or
                 digest(path) != record.get("sha256")):
             raise ValueError("Original " + kind + " managed oracle snapshot changed")
         paths[kind] = path
@@ -265,6 +295,8 @@ def main():
     parser.add_argument("--timeout", type=int, default=600, help="Per child-stage deadline in seconds")
     parser.add_argument("--code-generation", choices=("OptimizeSpeed", "OptimizeSize"), default="OptimizeSpeed")
     parser.add_argument("--profile", choices=sorted(PROFILES), default="arithmetic")
+    parser.add_argument("--defer-unity", action="store_true",
+                        help="Prepare verified recovered source for run_roundtrip_batch; Unity gates remain pending")
     args = parser.parse_args()
     profile = PROFILES[args.profile]
     assembly, expected_methods = profile["assembly"], profile["methods"]
@@ -564,6 +596,16 @@ def main():
 
         compare_declarations("recoveredDeclarations", project / "RecoveredManaged" / (assembly + ".dll"))
 
+        if args.defer_unity:
+            receipt["batchSourceDirectory"] = str(project / "Assets/Recovered" / assembly)
+            receipt["artifacts"] = [{"path": str(path.relative_to(directory)), "sha256": digest(path)}
+                                    for path in sorted(recovered.rglob("*")) if path.is_file()]
+            verify_snapshot_inputs(directory, receipt)
+            receipt["status"] = "awaiting-unity-batch"
+            write_json(directory / "roundtrip.json", receipt)
+            print(receipt["status"] + ": " + str(directory / "roundtrip.json"))
+            return 0
+
         replacement = directory / "replacement"
         replacement_manifest = (["--package-manifest", str(project / "Packages/manifest.json")]
                                 if manifest_sha256 is not None else [])
@@ -603,16 +645,7 @@ def main():
         receipt["declarationFidelity"] = "passed_against_stripped_oracle"
         receipt["artifacts"] = [{"path": str(path.relative_to(directory)), "sha256": digest(path)}
                                 for path in sorted(recovered.rglob("*")) if path.is_file()]
-        for item in receipt["inputFiles"]:
-            if digest(player / item["path"]) != item["sha256"]:
-                raise ValueError("Recovery input changed during validation")
-        for item in receipt["toolFiles"]:
-            if digest(tool_directory / item["path"]) != item["sha256"]:
-                raise ValueError("Recovery tool snapshot changed during validation")
-        for item in receipt["comparisonToolFiles"]:
-            if digest(comparison_directory / item["path"]) != item["sha256"]:
-                raise ValueError("Declaration comparer snapshot changed during validation")
-        checked_managed_oracle_snapshots(directory, assembly, oracle_snapshots)
+        verify_snapshot_inputs(directory, receipt)
         if manifest_sha256 is not None and digest(manifest_snapshot) != manifest_sha256:
             raise ValueError("Explicit package manifest snapshot changed during validation")
         if reference_map_sha256 is not None and digest(reference_map_snapshot) != reference_map_sha256:

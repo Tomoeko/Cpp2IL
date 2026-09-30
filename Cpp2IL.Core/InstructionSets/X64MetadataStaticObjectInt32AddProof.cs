@@ -77,11 +77,14 @@ internal static class X64MetadataStaticObjectInt32AddProof
             region.End <= region.Start || region.End - region.Start is < 64 or > 112)
             return null;
 
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         var native = X86Utils.Iterate(method).TakeWhile(instruction => instruction.IP < region.End).ToArray();
         var rawStart = pe.MapVirtualAddressToRaw(region.Start, false);
         var rawEnd = pe.MapVirtualAddressToRaw(region.End - 1, false);
-        if (native.Length is < 18 or > 32 || rawStart < 0 || rawEnd < rawStart ||
+        if (!X64MetadataStaticGetterProof.FileBackedExecutableBody(method, pe, unwind,
+                region.Start, region.End, allowInt3Tail: true) ||
+            native.Length is < 18 or > 32 || rawStart < 0 || rawEnd < rawStart ||
             (ulong)(rawEnd - rawStart) != region.End - region.Start - 1 ||
             rawEnd >= pe.GetRawBinaryContent().Length || native[0].IP != region.Start ||
             native[17].NextIP > region.End ||
@@ -102,10 +105,12 @@ internal static class X64MetadataStaticObjectInt32AddProof
         if (shape.TypeInfoSlot <= shape.Flag && shape.Flag - shape.TypeInfoSlot < 8 ||
             !X64MetadataStaticGetterProof.FileBackedWritableData(pe, unwind,
                 shape.TypeInfoSlot, 8) ||
+            !unwind.IsUnaffectedByBaseRelocation(shape.TypeInfoSlot, 8) ||
             !X64MetadataStaticGetterProof.ZeroInitializedWritableData(unwind, shape.Flag, 1) ||
+            !unwind.IsUnaffectedByBaseRelocation(shape.Flag, 1) ||
             app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata !=
                 shape.Initializer ||
-            !X64MetadataInitializationHelperProof.TryIdentify(app, pe, unwind, shape.Initializer))
+            !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe, unwind, shape.Initializer))
             return null;
 
         var usage = app.LibCpp2IlContext.GetRawTypeGlobalByAddress(shape.TypeInfoSlot);

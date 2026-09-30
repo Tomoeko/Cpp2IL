@@ -230,10 +230,10 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
-            if (X64CallResultBooleanFalseTailRecovery.TryGenerate(methodContext, methodDefinition))
+            if (X64CallResultBooleanTailRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
-                    "Reference-returning call and null-guarded false Boolean tail IL emitted from complete native and metadata evidence; runtime-provided callees remain external declarations and behavior remains unverified.");
+                    "Reference-returning call and null-guarded Boolean tail IL emitted from complete native and metadata evidence, preserving literal or parameter arguments across the producer call; runtime-provided callees remain external declarations and behavior remains unverified.");
                 return;
             }
 

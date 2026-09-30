@@ -35,7 +35,8 @@ internal static class X64BaseEffectBooleanTailProof
         {
             var app = method.AppContext;
             if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
-                app.Binary is not PE pe || X64UnwindProof.ForApplication(app) is not { } unwind ||
+                app.Binary is not PE pe || !HasCandidateShape(method) ||
+                X64UnwindProof.ForApplication(app) is not { } unwind ||
                 !OrdinaryMethod(method, unique: false) || !VoidSignature(method) ||
                 !Registers(method, "rcx", "rdx") ||
                 method.DeclaringType is not { } owner ||
@@ -69,6 +70,19 @@ internal static class X64BaseEffectBooleanTailProof
         {
             return null;
         }
+    }
+
+    private static bool HasCandidateShape(MethodAnalysisContext method)
+    {
+        if (method.UnderlyingPointer is 0 or ulong.MaxValue)
+            return false;
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
+        var prefix = method.RawBytes.AsSpan()[..Math.Min(method.RawBytes.Length, 80)];
+        var body = X86Utils.Iterate(prefix, method.UnderlyingPointer, false).Take(17).ToArray();
+        // This is only an early rejection. ReadBody and Find still authenticate
+        // the complete root, cached bytes, native callees and managed identities.
+        return TryProveShape(body) != null;
     }
 
     private static bool OrdinaryMethod(MethodAnalysisContext method, bool unique) =>
@@ -214,7 +228,7 @@ internal static class X64BaseEffectBooleanTailProof
             region.End - start > 80 ||
             !unwind.MatchesUnwind(start, region.End, 6, 0, [6, 0x32, 2, 0x30]) ||
             !unwind.IsUnaffectedByBaseRelocation(start, checked((uint)(region.End - start))) ||
-            method.AppContext.MethodsByAddress.Keys.Any(address => address > start && address < region.End))
+            X64NativeInstructionReader.HasInteriorManagedEntry(method.AppContext, start, region.End))
             return null;
         var decoded = X86Utils.Iterate(method).TakeWhile(instruction => instruction.IP < region.End).ToArray();
         if (decoded.Length < 17 || decoded.Skip(17).Any(instruction => instruction.Code != Code.Int3))
@@ -279,7 +293,7 @@ internal static class X64BaseEffectBooleanTailProof
             !unwind.IsUnaffectedByBaseRelocation(start, checked((uint)(body[^1].NextIP - start))) ||
             !X64AncestorConstructorThunkProof.FileBackedExecutable(pe, unwind,
                 target.RawBytes.AsSpan().Slice(0, checked((int)(body[^1].NextIP - start))), start) ||
-            target.AppContext.MethodsByAddress.Keys.Any(address => address > start && address < body[^1].NextIP) ||
+            X64NativeInstructionReader.HasInteriorManagedEntry(target.AppContext, start, body[^1].NextIP) ||
             X86CallerExceptionRegionProof.Check(target, body, new HashSet<ulong>()) != null)
             return null;
         var offset = checked((int)body[0].MemoryDisplacement64);

@@ -63,6 +63,13 @@ internal static class X64IteratorFactoryProof
     private static Evidence? Find(MethodAnalysisContext method,
         IReadOnlyList<NativeInstruction> decoded, FactoryShape shape)
     {
+        if (decoded.Count < 28)
+            return null;
+        var body = decoded.Take(28).ToArray();
+        // Structural rejection uses only the supplied bounded prefix. All byte,
+        // unwind, helper, signature and metadata authentication remains below.
+        if (!MatchesFactoryStructure(body, shape))
+            return null;
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
             app.Binary is not PE pe || X64UnwindProof.ForApplication(app) is not { } unwind ||
@@ -78,15 +85,13 @@ internal static class X64IteratorFactoryProof
                 : region.End - region.Start != 109) ||
             !unwind.MatchesUnwind(region.Start, region.End, 10, 0, SavedRbxRdiFrame))
             return null;
-        var body = decoded.Take(28).ToArray();
         if (!MatchesFactoryBytes(method, decoded, pe, unwind,
                 region.Start, region.End, body[27].NextIP))
             return null;
-        if (!ProveNativeShape(body, region.End, pe, unwind, app, shape) ||
+        if (!ProveNativeShape(body, region.End, pe, unwind, app) ||
             X86CallerExceptionRegionProof.Check(method, body,
                 new HashSet<ulong> { body[27].IP }) != null ||
-            Enumerable.Range(1, checked((int)(region.End - region.Start) - 1))
-                .Any(offset => app.MethodsByAddress.ContainsKey(region.Start + (ulong)offset)))
+            X64NativeInstructionReader.HasInteriorManagedEntry(app, region.Start, region.End))
             return null;
 
         var slot = body[9].IPRelativeMemoryAddress;
@@ -253,8 +258,7 @@ internal static class X64IteratorFactoryProof
     }
 
     private static bool ProveNativeShape(IReadOnlyList<NativeInstruction> body, ulong regionEnd,
-        PE pe, X64UnwindProof.Index unwind, ApplicationAnalysisContext app,
-        FactoryShape shape)
+        PE pe, X64UnwindProof.Index unwind, ApplicationAnalysisContext app)
     {
         if (body.Count != 28 || body[27].NextIP > regionEnd ||
             regionEnd - body[27].NextIP > 15 ||
@@ -268,18 +272,26 @@ internal static class X64IteratorFactoryProof
             return false;
 
         var helpers = app.GetOrCreateKeyFunctionAddresses();
+        return Call(body[7], helpers.il2cpp_codegen_initialize_runtime_metadata) &&
+            X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe, unwind,
+                body[7].NearBranchTarget) &&
+            X64IteratorAllocatorProof.IsAllocator(app, body[10].NearBranchTarget) &&
+            X64ReferenceWriteBarrierProof.TryIdentify(pe, unwind, body[21].NearBranchTarget) &&
+            X86RuntimeNullThrowProof.TryIdentify(app, body[27].NearBranchTarget) != null;
+    }
+
+    private static bool MatchesFactoryStructure(IReadOnlyList<NativeInstruction> body,
+        FactoryShape shape)
+    {
         return Store(body[0], NativeRegister.RSP, 8, NativeRegister.RBX, 8) &&
             Push(body[1], NativeRegister.RDI) && Stack(body[2], Mnemonic.Sub, 0x20) &&
             RipByteCompareZero(body[3]) && Move(body[4], NativeRegister.RDI, NativeRegister.RCX) &&
             Branch(body[5], Mnemonic.Jne, body[9].IP) &&
             RipLea(body[6], NativeRegister.RCX, body[9].IPRelativeMemoryAddress) &&
-            Call(body[7], helpers.il2cpp_codegen_initialize_runtime_metadata) &&
-            X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe, unwind,
-                body[7].NearBranchTarget) &&
+            DirectCall(body[7]) &&
             RipByteStoreOne(body[8], body[3].IPRelativeMemoryAddress) &&
             RipLoad(body[9], NativeRegister.RCX) &&
             DirectCall(body[10]) &&
-            X64IteratorAllocatorProof.IsAllocator(app, body[10].NearBranchTarget) &&
             Move(body[11], NativeRegister.RBX, NativeRegister.RAX) &&
             Test(body[12], NativeRegister.RAX) &&
             Branch(body[13], Mnemonic.Je, body[27].IP) &&
@@ -296,13 +308,11 @@ internal static class X64IteratorFactoryProof
                   Move(body[19], NativeRegister.RDX, NativeRegister.RDI) &&
                   Store(body[20], NativeRegister.RCX, 0, NativeRegister.RDI, 8)) &&
             DirectCall(body[21]) &&
-            X64ReferenceWriteBarrierProof.TryIdentify(pe, unwind, body[21].NearBranchTarget) &&
             Move(body[22], NativeRegister.RAX, NativeRegister.RBX) &&
             Load(body[23], NativeRegister.RBX, NativeRegister.RSP, 0x30) &&
             Stack(body[24], Mnemonic.Add, 0x20) &&
             Pop(body[25], NativeRegister.RDI) && body[26].Code == Code.Retnq &&
-            body[26].OpCount == 0 && DirectCall(body[27]) &&
-            X86RuntimeNullThrowProof.TryIdentify(app, body[27].NearBranchTarget) != null;
+            body[26].OpCount == 0 && DirectCall(body[27]);
     }
 
     internal static bool TryProveInlinedStores(IReadOnlyList<NativeInstruction> body,

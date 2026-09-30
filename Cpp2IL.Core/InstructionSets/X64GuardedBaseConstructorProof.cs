@@ -80,7 +80,8 @@ internal static class X64GuardedBaseConstructorProof
                 Overlaps(caller.TypeInfoSlot, 8, folded.TypeInfoSlot, 8))
                 return null;
 
-            ancestorConstructor.EnsureRawBytes();
+            if (ancestorConstructor.RawBytes.Length == 0)
+                ancestorConstructor.EnsureRawBytes();
             var ancestorBody = X86Utils.Iterate(ancestorConstructor).ToArray();
             var objectConstructor = X64ObjectConstructorThunkProof.Find(
                 ancestorConstructor, ancestorBody);
@@ -115,11 +116,13 @@ internal static class X64GuardedBaseConstructorProof
             !unwind.MatchesUnwind(start, span.End, 6, 0, SavedRbxFrame))
             return false;
 
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         var body = X86Utils.Iterate(method).ToArray();
         var rawStart = pe.MapVirtualAddressToRaw(start, false);
         var rawEnd = pe.MapVirtualAddressToRaw(span.End - 1, false);
-        if (method.RawBytes.Length != 73 || body.Length != 17 ||
+        if (!X64MetadataStaticGetterProof.FileBackedExecutableBody(method, pe, unwind, start, span.End) ||
+            method.RawBytes.Length != 73 || body.Length != 17 ||
             rawStart < 0 || rawEnd - rawStart != 72 ||
             rawEnd >= pe.GetRawBinaryContent().Length ||
             !pe.GetRawBinaryContent().Slice(checked((int)rawStart), 73)
@@ -180,9 +183,10 @@ internal static class X64GuardedBaseConstructorProof
             !X64PeOnceFlagProof.IsInitiallyZero(pe, unwind, shape.OnceFlag) ||
             !X64MetadataStaticGetterProof.FileBackedWritableData(pe,
                 unwind, shape.TypeInfoSlot, 8) ||
+            !unwind.IsUnaffectedByBaseRelocation(shape.TypeInfoSlot, 8) ||
             shape.MetadataInitializer != app.GetOrCreateKeyFunctionAddresses()
                 .il2cpp_codegen_initialize_runtime_metadata ||
-            !X64MetadataInitializationHelperProof.TryIdentify(app, pe,
+            !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(app, pe,
                 unwind, shape.MetadataInitializer) ||
             shape.ClassInitializer == 0 ||
             shape.ClassInitializer != app.GetOrCreateKeyFunctionAddresses()
@@ -233,7 +237,8 @@ internal static class X64GuardedBaseConstructorProof
             MethodAttributes.PinvokeImpl)) == 0 &&
         (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
             MethodImplAttributes.ManagedMask |
-            MethodImplAttributes.InternalCall)) == 0 &&
+            MethodImplAttributes.InternalCall |
+            MethodImplAttributes.Synchronized)) == 0 &&
         method.Definition is { GenericContainer: null, parameterCount: 0,
             RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
                 NumMods: 0, Byref: 0, Pinned: 0 } } definition &&
