@@ -430,16 +430,18 @@ internal static class RuntimeNullGuardCoalescer
                             X64NativeNullCheckedInvocationProof.HasScalarParameters(target);
                         var scalarProducer = requireNativeFieldBinding &&
                             X64NativeNullCheckedInvocationProof.IsScalarProducerForInvocation(method, instruction);
+                        var referenceProducer = requireNativeFieldBinding &&
+                            X64NativeNullCheckedInvocationProof.IsReferenceProducerForInvocation(method, instruction);
                         // Once a native site records this body's effects and controls,
                         // later guard removal must also retain its exact native site.
                         var retainedNativeInvocation = requireNativeFieldBinding &&
                             X64NativeNullCheckedInvocationProof.HasEvidence(method);
                         var targetBound = scalarArguments && HasGuardedArrayInvocationEvidence(method,
                             comparison, branch, instruction, target) ||
-                            (composedStore || scalarArguments || scalarProducer || retainedNativeInvocation) &&
+                            (composedStore || scalarArguments || scalarProducer || referenceProducer || retainedNativeInvocation) &&
                             X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
-                        if (!targetBound && !scalarArguments && !scalarProducer && !retainedNativeInvocation &&
+                        if (!targetBound && !scalarArguments && !scalarProducer && !referenceProducer && !retainedNativeInvocation &&
                             ordinaryTypedCall && !pendingTypedInvocationSetup &&
                             !(requireNativeFieldBinding && originKind is
                                 ReceiverOrigin.CopiedCallResult or ReceiverOrigin.InvalidCopyChain))
@@ -448,7 +450,8 @@ internal static class RuntimeNullGuardCoalescer
                                     receiver, origin!, instruction, target,
                                     requireTail: pendingTailArgumentSetup)
                                 : !pendingTailArgumentSetup && provesNativeTarget(target);
-                        if (!targetBound && requireNativeFieldBinding && !scalarArguments && !scalarProducer && !retainedNativeInvocation)
+                        if (!targetBound && requireNativeFieldBinding && !scalarArguments && !scalarProducer &&
+                            !referenceProducer && !retainedNativeInvocation)
                             targetBound = X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
                         if (!targetBound)

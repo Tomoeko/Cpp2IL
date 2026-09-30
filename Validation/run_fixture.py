@@ -167,12 +167,14 @@ import guarded_array_tail_invocation
 import scalar_float_selection
 import scalar_float_conversion
 import scalar_int32_single_conversion
+import scalar_word_wrapper_conversion
 import scalar_double_accumulator
 import scalar_float_conversion_composition
 import native_null_checked_invocation
 import native_scalar_pair_invocation
 import native_scalar_field_invocation
 import native_scalar_producer_invocation
+import native_reference_producer_invocation
 import native_scalar_invocation_effects
 import native_subnormal_field_store
 import native_derived_receiver_invocation
@@ -254,6 +256,8 @@ PROFILES = {
                                 "source": VALIDATION / "ScalarFloatConversionFixture", "methods": 2},
     "scalar-int32-single-conversion": {"assembly": "ScalarInt32SingleConversionFixture",
                                       "source": VALIDATION / "ScalarInt32SingleConversionFixture", "methods": 7},
+    "scalar-word-wrapper-conversion": {"assembly": "ScalarWordWrapperConversionFixture",
+                                        "source": VALIDATION / "ScalarWordWrapperConversionFixture", "methods": 3},
     "scalar-float-conversion-composition": {"assembly": "ScalarFloatConversionCompositionFixture",
                                             "source": VALIDATION / "ScalarFloatConversionCompositionFixture", "methods": 8},
     "native-null-checked-invocation": {"assembly": "NativeNullCheckedInvocationFixture",
@@ -264,6 +268,8 @@ PROFILES = {
                                       "source": VALIDATION / "NativeScalarFieldInvocationFixture", "methods": 12},
     "native-scalar-producer-invocation": {"assembly": "NativeScalarProducerInvocationFixture",
                                         "source": VALIDATION / "NativeScalarProducerInvocationFixture", "methods": 7},
+    "native-reference-producer-invocation": {"assembly": "NativeReferenceProducerInvocationFixture",
+                                           "source": VALIDATION / "NativeReferenceProducerInvocationFixture", "methods": 8},
     "native-scalar-invocation-effects": {"assembly": "NativeScalarInvocationEffectsFixture",
                                        "source": VALIDATION / "NativeScalarInvocationEffectsFixture", "methods": 6},
     "native-subnormal-field-store": {"assembly": "NativeSubnormalFieldStoreFixture",
@@ -659,6 +665,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return scalar_float_conversion.verify(path, stage, VERSION)
     if profile == "scalar-int32-single-conversion":
         return scalar_int32_single_conversion.verify(path, stage, VERSION)
+    if profile == "scalar-word-wrapper-conversion":
+        return scalar_word_wrapper_conversion.verify(path, stage, VERSION)
     if profile == "scalar-float-conversion-composition":
         return scalar_float_conversion_composition.verify(path, stage, VERSION)
     if profile == "native-null-checked-invocation":
@@ -669,6 +677,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_scalar_field_invocation.verify(path, stage, VERSION)
     if profile == "native-scalar-producer-invocation":
         return native_scalar_producer_invocation.verify(path, stage, VERSION)
+    if profile == "native-reference-producer-invocation":
+        return native_reference_producer_invocation.verify(path, stage, VERSION)
     if profile == "native-scalar-invocation-effects":
         return native_scalar_invocation_effects.verify(path, stage, VERSION)
     if profile == "native-subnormal-field-store":

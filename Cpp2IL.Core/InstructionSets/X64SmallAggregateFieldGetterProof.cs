@@ -125,6 +125,8 @@ internal static class X64SmallAggregateFieldGetterProof
             CaptureType(owner, values);
             if (!ReferenceEquals(owner, parameter.ParameterType))
                 CaptureType(parameter.ParameterType, values);
+            if (!X64ScalarWrapperInitializationProof.TryCapture(parameter.ParameterType, field, values))
+                return null;
             CaptureMethod(method, values);
             values.Add(parameter);
             values.Add(parameter.Name);
@@ -176,7 +178,7 @@ internal static class X64SmallAggregateFieldGetterProof
         X64NativeInstructionReader.ReadFramelessLeaf(method, 2, 32) ??
         X64NativeInstructionReader.ReadFramelessLeaf(method, 3, 32);
 
-    private static bool OriginalAbi(MethodAnalysisContext method)
+    internal static bool OriginalAbi(MethodAnalysisContext method)
     {
         var resolver = new X64CallingConventionResolver();
         return !resolver.ReturnsViaHiddenBuffer(method) && resolver.ResolveForParameters(method) is
@@ -185,9 +187,9 @@ internal static class X64SmallAggregateFieldGetterProof
             first == new IsilRegister(null, "rcx") && metadata == new IsilRegister(null, "rdx");
     }
 
-    private static FieldAnalysisContext? AggregateField(TypeAnalysisContext aggregate, MethodAnalysisContext method)
+    internal static FieldAnalysisContext? AggregateField(TypeAnalysisContext aggregate, MethodAnalysisContext method)
     {
-        if (!OrdinaryType(aggregate) || aggregate is GenericInstanceTypeAnalysisContext ||
+        if (!OrdinaryType(aggregate, allowInitializer: true) || aggregate is GenericInstanceTypeAnalysisContext ||
             aggregate.Definition is not { IsValueType: true, IsEnumType: false, IsBlittable: true,
                 IsImportOrWindowsRuntime: false, IsByRefLike: false,
                 RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VALUETYPE } } ||
@@ -211,14 +213,15 @@ internal static class X64SmallAggregateFieldGetterProof
     }
 
     private static bool OrdinaryOwner(TypeAnalysisContext owner, TypeAnalysisContext aggregate) =>
-        OrdinaryType(owner) && (ReferenceEquals(owner, aggregate) ||
+        OrdinaryType(owner, allowInitializer: ReferenceEquals(owner, aggregate)) && (ReferenceEquals(owner, aggregate) ||
             !owner.IsValueType && !owner.IsInterface &&
             owner.Definition!.RawType.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS &&
             ReferenceEquals(owner.BaseType, owner.AppContext.SystemTypes.SystemObjectType));
 
-    private static bool OrdinaryType(TypeAnalysisContext type) =>
-        type.Definition is { GenericContainer: null, HasCctor: false, PackingSizeIsDefault: true,
+    private static bool OrdinaryType(TypeAnalysisContext type, bool allowInitializer = false) =>
+        type.Definition is { GenericContainer: null, PackingSizeIsDefault: true,
             ClassSizeIsDefault: true, RawType: { NumMods: 0, Byref: 0, Pinned: 0, Data: not null } } definition &&
+        (allowInitializer || !definition.HasCctor) &&
         !type.IsGenericInstance && type.GenericParameters.Count == 0 &&
         type.Name == type.DefaultName && type.Namespace == type.DefaultNamespace &&
         type.Attributes == type.DefaultAttributes &&
@@ -229,12 +232,12 @@ internal static class X64SmallAggregateFieldGetterProof
             field.Name == field.DefaultName && field.Attributes == field.DefaultAttributes &&
             field.Offset == field.DefaultOffset && field.OverrideFieldType == null) &&
         type.Methods.Count == definition.MethodCount && type.Methods.All(method => method.Definition != null) &&
-        !type.Methods.Any(method => method.Name == ".cctor");
+        (allowInitializer || !type.Methods.Any(method => method.Name == ".cctor"));
 
     private static bool IsSigned(TypeAnalysisContext type, SystemTypesContext types) =>
         ReferenceEquals(type, types.SystemSByteType) || ReferenceEquals(type, types.SystemInt16Type);
 
-    private static void CaptureType(TypeAnalysisContext type, List<object> values)
+    internal static void CaptureType(TypeAnalysisContext type, List<object> values)
     {
         var definition = type.Definition!;
         values.Add(type);
@@ -276,7 +279,7 @@ internal static class X64SmallAggregateFieldGetterProof
         }
     }
 
-    private static void CaptureMethod(MethodAnalysisContext method, List<object> values)
+    internal static void CaptureMethod(MethodAnalysisContext method, List<object> values)
     {
         var definition = method.Definition!;
         values.Add(method);
@@ -297,7 +300,7 @@ internal static class X64SmallAggregateFieldGetterProof
         values.Add(definition.slot);
     }
 
-    private static void CaptureRawType(Il2CppType raw, List<object> values)
+    internal static void CaptureRawType(Il2CppType raw, List<object> values)
     {
         values.Add(raw.Bits);
         values.Add(raw.Datapoint);

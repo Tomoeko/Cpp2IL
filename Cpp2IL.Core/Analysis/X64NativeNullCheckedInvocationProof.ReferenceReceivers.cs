@@ -26,9 +26,13 @@ internal static partial class X64NativeNullCheckedInvocationProof
         return false;
     }
 
-    private static bool TryReceiverDeclarations(Origin origin, MethodAnalysisContext target, out ValueKey? declarations)
+    private static bool TryReceiverDeclarations(MethodAnalysisContext caller, Origin origin,
+        MethodAnalysisContext target, out ValueKey? declarations)
     {
         declarations = null;
+        if (origin.Producer != null && origin.Definition is { } producer &&
+            TryFieldReferenceProducer(caller, producer, out var provider))
+            return TryReferenceProducerDeclarations(origin, provider, target, out declarations);
         if (origin.Field is not { } field) return true;
         // Preserve the existing exact receiver route. The new snapshot owns
         // only the ancestry consumed by a widened field capture or copy.
@@ -47,8 +51,9 @@ internal static partial class X64NativeNullCheckedInvocationProof
         return true;
     }
 
-    private static bool ReceiverDeclarationsRetained(Origin origin, MethodAnalysisContext target, ValueKey? captured) =>
-        TryReceiverDeclarations(origin, target, out var current) &&
+    private static bool ReceiverDeclarationsRetained(MethodAnalysisContext caller, Origin origin,
+        MethodAnalysisContext target, ValueKey? captured) =>
+        TryReceiverDeclarations(caller, origin, target, out var current) &&
         (captured == null ? current == null : current != null && SameKey(captured, current));
 
     private static bool ReferenceReceiverUsesRetained(MethodAnalysisContext caller, List<Site> sites)

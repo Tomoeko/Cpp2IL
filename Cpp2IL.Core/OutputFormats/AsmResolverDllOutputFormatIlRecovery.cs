@@ -307,6 +307,16 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64ScalarWrapperConversionRecovery.TryGenerate(methodContext,
+                    methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Scalar-to-value-type conversion IL emitted from complete bounded native and metadata evidence, preserving exact scalar width and initialized field layout; behavior remains unverified.");
+                return;
+            }
+            if (X64ScalarWrapperConversionProof.HasEvidence(methodContext))
+                throw new InvalidOperationException("Retained scalar wrapper conversion evidence is missing or changed.");
+
             if (X64ScalarWrapperStaticConstructorRecovery.TryGenerate(methodContext,
                     methodDefinition))
             {
@@ -314,6 +324,8 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                     "Single-scalar value-type static constructor IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
                 return;
             }
+            if (X64ScalarWrapperStaticConstructorProof.HasEvidence(methodContext))
+                throw new InvalidOperationException("Retained scalar wrapper static constructor evidence is missing or changed.");
 
             if (X64InheritedInt32ConstructorRecovery.TryGenerate(methodContext, methodDefinition))
             {

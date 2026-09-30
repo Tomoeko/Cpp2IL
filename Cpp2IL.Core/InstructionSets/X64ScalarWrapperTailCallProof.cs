@@ -160,7 +160,7 @@ internal static class X64ScalarWrapperTailCallProof
                (parameterCount == 0 || UnchangedWrapperParameter(method, wrapper));
     }
 
-    internal static FieldAnalysisContext? ScalarField(TypeAnalysisContext wrapper)
+    internal static FieldAnalysisContext? ScalarField(TypeAnalysisContext wrapper, bool allowSignedWord = false)
     {
         var app = wrapper.AppContext;
         var fields = wrapper.Fields.Where(candidate => !candidate.IsStatic).ToArray();
@@ -180,12 +180,14 @@ internal static class X64ScalarWrapperTailCallProof
         var primitive = field.FieldType;
         var width = primitive.Type switch
         {
+            Il2CppTypeEnum.IL2CPP_TYPE_I2 when allowSignedWord => 2,
             Il2CppTypeEnum.IL2CPP_TYPE_U4 => 4,
             Il2CppTypeEnum.IL2CPP_TYPE_U8 => 8,
             _ => 0,
         };
         if (width == 0 ||
             raw.Type != primitive.Type ||
+            !(allowSignedWord && ReferenceEquals(primitive, app.SystemTypes.SystemInt16Type)) &&
             !ReferenceEquals(primitive, app.SystemTypes.SystemUInt32Type) &&
             !ReferenceEquals(primitive, app.SystemTypes.SystemUInt64Type) ||
             TypeSizes.UnboxedSize(wrapper, 8) != width ||

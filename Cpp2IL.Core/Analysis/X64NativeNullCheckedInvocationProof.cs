@@ -90,7 +90,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     graph.Instructions.Where(instruction => instruction.OpCode == OpCode.RuntimeNullThrow).ToArray() is not
                         [{ NativeAddress: { } onlyNullCall }] || onlyNullCall != nullCall ||
                     !BindInvocation(caller, invocation, target, origin, body, values, out var arguments, comparisonIp) ||
-                    !TryReceiverDeclarations(origin, target, out var receiverDeclarations) ||
+                    !TryReceiverDeclarations(caller, origin, target, out var receiverDeclarations) ||
                     !TryEffects(caller, invocation, out var effects) ||
                     !TryControls(caller, branch, body, out var controls)) return false;
                 var sites = caller.GetExtraData<List<Site>>(EvidenceKey) ?? [];
@@ -171,7 +171,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     !ReferenceEquals(target, site.Target) ||
                     !RewrittenGuard(caller, site) ||
                     !TryOrigin(caller, receiver, call, out var origin) || origin != site.Receiver ||
-                    !ReceiverDeclarationsRetained(origin, target, site.ReceiverDeclarations) ||
+                    !ReceiverDeclarationsRetained(caller, origin, target, site.ReceiverDeclarations) ||
                     !TryGuard(caller, body, values, origin, site.Comparison, site.Branch, call,
                         out var nullCall, out var helper, site.Helper, site.NullCall) ||
                     nullCall != site.NullCall || helper.NativeTarget != site.Helper.NativeTarget ||
@@ -184,7 +184,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
             return BooleanFieldArgumentLoadsRetained(caller, body, values, sites) &&
                    ScalarFieldArgumentUsesRetained(caller, sites) && ReferenceReceiverUsesRetained(caller, sites) &&
                    BooleanToggleArgumentUsesRetained(caller, sites) && BooleanPredicateArgumentUsesRetained(caller, sites) &&
-                   ScalarProducerArgumentUsesRetained(caller, sites);
+                   ScalarProducerArgumentUsesRetained(caller, sites) &&
+                   ReferenceProducerUsesRetained(caller, sites);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
@@ -340,6 +341,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
             return false;
         if (origin.Producer is { } producer)
         {
+            if (TryFieldReferenceProducer(caller, origin.Definition, out var fieldProvider))
+                return BindFieldReferenceProducer(caller, origin, fieldProvider, body, values, use, register);
             var call = origin.Definition;
             if (!OrdinaryMethod(producer) || producer.IsVirtual || producer.Parameters.Count != 0 ||
                 !ReferenceEquals(producer.ReturnType, origin.Type) || !OrdinaryClass(origin.Type) ||

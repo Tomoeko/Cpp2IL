@@ -11,7 +11,7 @@ internal static class X64ScalarWrapperStaticConstructorRecovery
     internal static bool TryGenerate(MethodAnalysisContext method,
         MethodDefinition definition)
     {
-        if (X64ScalarWrapperStaticConstructorProof.Find(method) is not { } proof)
+        if (!X64ScalarWrapperStaticConstructorProof.TryAuthenticate(method, out var proof))
             return false;
 
         var owner = method.DeclaringType!;
@@ -28,11 +28,20 @@ internal static class X64ScalarWrapperStaticConstructorRecovery
         il.Add(CilOpCodes.Ldloca, value);
         il.Add(CilOpCodes.Initobj, owner.ToTypeSignature().ToTypeDefOrRef());
         il.Add(CilOpCodes.Ldloca, value);
-        if (proof.ScalarField.FieldType.Type ==
-            LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_U4)
-            il.Add(CilOpCodes.Ldc_I4, unchecked((int)proof.ValueBits));
-        else
-            il.Add(CilOpCodes.Ldc_I8, unchecked((long)proof.ValueBits));
+        switch (proof.ScalarField.FieldType.Type)
+        {
+            case LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_I2:
+                il.Add(CilOpCodes.Ldc_I4, (int)unchecked((short)proof.ValueBits));
+                break;
+            case LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_U4:
+                il.Add(CilOpCodes.Ldc_I4, unchecked((int)proof.ValueBits));
+                break;
+            case LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_U8:
+                il.Add(CilOpCodes.Ldc_I8, unchecked((long)proof.ValueBits));
+                break;
+            default:
+                return false;
+        }
         il.Add(CilOpCodes.Stfld, proof.ScalarField.ToFieldDescriptor());
         il.Add(CilOpCodes.Ldloc, value);
         il.Add(CilOpCodes.Stsfld, proof.StaticField.ToFieldDescriptor());

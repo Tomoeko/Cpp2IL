@@ -22,10 +22,41 @@ namespace Cpp2IL.Core.InstructionSets;
 /// </summary>
 internal static class X64ScalarWrapperStaticConstructorProof
 {
+    private const string EvidenceKey = "X64ScalarWrapperStaticConstructorProof";
+    internal static bool HasEvidence(MethodAnalysisContext method) =>
+        NativeRecoveryProofTracker.Has(method, EvidenceKey) ||
+        method.GetExtraData<X64SmallAggregateFieldGetterProof.InputState>(EvidenceKey) != null;
     internal sealed record Evidence(FieldAnalysisContext StaticField,
         FieldAnalysisContext ScalarField, ulong ValueBits);
     internal readonly record struct Shape(ulong Flag, ulong TypeInfoSlot,
         ulong Initializer, int Width, ulong ValueBits);
+
+    internal static bool TryAuthenticate(MethodAnalysisContext method, out Evidence proof)
+    {
+        proof = null!;
+        if (Find(method) is not { } current) return false;
+        var values = new List<object>();
+        X64SmallAggregateFieldGetterProof.CaptureType(method.DeclaringType!, values);
+        X64SmallAggregateFieldGetterProof.CaptureMethod(method, values);
+        X64SmallAggregateFieldGetterProof.CaptureRawType(method.Definition!.RawReturnType!, values);
+        values.Add(current.StaticField);
+        values.Add(current.ScalarField);
+        values.Add(current.ValueBits);
+        var input = new X64SmallAggregateFieldGetterProof.InputState(values, method.RawBytes.AsSpan().ToArray());
+        var saved = method.GetExtraData<X64SmallAggregateFieldGetterProof.InputState>(EvidenceKey);
+        if (NativeRecoveryProofTracker.Has(method, EvidenceKey))
+        {
+            if (saved == null || !saved.Matches(input)) return false;
+        }
+        else
+        {
+            if (saved != null) return false;
+            method.PutExtraData(EvidenceKey, input);
+            NativeRecoveryProofTracker.Mark(method, EvidenceKey);
+        }
+        proof = current;
+        return true;
+    }
 
     internal static Evidence? Find(MethodAnalysisContext method)
     {
@@ -36,7 +67,7 @@ internal static class X64ScalarWrapperStaticConstructorProof
                 !OrdinaryConstructor(method) ||
                 method.DeclaringType is not { } owner ||
                 !OrdinaryOwner(owner, method) ||
-                X64ScalarWrapperTailCallProof.ScalarField(owner) is not { } scalar ||
+                X64ScalarWrapperTailCallProof.ScalarField(owner, allowSignedWord: true) is not { } scalar ||
                 app.Binary is not PE { PointerSizeBytes: 8 } pe ||
                 X64UnwindProof.ForApplication(app) is not { } unwind ||
                 method.UnderlyingPointer is 0 or ulong.MaxValue ||
@@ -47,7 +78,7 @@ internal static class X64ScalarWrapperStaticConstructorProof
                 return null;
 
             var width = TypeSizes.UnboxedSize(owner, 8);
-            if (width is not (4 or 8) ||
+            if (width is not (2 or 4 or 8) ||
                 owner.Definition!.RawSizes.static_fields_size != width ||
                 owner.Fields.Where(field => field.IsStatic).ToArray() is not [{ } stored] ||
                 !OrdinaryStaticField(stored, owner))
@@ -57,7 +88,8 @@ internal static class X64ScalarWrapperStaticConstructorProof
             var region = unwind.ClassifySpan(start, start + 1);
             if (region.Kind != X64UnwindProof.SpanKind.HandlerFree ||
                 region.Start != start || region.RootStart != start ||
-                region.End - start != (width == 4 ? 57UL : 58UL) ||
+                (width == 2 ? region.End - start is not (56UL or 59UL) :
+                    region.End - start != (width == 4 ? 57UL : 58UL)) ||
                 !unwind.MatchesUnwind(region.Start, region.End, 4, 0,
                     new byte[] { 4, 0x42 }))
                 return null;
@@ -65,7 +97,7 @@ internal static class X64ScalarWrapperStaticConstructorProof
             method.EnsureRawBytes();
             var body = X86Utils.Iterate(method).ToArray();
             if (method.RawBytes.Length != (long)(region.End - start) ||
-                body.Length != 11 || body[0].IP != start ||
+                body.Length is not (11 or 12) || body[0].IP != start ||
                 body[^1].NextIP != region.End ||
                 body.Any(instruction => instruction.IsInvalid ||
                     instruction.CodeSize != CodeSize.Code64 ||
@@ -86,8 +118,10 @@ internal static class X64ScalarWrapperStaticConstructorProof
                  shape.Flag - shape.TypeInfoSlot < 8) ||
                 !X64MetadataStaticGetterProof.ZeroInitializedWritableData(
                     unwind, shape.Flag, 1) ||
+                !unwind.IsUnaffectedByBaseRelocation(shape.Flag, 1) ||
                 !X64MetadataStaticGetterProof.FileBackedWritableData(
                     pe, unwind, shape.TypeInfoSlot, 8) ||
+                !unwind.IsUnaffectedByBaseRelocation(shape.TypeInfoSlot, 8) ||
                 app.GetOrCreateKeyFunctionAddresses().il2cpp_codegen_initialize_runtime_metadata !=
                     shape.Initializer ||
                 !X64MetadataInitializationHelperProof.TryIdentifyTypeInfo(
@@ -110,7 +144,7 @@ internal static class X64ScalarWrapperStaticConstructorProof
 
     internal static Shape? TryProveShape(IReadOnlyList<NativeInstruction> body)
     {
-        if (body.Count != 11 ||
+        if (body.Count is not (11 or 12) ||
             !Stack(body[0], Mnemonic.Sub) ||
             body[1].Code != Code.Cmp_rm8_imm8 || !RipMemory(body[1], 0, 1) ||
             body[1].Op1Kind != OpKind.Immediate8 || body[1].Immediate8 != 0 ||
@@ -139,26 +173,47 @@ internal static class X64ScalarWrapperStaticConstructorProof
             body[7].MemorySize.GetSize() != 8 ||
             body[7].MemoryDisplacement64 !=
                 (ulong)Il2CppClassLayout.StaticFieldsOffset64 ||
-            body[8].Op0Kind != OpKind.Memory ||
-            body[8].MemoryBase != NativeRegister.RCX ||
-            body[8].MemoryIndex != NativeRegister.None ||
-            body[8].MemoryDisplacement64 != 0 ||
-            !Stack(body[9], Mnemonic.Add) ||
-            body[10].Code != Code.Retnq || body[10].OpCount != 0)
+            !Stack(body[^2], Mnemonic.Add) ||
+            body[^1].Code != Code.Retnq || body[^1].OpCount != 0)
             return null;
 
-        var width = body[8].Code switch
+        var store = body[^3];
+        if (store.Op0Kind != OpKind.Memory || store.MemoryBase != NativeRegister.RCX ||
+            store.MemoryIndex != NativeRegister.None || store.MemoryDisplacement64 != 0)
+            return null;
+
+        int width;
+        ulong bits;
+        if (body.Count == 12)
         {
-            Code.Mov_rm32_imm32 when body[8].Op1Kind == OpKind.Immediate32 &&
-                body[8].MemorySize.GetSize() == 4 => 4,
-            Code.Mov_rm64_imm32 when body[8].Op1Kind == OpKind.Immediate32to64 &&
-                body[8].MemorySize.GetSize() == 8 => 8,
-            _ => 0,
-        };
+            // The immediate's upper bits cannot escape: only AX is stored, and
+            // the complete remaining body restores the frame and returns void.
+            var literal = body[8];
+            if (literal.Code != Code.Mov_r32_imm32 || literal.Op0Kind != OpKind.Register ||
+                literal.Op0Register != NativeRegister.EAX || literal.Op1Kind != OpKind.Immediate32 ||
+                store.Code != Code.Mov_rm16_r16 || store.Op1Kind != OpKind.Register ||
+                store.Op1Register != NativeRegister.AX || store.MemorySize.GetSize() != 2)
+                return null;
+            width = 2;
+            bits = unchecked((ushort)literal.Immediate32);
+        }
+        else
+        {
+            width = store.Code switch
+            {
+                Code.Mov_rm16_imm16 when store.Op1Kind == OpKind.Immediate16 &&
+                    store.MemorySize.GetSize() == 2 => 2,
+                Code.Mov_rm32_imm32 when store.Op1Kind == OpKind.Immediate32 &&
+                    store.MemorySize.GetSize() == 4 => 4,
+                Code.Mov_rm64_imm32 when store.Op1Kind == OpKind.Immediate32to64 &&
+                    store.MemorySize.GetSize() == 8 => 8,
+                _ => 0,
+            };
+            bits = width == 2 ? store.Immediate16 : width == 4 ? store.Immediate32 :
+                unchecked((ulong)(long)unchecked((int)store.Immediate32));
+        }
         if (width == 0)
             return null;
-        var bits = width == 4 ? body[8].Immediate32 :
-            unchecked((ulong)(long)unchecked((int)body[8].Immediate32));
         return new Shape(body[1].IPRelativeMemoryAddress,
             body[3].IPRelativeMemoryAddress, body[4].NearBranchTarget,
             width, bits);
