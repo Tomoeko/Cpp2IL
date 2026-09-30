@@ -25,14 +25,14 @@ internal static class X64FixedBooleanConjunctionRecovery
         var instructions = il.Instructions;
         instructions.Add(CilOpCodes.Ldarg_0);
         instructions.Add(CilOpCodes.Ldfld, evidence.First.ToFieldDescriptor());
-        instructions.Add(CilOpCodes.Ldc_I4_0);
+        instructions.Add(CilOpCodes.Ldc_I4, evidence.FirstIndex);
         instructions.Add(CilOpCodes.Ldelem_U1);
         instructions.Add(CilOpCodes.Brfalse, new CilInstructionLabel(secondRead));
         instructions.Add(CilOpCodes.Ldc_I4_0);
         instructions.Add(CilOpCodes.Ret);
         instructions.Add(secondRead);
         instructions.Add(CilOpCodes.Ldfld, evidence.Second.ToFieldDescriptor());
-        instructions.Add(CilOpCodes.Ldc_I4_0);
+        instructions.Add(CilOpCodes.Ldc_I4, evidence.SecondIndex);
         instructions.Add(CilOpCodes.Ldelem_U1);
         instructions.Add(CilOpCodes.Ldc_I4_0);
         instructions.Add(CilOpCodes.Ceq);

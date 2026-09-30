@@ -183,6 +183,7 @@ public class UnitySourceEmitterTests
     [TestCase("mscorlib", "4.0.0.0", "B77A5C561934E089")]
     [TestCase("System", "4.0.0.0", "B77A5C561934E089")]
     [TestCase("System.Core", "4.0.0.0", "B77A5C561934E089")]
+    [TestCase("System.Configuration", "4.0.0.0", "B03F5F7F11D50A3A")]
     [TestCase("System.Xml", "4.0.0.0", "B77A5C561934E089")]
     [TestCase("System.Xml.Linq", "4.0.0.0", "B77A5C561934E089")]
     [TestCase("Microsoft.CSharp", "4.0.0.0", "B03F5F7F11D50A3A")]
@@ -218,12 +219,13 @@ public class UnitySourceEmitterTests
         });
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public void MismatchedFrameworkReferenceCannotClaimTargetProvidedStatus(bool explicitTargetMap)
+    [TestCase(false, "System.Core")]
+    [TestCase(true, "System.Core")]
+    [TestCase(false, "System.Configuration")]
+    [TestCase(true, "System.Configuration")]
+    public void MismatchedFrameworkReferenceCannotClaimTargetProvidedStatus(bool explicitTargetMap, string name)
     {
         var assembly = CreateAssembly("Synthetic.Application");
-        const string name = "System.Core";
         assembly.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference(name, new Version(99, 0, 0, 0)));
         var references = WriteReference(name, new Version(99, 0, 0, 0), "references");
         var map = explicitTargetMap
@@ -783,7 +785,7 @@ public class UnitySourceEmitterTests
             Assert.That(File.ReadAllText(Path.Combine(directory, "csc.rsp")),
                 Does.Contain("-debug:portable\n@\"Assets/Recovered/Synthetic Application/ReferenceAliases.rsp\"\n"));
             Assert.That(File.ReadAllText(Path.Combine(directory, "ReferenceAliases.rsp")),
-                Is.EqualTo("-reference:Cpp2ILReference0=\"" + Path.Combine(references, "UnityEngine.CoreModule.dll").Replace('\\', '/') + "\"\n"));
+                Is.EqualTo(CompilerReferenceArguments(Path.Combine(references, "UnityEngine.CoreModule.dll"), 0)));
             Assert.That(report.Assemblies.Single(assembly => assembly.Name == "Synthetic.Other").CompilerReferenceAliases, Is.Empty);
             Assert.That(File.Exists(Path.Combine(project, "Assets/Recovered/Synthetic.Other/ReferenceAliases.rsp")), Is.False);
             Assert.That(Directory.GetFiles(Path.Combine(project, "Assets"), "*.dll", SearchOption.AllDirectories), Is.Empty);
@@ -810,43 +812,30 @@ public class UnitySourceEmitterTests
         Assert.Multiple(() =>
         {
             Assert.That(report.Assemblies.Single().CompilerReferenceAliases, Is.EqualTo(new[] { "UnityEngine.AudioModule", "UnityEngine.CoreModule" }));
-            Assert.That(lines, Has.Length.EqualTo(2));
-            Assert.That(lines[0], Does.StartWith("-reference:Cpp2ILReference0=").And.EndWith("/UnityEngine.AudioModule.dll\""));
-            Assert.That(lines[1], Does.StartWith("-reference:Cpp2ILReference1=").And.EndWith("/UnityEngine.CoreModule.dll\""));
+            Assert.That(lines, Has.Length.EqualTo(4));
+            Assert.That(lines[0], Does.StartWith("-reference:\"").And.EndWith("/UnityEngine.AudioModule.dll\""));
+            Assert.That(lines[1], Does.StartWith("-reference:Cpp2ILReference0=").And.EndWith("/UnityEngine.AudioModule.dll\""));
+            Assert.That(lines[2], Does.StartWith("-reference:\"").And.EndWith("/UnityEngine.CoreModule.dll\""));
+            Assert.That(lines[3], Does.StartWith("-reference:Cpp2ILReference1=").And.EndWith("/UnityEngine.CoreModule.dll\""));
         });
     }
 
     [TestCase("System.Runtime", "4.1.2.0")]
     [TestCase("System.Collections", "4.0.11.0")]
+    [TestCase("System.Configuration", "4.0.0.0")]
     public void UnusedExactFrameworkReferenceIsRetainedWithoutChangingManagedSource(string name, string version)
     {
-        // Use a synthetic identity carrier with this test's explicit host dependency.
-        // Host facades themselves can reference historical identities that do not
-        // match the current runtime; they are not a Unity reference set.
-        var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-        var identity = System.Reflection.AssemblyName.GetAssemblyName(Path.Combine(runtimeDirectory, name + ".dll"));
-        var references = Path.Combine(_directory, "references");
-        Directory.CreateDirectory(references);
+        var reference = WriteSyntheticTargetFrameworkReference(name, version, out var references);
         var referencePath = Path.Combine(references, name + ".dll");
-        var target = CreateAssembly(name);
-        target.Version = Version.Parse(version);
-        target.PublicKey = identity.GetPublicKey();
-        target.HasPublicKey = true;
-        using (var stream = File.Create(referencePath))
-            target.WriteManifest(stream);
-        var reference = new AsmResolver.DotNet.AssemblyReference(identity.Name, target.Version)
-        {
-            PublicKeyOrToken = identity.GetPublicKeyToken(),
-        };
         Assert.That(Unity2021TargetFrameworkAssemblies.HasTargetIdentity(reference), Is.True);
         var application = CreateAssembly("Synthetic.Application");
         application.ManifestModule!.AssemblyReferences.Add(reference);
         application.ManifestModule.TokenAllocator.AssignNextAvailableToken(reference);
         var project = Path.Combine(_directory, "project");
         var report = UnitySourceProjectEmitter.Emit([application], ["Synthetic.Application"],
-            [references, runtimeDirectory], project);
+            [references], project);
         var original = UnitySourceProjectEmitter.Emit([CreateAssembly("Synthetic.Application")],
-            ["Synthetic.Application"], [runtimeDirectory], Path.Combine(_directory, "without-reference"));
+            ["Synthetic.Application"], [references], Path.Combine(_directory, "without-reference"));
         var entry = report.Assemblies.Single();
         var directory = Path.GetDirectoryName(Path.Combine(project, entry.SourceFile))!;
 
@@ -855,12 +844,76 @@ public class UnitySourceEmitterTests
             Assert.That(report.SourceGeneration, Is.EqualTo("generated"));
             Assert.That(entry.CompilerReferenceAliases, Is.EqualTo(new[] { name }));
             Assert.That(File.ReadAllText(Path.Combine(directory, "ReferenceAliases.rsp")),
-                Is.EqualTo("-reference:Cpp2ILReference0=\"" + referencePath.Replace('\\', '/') + "\"\n"));
+                Is.EqualTo(CompilerReferenceArguments(referencePath, 0)));
             Assert.That(File.ReadAllText(Path.Combine(project, entry.SourceFile)),
                 Is.EqualTo(File.ReadAllText(Path.Combine(_directory, "without-reference", original.Assemblies.Single().SourceFile))));
             Assert.That(Directory.GetFiles(Path.Combine(project, "Assets"), "*.dll", SearchOption.AllDirectories), Is.Empty);
             Assert.That(report.UnityCompilation, Is.EqualTo("unverified"));
         });
+    }
+
+    [Test]
+    public void UsedExactFrameworkTypeKeepsGlobalVisibilityAndOriginalReferenceIdentity()
+    {
+        const string name = "System.Configuration";
+        var reference = WriteSyntheticTargetFrameworkReference(name, "4.0.0.0", out var references);
+        var application = CreateAssembly("Synthetic.Application");
+        var module = application.ManifestModule!;
+        module.AssemblyReferences.Add(reference);
+        var configuration = new TypeReference(module, reference, name, "Configuration");
+        module.TopLevelTypes.Single(type => type.Name == "Constants").Fields.Add(
+            new FieldDefinition("Configuration", FieldAttributes.Public | FieldAttributes.Static,
+                configuration.ToTypeSignature(false)));
+        var project = Path.Combine(_directory, "project");
+
+        var report = UnitySourceProjectEmitter.Emit([application], ["Synthetic.Application"], [references], project);
+        var entry = report.Assemblies.Single();
+        var directory = Path.GetDirectoryName(Path.Combine(project, entry.SourceFile))!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(report.SourceGeneration, Is.EqualTo("generated"));
+            Assert.That(report.Diagnostics, Is.Empty);
+            Assert.That(File.ReadAllText(Path.Combine(project, entry.SourceFile)),
+                Does.Contain("public static Configuration Configuration;").And.Contain("using System.Configuration;"));
+            Assert.That(entry.CompilerReferenceAliases, Is.EqualTo(new[] { name }));
+            Assert.That(File.ReadAllText(Path.Combine(directory, "ReferenceAliases.rsp")),
+                Is.EqualTo(CompilerReferenceArguments(Path.Combine(references, name + ".dll"), 0)));
+            Assert.That(Directory.GetFiles(Path.Combine(project, "Assets"), "*.dll", SearchOption.AllDirectories), Is.Empty);
+            Assert.That(report.UnityCompilation, Is.EqualTo("unverified"));
+        });
+    }
+
+    private static string CompilerReferenceArguments(string path, int alias)
+    {
+        var quoted = "\"" + path.Replace('\\', '/') + "\"\n";
+        return "-reference:" + quoted + "-reference:Cpp2ILReference" + alias + "=" + quoted;
+    }
+
+    private AsmResolver.DotNet.AssemblyReference WriteSyntheticTargetFrameworkReference(string name, string version,
+        out string references)
+    {
+        // The test input uses an authenticated synthetic target identity and only
+        // its required host core library. A whole host runtime directory can also
+        // contain the same target identity and create an ambiguous resolver input.
+        var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        var identity = System.Reflection.AssemblyName.GetAssemblyName(Path.Combine(runtimeDirectory, "System.Runtime.dll"));
+        references = Path.Combine(_directory, "references");
+        Directory.CreateDirectory(references);
+        File.Copy(typeof(object).Assembly.Location, Path.Combine(references, Path.GetFileName(typeof(object).Assembly.Location)));
+        var target = CreateAssembly(name);
+        target.Version = Version.Parse(version);
+        target.PublicKey = identity.GetPublicKey();
+        target.HasPublicKey = true;
+        if (name == "System.Configuration")
+            target.ManifestModule!.TopLevelTypes.Add(new TypeDefinition(name, "Configuration", TypeAttributes.Public,
+                target.ManifestModule.CorLibTypeFactory.Object.Type));
+        using (var stream = File.Create(Path.Combine(references, name + ".dll")))
+            target.WriteManifest(stream);
+        return new AsmResolver.DotNet.AssemblyReference(name, target.Version)
+        {
+            PublicKeyOrToken = identity.GetPublicKeyToken(),
+        };
     }
 
     [Test]

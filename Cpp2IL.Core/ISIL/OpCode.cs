@@ -209,4 +209,16 @@ public enum OpCode
     /// </summary>
     FloatAdd,
     FloatSubtract,
+
+    /// <summary>
+    /// Signed Int32 to binary32: destination, source. Rounds once to binary32
+    /// under default rounding and masked exceptions; no floating control/status claim.
+    /// </summary>
+    Int32ToSingle,
+
+    /// <summary>
+    /// Scalar IEEE multiplication: destination, left, right, width (32/64), rounded at that width
+    /// under default rounding and masked exceptions; no floating control/status claim.
+    /// </summary>
+    FloatMultiply,
 }

@@ -241,6 +241,7 @@ public static class LocalVariables
         SeedFloatingSelections(method);
         SeedFloatingProjections(method);
         SeedFloatingConversions(method);
+        SeedIntegerFloatConversions(method);
         SeedFloatingArithmetic(method);
         SeedFloatLiterals(method);
 
@@ -459,6 +460,10 @@ public static class LocalVariables
                 for (var index = 0; index < 3; index++)
                     SetTypeIfUnknown((LocalVariable)instruction.Operands[index],
                         division.ResultType(method.AppContext.SystemTypes));
+            if (FloatMultiplication.TryGet(instruction, out var multiplication))
+                for (var index = 0; index < 3; index++)
+                    if (instruction.Operands[index] is LocalVariable operand)
+                        SetTypeIfUnknown(operand, multiplication.ResultType(method.AppContext.SystemTypes));
             if (FloatAddSubtract.TryGet(instruction, out var arithmetic))
                 for (var index = 0; index < 3; index++)
                     SetTypeIfUnknown((LocalVariable)instruction.Operands[index],
@@ -468,6 +473,16 @@ public static class LocalVariables
                     SetTypeIfUnknown((LocalVariable)instruction.Operands[index],
                         selection.ResultType(method.AppContext.SystemTypes));
         }
+    }
+
+    private static void SeedIntegerFloatConversions(MethodAnalysisContext method)
+    {
+        foreach (var instruction in method.ControlFlowGraph!.Instructions)
+            if (IntegerFloatConversion.TryGet(instruction))
+            {
+                SetTypeIfUnknown((LocalVariable)instruction.Operands[0], method.AppContext.SystemTypes.SystemSingleType);
+                SetTypeIfUnknown((LocalVariable)instruction.Operands[1], method.AppContext.SystemTypes.SystemInt32Type);
+            }
     }
 
     private static void SeedFloatingProjections(MethodAnalysisContext method)

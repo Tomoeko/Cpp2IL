@@ -104,6 +104,9 @@ public static partial class IlGenerator
         if (X64ScalarDoubleAccumulatorProof.HasEvidence(context) &&
             !X64ScalarDoubleAccumulatorProof.IsValidFor(context))
             throw new DecompilerException("Double accumulator lost its complete native body, field layout, typed data flow or branch proof");
+        if (X64ScalarInt32ToSingleProof.HasEvidence(context) &&
+            !X64ScalarInt32ToSingleProof.IsValidFor(context))
+            throw new DecompilerException("Int32-to-Single recovery lost its complete native body, signed conversion, field layout or arithmetic proof");
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
         ValidateGuardedArrayOperations(context);
@@ -620,8 +623,16 @@ public static partial class IlGenerator
                 EmitFloatingConversion(instruction, method, locals);
                 break;
 
+            case OpCode.Int32ToSingle:
+                EmitIntegerFloatConversion(instruction, method, locals);
+                break;
+
             case OpCode.FloatDivide:
                 EmitFloatingDivision(instruction, method, locals);
+                break;
+
+            case OpCode.FloatMultiply:
+                EmitFloatingMultiplication(instruction, method, locals);
                 break;
 
             case OpCode.FloatAdd:

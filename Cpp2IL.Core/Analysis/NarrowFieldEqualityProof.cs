@@ -101,7 +101,7 @@ internal static class NarrowFieldEqualityProof
     }
 
     // Constructed instances do not project their inherited fields in the model.
-    // This path is only for a separately proved complete Boolean[] store whose
+    // This path is only for a separately proved complete Boolean[] operation whose
     // immediate generic base definition is fieldless and whose remaining chain
     // and sibling fields have exact, nonoverlapping metadata offsets.
     internal static bool HasUnchangedReferenceFieldLayoutWithFieldlessConstructedBase(
@@ -233,7 +233,10 @@ internal static class NarrowFieldEqualityProof
     private static bool HasUnchangedFieldlessGenericBase(GenericInstanceTypeAnalysisContext constructed)
     {
         var definition = constructed.GenericType;
-        return constructed.GenericArguments.Count != 0 &&
+        return constructed.HasUnchangedOriginalRawType &&
+               constructed.OriginalRawType is { Type: Il2CppTypeEnum.IL2CPP_TYPE_GENERICINST,
+                   NumMods: 0, Byref: 0, Pinned: 0 } &&
+               constructed.GenericArguments.Count != 0 &&
                constructed.GenericArguments.Count == definition.GenericParameters.Count &&
                constructed.GenericArguments.All(argument => argument.Type is not
                    (Il2CppTypeEnum.IL2CPP_TYPE_VAR or Il2CppTypeEnum.IL2CPP_TYPE_MVAR)) &&

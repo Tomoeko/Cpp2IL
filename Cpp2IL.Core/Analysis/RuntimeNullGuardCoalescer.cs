@@ -510,6 +510,17 @@ internal static class RuntimeNullGuardCoalescer
                     }
                     if (instruction.OpCode == OpCode.Nop && instruction.IntegerBitWidth == 0 && instruction.Operands.Count == 0)
                         continue;
+                    // Keep a proved owner-byte capture and its zero predicate
+                    // behind this native guard. The complete invocation must
+                    // bind this same receiver and predicate before deletion.
+                    if (requireNativeFieldBinding && instruction.NativeAddress != null &&
+                        instruction.CallSemantics == CallSemantics.Direct &&
+                        OperandEffects.ReadLocals(instruction).All(local => Available(local, entry, instruction)) &&
+                        X64NativeNullCheckedInvocationProof.IsBooleanPredicateArgumentSetup(method, instruction, receiver))
+                    {
+                        pendingTypedInvocationSetup = true;
+                        continue;
+                    }
                     // This read remains at its captured native site. It may only
                     // form an argument when the subsequent complete invocation
                     // proof binds its owner, field, width and reaching definition.

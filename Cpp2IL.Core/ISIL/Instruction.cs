@@ -133,7 +133,9 @@ public class Instruction : IOperand
             case OpCode.FloatSelect:
             case OpCode.FloatProject:
             case OpCode.FloatConvert:
+            case OpCode.Int32ToSingle:
             case OpCode.FloatDivide:
+            case OpCode.FloatMultiply:
             case OpCode.FloatAdd:
             case OpCode.FloatSubtract:
             case OpCode.FloatNegateNegative:
@@ -218,9 +220,9 @@ public class Instruction : IOperand
 
             OpCode.CallVoid or OpCode.Phi => _operands.Skip(1).ToList(),
             // Trailing width/mask immediates describe the predicate, rather than values being compared.
-            OpCode.FloatCompare or OpCode.FloatSelect or OpCode.FloatDivide or OpCode.FloatAdd or OpCode.FloatSubtract => _operands.Skip(1).Take(2).ToList(),
+            OpCode.FloatCompare or OpCode.FloatSelect or OpCode.FloatDivide or OpCode.FloatMultiply or OpCode.FloatAdd or OpCode.FloatSubtract => _operands.Skip(1).Take(2).ToList(),
             // Extension widths/sign describe the operation; only the value is a source.
-            OpCode.IntegerExtend or OpCode.FloatTruncateSigned or OpCode.FloatProject or OpCode.FloatConvert or OpCode.FloatNegateNegative => _operands.Skip(1).Take(1).ToList(),
+            OpCode.IntegerExtend or OpCode.FloatTruncateSigned or OpCode.FloatProject or OpCode.FloatConvert or OpCode.Int32ToSingle or OpCode.FloatNegateNegative => _operands.Skip(1).Take(1).ToList(),
             OpCode.CheckEqual or OpCode.CheckGreater or OpCode.CheckLess
                 or OpCode.CheckNotEqual or OpCode.CheckGreaterOrEqual or OpCode.CheckLessOrEqual
                 or OpCode.CheckLessUnsigned or OpCode.CheckGreaterUnsigned or OpCode.CheckLessOrEqualUnsigned or OpCode.CheckGreaterOrEqualUnsigned

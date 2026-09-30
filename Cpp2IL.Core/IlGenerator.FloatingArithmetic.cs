@@ -16,6 +16,13 @@ public static partial class IlGenerator
         EmitFloatingBinaryArithmetic(instruction, method, locals, division.Width, CilOpCodes.Div);
     }
 
+    private static void EmitFloatingMultiplication(Instruction instruction, MethodDefinition method, EmissionLocals locals)
+    {
+        if (!FloatMultiplication.TryGet(instruction, out var multiplication))
+            throw new DecompilerException("Floating multiplication requires scalar locals and explicit 32/64-bit precision");
+        EmitFloatingBinaryArithmetic(instruction, method, locals, multiplication.Width, CilOpCodes.Mul);
+    }
+
     private static void EmitFloatingAddSubtract(Instruction instruction, MethodDefinition method, EmissionLocals locals)
     {
         if (!FloatAddSubtract.TryGet(instruction, out var arithmetic))
@@ -28,15 +35,20 @@ public static partial class IlGenerator
         EmissionLocals locals, int width, CilOpCode operation)
     {
         var destination = (LocalVariable)instruction.Operands[0];
-        var left = (LocalVariable)instruction.Operands[1];
-        var right = (LocalVariable)instruction.Operands[2];
+        var left = instruction.Operands[1];
+        var right = instruction.Operands[2];
         var expected = width == 32 ? locals.Context.AppContext.SystemTypes.SystemSingleType : locals.Context.AppContext.SystemTypes.SystemDoubleType;
-        ValidateFloatingArithmeticTypes([destination, left, right], expected, locals);
+        ValidateFloatingArithmeticTypes([destination], expected, locals);
+        foreach (var operand in new[] { left, right })
+            if (operand is LocalVariable local)
+                ValidateFloatingArithmeticTypes([local], expected, locals);
+            else if (!(width == 32 && operand is FloatLiteral || width == 64 && operand is DoubleLiteral))
+                throw new DecompilerException("Floating arithmetic literal does not match its explicit native precision");
         var code = method.CilMethodBody!.Instructions;
         var precision = width == 32 ? CilOpCodes.Conv_R4 : CilOpCodes.Conv_R8;
-        LoadLocal(left, method, locals);
+        LoadOperand(left, method, locals);
         code.Add(precision);
-        LoadLocal(right, method, locals);
+        LoadOperand(right, method, locals);
         code.Add(precision);
         code.Add(operation);
         // Native scalar arithmetic rounds at each operation, before a comparison,

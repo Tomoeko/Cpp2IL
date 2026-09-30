@@ -166,6 +166,7 @@ import array_call_origins
 import guarded_array_tail_invocation
 import scalar_float_selection
 import scalar_float_conversion
+import scalar_int32_single_conversion
 import scalar_double_accumulator
 import scalar_float_conversion_composition
 import native_null_checked_invocation
@@ -175,6 +176,7 @@ import native_scalar_invocation_effects
 import native_subnormal_field_store
 import native_derived_receiver_invocation
 import native_boolean_toggle_invocation
+import native_boolean_predicate_invocation
 import call_result_engine_false_tail
 import engine_component_false_tail
 import internal_call_field
@@ -218,7 +220,7 @@ PROFILES = {
         "source": VALIDATION / "FieldParameterBooleanArrayStoreFixture", "methods": 2},
     "field-boolean-array-read": {"assembly": "FieldBooleanArrayReadFixture", "source": VALIDATION / "FieldBooleanArrayReadFixture", "methods": 4},
     "fixed-boolean-conjunction": {"assembly": "FixedBooleanConjunctionFixture",
-                                  "source": VALIDATION / "FixedBooleanConjunctionFixture", "methods": 2},
+                                  "source": VALIDATION / "FixedBooleanConjunctionFixture", "methods": 4},
     "range-array-read": {"assembly": "RangeArrayReadFixture", "source": VALIDATION / "RangeArrayReadFixture", "methods": 4},
     "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 6},
     "folded-boolean-array-store": {"assembly": "FoldedBooleanArrayStoreFixture",
@@ -243,10 +245,14 @@ PROFILES = {
                                "source": VALIDATION / "ScalarFloatSelectionFixture", "methods": 9},
     "scalar-double-accumulator": {"assembly": "ScalarDoubleAccumulatorFixture",
                                   "source": VALIDATION / "ScalarDoubleAccumulatorFixture", "methods": 2},
+    "native-boolean-predicate-invocation": {"assembly": "NativeBooleanPredicateInvocationFixture",
+                                           "source": VALIDATION / "NativeBooleanPredicateInvocationFixture", "methods": 6},
     "native-boolean-toggle-invocation": {"assembly": "NativeBooleanToggleInvocationFixture",
                                           "source": VALIDATION / "NativeBooleanToggleInvocationFixture", "methods": 4},
     "scalar-float-conversion": {"assembly": "ScalarFloatConversionFixture",
                                 "source": VALIDATION / "ScalarFloatConversionFixture", "methods": 2},
+    "scalar-int32-single-conversion": {"assembly": "ScalarInt32SingleConversionFixture",
+                                      "source": VALIDATION / "ScalarInt32SingleConversionFixture", "methods": 7},
     "scalar-float-conversion-composition": {"assembly": "ScalarFloatConversionCompositionFixture",
                                             "source": VALIDATION / "ScalarFloatConversionCompositionFixture", "methods": 8},
     "native-null-checked-invocation": {"assembly": "NativeNullCheckedInvocationFixture",
@@ -642,10 +648,14 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return scalar_float_selection.verify(path, stage, VERSION)
     if profile == "scalar-double-accumulator":
         return scalar_double_accumulator.verify(path, stage, VERSION)
+    if profile == "native-boolean-predicate-invocation":
+        return native_boolean_predicate_invocation.verify(path, stage, VERSION)
     if profile == "native-boolean-toggle-invocation":
         return native_boolean_toggle_invocation.verify(path, stage, VERSION)
     if profile == "scalar-float-conversion":
         return scalar_float_conversion.verify(path, stage, VERSION)
+    if profile == "scalar-int32-single-conversion":
+        return scalar_int32_single_conversion.verify(path, stage, VERSION)
     if profile == "scalar-float-conversion-composition":
         return scalar_float_conversion_composition.verify(path, stage, VERSION)
     if profile == "native-null-checked-invocation":

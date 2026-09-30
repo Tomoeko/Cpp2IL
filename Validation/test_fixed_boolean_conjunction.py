@@ -20,28 +20,42 @@ class FixedBooleanConjunctionOracleTests(unittest.TestCase):
 
     def test_short_circuit_and_ordered_exceptions(self):
         rows = observations()
-        self.assertEqual(len(rows), 15)
-        self.assertEqual(self.check(rows)["methods"], 2)
-        self.assertEqual(rows[4]["result"], False)
+        self.assertEqual(len(rows), 35)
+        self.assertEqual(self.check(rows)["methods"], 4)
         self.assertEqual(rows[5]["result"], False)
-        self.assertEqual(rows[6]["exception"], "System.NullReferenceException")
-        self.assertEqual(rows[9]["exception"], "System.IndexOutOfRangeException")
-        self.assertEqual(rows[10]["exception"], "System.NullReferenceException")
-        self.assertEqual(rows[11]["exception"], "System.IndexOutOfRangeException")
+        self.assertEqual(rows[6]["result"], False)
+        self.assertEqual(rows[7]["exception"], "System.NullReferenceException")
+        self.assertEqual(rows[10]["exception"], "System.IndexOutOfRangeException")
+        self.assertEqual(rows[11]["exception"], "System.NullReferenceException")
+        self.assertEqual(rows[12]["exception"], "System.IndexOutOfRangeException")
+        self.assertEqual(rows[16]["result"], True)
+        self.assertEqual(rows[16]["firstBefore"], [True, False])
+        self.assertEqual(rows[31]["exception"], "System.IndexOutOfRangeException")
+        self.assertEqual(rows[32]["exception"], "System.IndexOutOfRangeException")
+        self.assertEqual(rows[33]["result"], False)
+        self.assertEqual(rows[34]["firstSecondSame"], True)
 
     def test_effect_and_failure_mutations_reject(self):
         for index, key, value in (
-                (4, "exception", "System.NullReferenceException"),
-                (9, "exception", "System.NullReferenceException"),
-                (10, "result", True),
-                (0, "result", 1),
-                (0, "firstBefore", [0]),
-                (12, "firstSecondSame", False),
-                (13, "secondAfter", [False]),
-                (0, "firstFieldSame", False),
-                (0, "firstFieldSame", 1),
-                (1, "secondFieldSame", False),
-                (2, "sentinelAfter", 74),
+                (5, "exception", "System.NullReferenceException"),
+                (10, "exception", "System.NullReferenceException"),
+                (11, "result", True),
+                (1, "result", 1),
+                (1, "firstBefore", [0]),
+                (13, "firstSecondSame", False),
+                (14, "secondAfter", [False]),
+                (1, "firstFieldSame", False),
+                (1, "firstFieldSame", 1),
+                (2, "secondFieldSame", False),
+                (3, "sentinelAfter", 74),
+                (16, "result", False),
+                (16, "method", "BothFalseAtZero"),
+                (31, "exception", "System.NullReferenceException"),
+                (33, "exception", "System.IndexOutOfRangeException"),
+                (0, "atOneReturn", "System.Int32"),
+                (0, "baseType", "FixedBooleanConjunctionFixture.EmptyBase"),
+                (0, "baseArgument", "System.String"),
+                (0, "baseFields", 1),
         ):
             rows = observations()
             rows[index][key] = value

@@ -21,8 +21,10 @@ namespace Cpp2IL.Core.InstructionSets;
 /// </summary>
 internal static class X64FixedBooleanConjunctionProof
 {
-    internal sealed record Evidence(FieldAnalysisContext First, FieldAnalysisContext Second);
-    internal sealed record Shape(int FirstOffset, int SecondOffset);
+    internal sealed record Evidence(FieldAnalysisContext First, int FirstIndex,
+        FieldAnalysisContext Second, int SecondIndex);
+    internal sealed record Shape(int FirstOffset, int FirstIndex,
+        int SecondOffset, int SecondIndex);
 
     internal static Evidence? Find(MethodAnalysisContext method)
     {
@@ -74,7 +76,7 @@ internal static class X64FixedBooleanConjunctionProof
             var first = BindArrayField(owner, shape.FirstOffset, app);
             var second = BindArrayField(owner, shape.SecondOffset, app);
             return first != null && second != null && !ReferenceEquals(first, second)
-                ? new Evidence(first, second) : null;
+                ? new Evidence(first, shape.FirstIndex, second, shape.SecondIndex) : null;
         }
         catch (Exception exception) when (exception is ArgumentException or
             InvalidOperationException or IndexOutOfRangeException or OverflowException)
@@ -97,13 +99,18 @@ internal static class X64FixedBooleanConjunctionProof
             return null;
         var receiver = new LocalVariable("proved-owner",
             new ManagedRegister(null, "rcx"), owner);
-        return NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(
-            new FieldReference(field, receiver, offset)) ? field : null;
+        var reference = new FieldReference(field, receiver, offset);
+        return NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(reference) ||
+               NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayoutWithFieldlessConstructedBase(reference)
+            ? field : null;
     }
 
-    internal static Shape? TryProveShape(IReadOnlyList<NativeInstruction> body, PE pe)
+    internal static Shape? TryProveShape(IReadOnlyList<NativeInstruction> body, PE pe) =>
+        TryProveShape(body, pe.PointerSizeBytes);
+
+    internal static Shape? TryProveShape(IReadOnlyList<NativeInstruction> body, int pointerSize)
     {
-        if (body.Count != 23 || pe.PointerSizeBytes != 8 ||
+        if (body.Count != 23 || pointerSize != 8 ||
             !X64Stack28BodyProof.Stack(body[0], Mnemonic.Sub) ||
             body[0].IP == 0 ||
             body.Any(instruction => instruction.IsInvalid || instruction.CodeSize != CodeSize.Code64 ||
@@ -114,28 +121,53 @@ internal static class X64FixedBooleanConjunctionProof
             !ArrayFieldLoad(body[1], out var firstOffset) ||
             !Registers(body[2], Code.Test_rm64_r64, NativeRegister.RAX, NativeRegister.RAX) ||
             !Branch(body[3], Code.Je_rel8_64, body[20].IP) ||
-            !LengthCompare(body[4], pe) ||
+            !LengthCompare(body[4], pointerSize, out var firstIndex) ||
             !Branch(body[5], Code.Jbe_rel8_64, body[22].IP) ||
-            !ElementCompare(body[6], pe) ||
-            !Branch(body[7], Code.Je_rel8_64, body[11].IP) ||
-            !Registers(body[8], Code.Xor_r8_rm8, NativeRegister.AL, NativeRegister.AL) ||
-            !X64Stack28BodyProof.Stack(body[9], Mnemonic.Add) ||
-            !Return(body[10]) ||
-            !ArrayFieldLoad(body[11], out var secondOffset) ||
-            firstOffset == secondOffset ||
-            !Registers(body[12], Code.Test_rm64_r64, NativeRegister.RAX, NativeRegister.RAX) ||
-            !Branch(body[13], Code.Je_rel8_64, body[20].IP) ||
-            !LengthCompare(body[14], pe) ||
-            !Branch(body[15], Code.Jbe_rel8_64, body[22].IP) ||
-            !ElementCompare(body[16], pe) ||
-            body[17].Code != Code.Sete_rm8 || body[17].OpCount != 1 ||
-            body[17].Op0Kind != OpKind.Register || body[17].Op0Register != NativeRegister.AL ||
-            !X64Stack28BodyProof.Stack(body[18], Mnemonic.Add) ||
-            !Return(body[19]) ||
+            !ElementCompare(body[6], pointerSize, firstIndex) ||
             !Call(body[20]) || body[21].Code != Code.Int3 ||
             !Call(body[22]))
             return null;
-        return new Shape(firstOffset, secondOffset);
+
+        // The compiler may place the early false return before or after the
+        // second read. Prove both successors explicitly; neither layout permits
+        // moving the second field load across the first predicate.
+        int secondRead, falseReturn;
+        if (Branch(body[7], Code.Je_rel8_64, body[11].IP))
+        {
+            secondRead = 11;
+            falseReturn = 8;
+        }
+        else if (Branch(body[7], Code.Jne_rel8_64, body[17].IP))
+        {
+            secondRead = 8;
+            falseReturn = 17;
+        }
+        else
+            return null;
+
+        if (!(Registers(body[falseReturn], Code.Xor_r8_rm8,
+                  NativeRegister.AL, NativeRegister.AL) ||
+              Registers(body[falseReturn], Code.Xor_rm8_r8,
+                  NativeRegister.AL, NativeRegister.AL)) ||
+            !X64Stack28BodyProof.Stack(body[falseReturn + 1], Mnemonic.Add) ||
+            !Return(body[falseReturn + 2]) ||
+            !ArrayFieldLoad(body[secondRead], out var secondOffset) ||
+            firstOffset == secondOffset ||
+            !Registers(body[secondRead + 1], Code.Test_rm64_r64,
+                NativeRegister.RAX, NativeRegister.RAX) ||
+            !Branch(body[secondRead + 2], Code.Je_rel8_64, body[20].IP) ||
+            !LengthCompare(body[secondRead + 3], pointerSize, out var secondIndex) ||
+            !Branch(body[secondRead + 4], Code.Jbe_rel8_64, body[22].IP) ||
+            !ElementCompare(body[secondRead + 5], pointerSize, secondIndex) ||
+            body[secondRead + 6].Code != Code.Sete_rm8 ||
+            body[secondRead + 6].OpCount != 1 ||
+            body[secondRead + 6].Op0Kind != OpKind.Register ||
+            body[secondRead + 6].Op0Register != NativeRegister.AL ||
+            !X64Stack28BodyProof.Stack(body[secondRead + 7], Mnemonic.Add) ||
+            !Return(body[secondRead + 8]))
+            return null;
+
+        return new Shape(firstOffset, firstIndex, secondOffset, secondIndex);
     }
 
     private static bool ArrayFieldLoad(NativeInstruction instruction, out int offset)
@@ -153,23 +185,30 @@ internal static class X64FixedBooleanConjunctionProof
         return true;
     }
 
-    private static bool LengthCompare(NativeInstruction instruction, PE pe) =>
-        instruction.Code == Code.Cmp_rm32_imm8 && instruction.OpCount == 2 &&
+    private static bool LengthCompare(NativeInstruction instruction, int pointerSize,
+        out int index)
+    {
+        index = instruction.Immediate8;
+        // CMP sign-extends its imm8. Admit only nonnegative constants so the
+        // unsigned JBE exit is exactly the managed index >= length check.
+        return instruction.Code == Code.Cmp_rm32_imm8 && instruction.OpCount == 2 &&
         instruction.Op0Kind == OpKind.Memory &&
         instruction.MemoryBase == NativeRegister.RAX &&
         instruction.MemoryIndex == NativeRegister.None && instruction.MemoryIndexScale == 1 &&
         instruction.MemorySize.GetSize() == 4 &&
-        instruction.MemoryDisplacement64 <= uint.MaxValue &&
-        Il2CppArrayUtils.IsIl2cppLengthAccessor((uint)instruction.MemoryDisplacement64, pe) &&
-        instruction.Op1Kind == OpKind.Immediate8to32 && instruction.Immediate8 == 0;
+        instruction.MemoryDisplacement64 == (ulong)Il2CppArrayUtils.GetLengthOffset(pointerSize) &&
+        instruction.Op1Kind == OpKind.Immediate8to32 && index <= sbyte.MaxValue;
+    }
 
-    private static bool ElementCompare(NativeInstruction instruction, PE pe) =>
+    private static bool ElementCompare(NativeInstruction instruction, int pointerSize,
+        int index) =>
         instruction.Code == Code.Cmp_rm8_imm8 && instruction.OpCount == 2 &&
         instruction.Op0Kind == OpKind.Memory &&
         instruction.MemoryBase == NativeRegister.RAX &&
         instruction.MemoryIndex == NativeRegister.None && instruction.MemoryIndexScale == 1 &&
         instruction.MemorySize.GetSize() == 1 &&
-        instruction.MemoryDisplacement64 == Il2CppArrayUtils.GetFirstItemOffset(pe) &&
+        instruction.MemoryDisplacement64 ==
+            (ulong)(Il2CppArrayUtils.GetFirstItemOffset(pointerSize) + index) &&
         instruction.Op1Kind == OpKind.Immediate8 && instruction.Immediate8 == 0;
 
     private static bool Registers(NativeInstruction instruction, Code code,

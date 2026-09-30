@@ -22,6 +22,7 @@ internal static class Unity2021TargetFrameworkAssemblies
             ["mscorlib"] = (FrameworkVersion, FrameworkToken),
             ["System"] = (FrameworkVersion, FrameworkToken),
             ["System.Core"] = (FrameworkVersion, FrameworkToken),
+            ["System.Configuration"] = (FrameworkVersion, FacadeToken),
             ["System.Xml"] = (FrameworkVersion, FrameworkToken),
             ["System.Xml.Linq"] = (FrameworkVersion, FrameworkToken),
             ["System.Numerics"] = (FrameworkVersion, FrameworkToken),

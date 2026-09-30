@@ -104,6 +104,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return scalarFloatComposition; // Preserve narrowing, per-operation precision and the complete ordered-negative branch.
         if (X64ScalarDoubleAccumulatorProof.TryLift(context, nativeInstructions) is { } doubleAccumulator)
             return doubleAccumulator; // Preserve the complete Boolean branch and separately rounded field update.
+        if (X64ScalarInt32ToSingleProof.TryLift(context, nativeInstructions) is { } int32Single)
+            return int32Single; // Complete bodies bind signed conversion, scalar lanes and field/arithmetic effects.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
         if (X64ReferenceScalarFieldEffectsProof.TryLift(context, nativeInstructions) is { } referenceScalarEffects)
