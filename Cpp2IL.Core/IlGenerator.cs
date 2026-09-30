@@ -74,6 +74,11 @@ public static partial class IlGenerator
 
     public static void GenerateIl(MethodAnalysisContext context, MethodDefinition definition)
     {
+        // These synthetic nodes are skipped during emission. Never silently drop their effects.
+        if (context.ControlFlowGraph is { } graph &&
+            (graph.EntryBlock.Instructions.Count != 0 || graph.ExitBlock.Instructions.Count != 0))
+            throw new DecompilerException("Synthetic control-flow entry and exit blocks must be empty");
+
         ValidateGuardedScalarAccessors(context);
         ValidateClosedGenericStorage(context);
         ValidateOpenGenericEarlyFields(context);

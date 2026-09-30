@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
@@ -19,6 +20,44 @@ internal static partial class X64NativeNullCheckedInvocationProof
         !caller.ControlFlowGraph!.Instructions.Any(operation =>
             operation is { OpCode: OpCode.Move, Operands: [FieldReference access, Immediate] } &&
             access.Field.FieldType.Type is Il2CppTypeEnum.IL2CPP_TYPE_R4 or Il2CppTypeEnum.IL2CPP_TYPE_R8);
+
+    // Normalize all retained subnormal stores together: the final proof rejects
+    // any untyped floating store, including another store in this same body.
+    // Tentative operands never escape a failed native/effect/control validation.
+    internal static bool TryNormalizeSubnormalFloatingStores(MethodAnalysisContext? caller)
+    {
+        if (caller?.ControlFlowGraph is not { } graph ||
+            !NativeRecoveryProofTracker.Has(caller, EvidenceKey) ||
+            caller.GetExtraData<List<Site>>(EvidenceKey) is not { Count: > 0 } sites)
+            return false;
+        var pending = new List<(Instruction Operation, IOperand Raw, IOperand Typed)>();
+        foreach (var operation in graph.Instructions)
+        {
+            if (operation is not { OpCode: OpCode.Move, Operands: [FieldReference access, Immediate raw] }) continue;
+            var width = FloatingWidth(caller, access.Field.FieldType);
+            if (!TryFloatingLiteralBits(raw, width, out var bits) || !FloatLiteralRecovery.IsSubnormal(bits, width))
+                continue;
+            if (sites.Any(site => site.Effects.Count(effect => ReferenceEquals(effect.Operation, operation)) != 1))
+                return false;
+            IOperand typed = width == 32
+                ? new FloatLiteral(BitConverter.ToSingle(BitConverter.GetBytes((uint)bits), 0))
+                : new DoubleLiteral(BitConverter.ToDouble(BitConverter.GetBytes(bits), 0));
+            pending.Add((operation, operation.Operands[1], typed));
+        }
+        if (pending.Count == 0) return false;
+        var valid = false;
+        try
+        {
+            foreach (var store in pending) store.Operation.SetOperand(1, store.Typed);
+            valid = IsValidFor(caller);
+            return valid;
+        }
+        finally
+        {
+            if (!valid)
+                foreach (var store in pending) store.Operation.SetOperand(1, store.Raw);
+        }
+    }
 
     // FloatLiteralRecovery interprets the stored integer bits using the typed
     // field. Keep those exact bits, including signed zero and NaN payloads, while

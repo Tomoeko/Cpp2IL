@@ -29,7 +29,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
 
     private sealed record Origin(int Entry, TypeAnalysisContext Type, Instruction? Definition = null,
         MethodAnalysisContext? Producer = null, FieldAnalysisContext? Field = null, int SourceEntry = -2,
-        int Offset = 0);
+        int Offset = 0, bool ReferenceWidened = false);
     private readonly record struct Argument(int? Entry, long? Literal, ScalarFieldArgument? Field = null);
     private sealed record ValueKey(string Kind, object? Value, ValueKey[] Children);
     private sealed record OrderedEffect(Instruction Operation, ulong Address, bool Before, bool After,
@@ -39,7 +39,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
     private sealed record Site(Instruction Invocation, MethodAnalysisContext Target, Origin Receiver,
         Argument[] Arguments, ulong Comparison, ulong Branch, ulong NullCall, RuntimeNullThrowEvidence Helper,
         Instruction GuardBranch, Block GuardOwner, Block NormalArm, NativeInstruction[] Body,
-        OrderedEffect[] Effects, Control[] Controls, ReferenceStore[] Stores);
+        OrderedEffect[] Effects, Control[] Controls, ReferenceStore[] Stores, ValueKey? ReceiverDeclarations);
 
     internal static bool HasEvidence(MethodAnalysisContext method) =>
         NativeRecoveryProofTracker.Has(method, EvidenceKey) ||
@@ -88,12 +88,13 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     graph.Instructions.Where(instruction => instruction.OpCode == OpCode.RuntimeNullThrow).ToArray() is not
                         [{ NativeAddress: { } onlyNullCall }] || onlyNullCall != nullCall ||
                     !BindInvocation(caller, invocation, target, origin, body, values, out var arguments) ||
+                    !TryReceiverDeclarations(origin, target, out var receiverDeclarations) ||
                     !TryEffects(caller, invocation, out var effects) ||
                     !TryControls(caller, branch, body, out var controls)) return false;
                 var sites = caller.GetExtraData<List<Site>>(EvidenceKey) ?? [];
                 if (sites.Any(site => ReferenceEquals(site.Invocation, invocation))) return false;
                 sites.Add(new(invocation, target, origin, arguments, comparisonIp, branchIp, nullCall, helper,
-                    branch, guardOwner, normalArm, body, effects, controls, stores));
+                    branch, guardOwner, normalArm, body, effects, controls, stores, receiverDeclarations));
                 var argumentIndex = invocation.OpCode == OpCode.Call ? 3 : 2;
                 for (var index = 0; index < arguments.Length; index++)
                     invocation.SetOperand(argumentIndex + index, CanonicalArgument(caller, arguments[index]));
@@ -151,6 +152,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
         {
             if (!NativeRecoveryProofTracker.Has(caller, EvidenceKey) ||
                 caller.GetExtraData<List<Site>>(EvidenceKey) is not { Count: > 0 } sites ||
+                caller.ControlFlowGraph is not { EntryBlock.Instructions.Count: 0, ExitBlock.Instructions.Count: 0 } ||
                 caller.ControlFlowGraph?.Instructions.Any(instruction => instruction.OpCode == OpCode.RuntimeNullThrow) != false ||
                 !FloatingStoreLiteralTypesRetained(caller) ||
                 ReadBody(caller, out var body, out _) is not { } values)
@@ -164,6 +166,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     !ReferenceEquals(target, site.Target) ||
                     !RewrittenGuard(caller, site) ||
                     !TryOrigin(caller, receiver, call, out var origin) || origin != site.Receiver ||
+                    !ReceiverDeclarationsRetained(origin, target, site.ReceiverDeclarations) ||
                     !TryGuard(caller, body, values, origin, site.Comparison, site.Branch, call,
                         out var nullCall, out var helper, site.Helper, site.NullCall) ||
                     nullCall != site.NullCall || helper.NativeTarget != site.Helper.NativeTarget ||
@@ -174,7 +177,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     return false;
             }
             return BooleanFieldArgumentLoadsRetained(caller, body, values, sites) &&
-                   ScalarFieldArgumentUsesRetained(caller, sites);
+                   ScalarFieldArgumentUsesRetained(caller, sites) && ReferenceReceiverUsesRetained(caller, sites);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
@@ -188,9 +191,15 @@ internal static partial class X64NativeNullCheckedInvocationProof
     {
         body = [];
         noReturn = [];
+        // Admission runs before SSA destruction removes dead exit-phi nops.
+        // Permit only those empty, unanchored placeholders; real sentinel
+        // operations still fail, and final IL emission requires empty sentinels.
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(caller.AppContext) || !OrdinaryCallerGroup(caller) ||
             caller.ImplAttributes.HasFlag(MethodImplAttributes.InternalCall) ||
             caller.ControlFlowGraph is not { } graph || !CallerParameters(caller) ||
+            graph.EntryBlock.Instructions.Count != 0 || graph.ExitBlock.Instructions.Any(instruction => instruction is not
+                { OpCode: OpCode.Nop, Index: -1, NativeAddress: null, IntegerBitWidth: 0,
+                    CallSemantics: CallSemantics.Direct, Operands.Count: 0 }) ||
             graph.Instructions.Any(instruction => instruction.OpCode is OpCode.NotImplemented or
                 OpCode.UnresolvedValue or OpCode.IndirectCall or OpCode.IndirectJump or OpCode.Invalid or OpCode.Interrupt))
             return null;
@@ -348,7 +357,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
         }
         if (origin.Field is not { } field || origin.Definition.Operands is not
                 [LocalVariable loaded, FieldReference access] || !ReferenceEquals(access.Field, field) ||
-            !ReferenceEquals(loaded.Type, origin.Type) || access.Offset != origin.Offset || field.Offset != origin.Offset ||
+            !ReferenceUpcast(origin.Type, loaded.Type) || access.Offset != origin.Offset || field.Offset != origin.Offset ||
             !TryOrigin(caller, access.Local, origin.Definition, out var sourceOrigin) || sourceOrigin.Definition != null ||
             sourceOrigin.Entry != origin.SourceEntry || !AccessibleField(caller, field) ||
             !ReferenceEquals(field.FieldType, origin.Type) ||
@@ -367,6 +376,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
     {
         origin = null!;
         var visited = new HashSet<(LocalVariable, Instruction)>();
+        var widened = false;
         while (visited.Add((value, use)))
         {
             if (value.Type is not { } type || !OrdinaryClass(type) || value.IsMethodInfo ||
@@ -374,22 +384,31 @@ internal static partial class X64NativeNullCheckedInvocationProof
                 return false;
             if (definition == null)
             {
-                if (!EntryIndex(method, value, out var index) || !Incoming(method, index, type, out _)) return false;
+                if (widened || !EntryIndex(method, value, out var index) || !Incoming(method, index, type, out _)) return false;
                 origin = new(index, type);
                 return true;
             }
             if (definition is { OpCode: OpCode.Move, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct,
                     Operands: [LocalVariable destination, LocalVariable source] } &&
-                ReferenceEquals(destination, value) && ReferenceEquals(source.Type, type))
-            { value = source; use = definition; continue; }
+                ReferenceEquals(destination, value) && source.Type is { } sourceType && ReferenceUpcast(sourceType, type))
+            { widened |= !ReferenceEquals(sourceType, type); value = source; use = definition; continue; }
             if (definition is { OpCode: OpCode.Call, IntegerBitWidth: 0,
                     Operands: [MethodAnalysisContext producer, LocalVariable result, ..] } &&
-                ReferenceEquals(result, value) && ReferenceEquals(producer.ReturnType, type))
+                !widened && ReferenceEquals(result, value) && ReferenceEquals(producer.ReturnType, type))
             { origin = new(-2, type, definition, producer); return true; }
             if (definition is { OpCode: OpCode.Move, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct,
                     Operands: [LocalVariable fieldValue, FieldReference field] } && ReferenceEquals(fieldValue, value) &&
-                ReferenceEquals(field.Field.FieldType, type) && EntryIndex(method, field.Local, out var sourceEntry))
-            { origin = new(-2, type, definition, Field: field.Field, SourceEntry: sourceEntry, Offset: field.Offset); return true; }
+                ReferenceUpcast(field.Field.FieldType, type) && EntryIndex(method, field.Local, out var sourceEntry))
+            {
+                // This extension owns only an unchanged field captured from the current
+                // instance. Producer and incoming-reference widening need separate proofs.
+                if ((widened || !ReferenceEquals(field.Field.FieldType, type)) &&
+                    (sourceEntry != -1 || !ReferenceEquals(field.Field.DeclaringType, method.DeclaringType))) return false;
+                origin = new(-2, field.Field.FieldType, definition, Field: field.Field,
+                    SourceEntry: sourceEntry, Offset: field.Offset,
+                    ReferenceWidened: widened || !ReferenceEquals(field.Field.FieldType, type));
+                return true;
+            }
             return false;
         }
         return false;

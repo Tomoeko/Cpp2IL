@@ -20,6 +20,10 @@ public static class FloatLiteralRecovery
             else if (instruction.IsCall && instruction.Operands is [MethodAnalysisContext target, ..])
                 ConvertArguments(instruction, target);
         }
+
+        // Subnormal bit patterns need the retained native store proof. The
+        // general field/call type hint alone does not establish their origin.
+        X64NativeNullCheckedInvocationProof.TryNormalizeSubnormalFloatingStores(method);
     }
 
     private static void ConvertArguments(Instruction call, MethodAnalysisContext target)
@@ -46,10 +50,10 @@ public static class FloatLiteralRecovery
         // TODO FIXME: to its own Single/Double context instance rather than the canonical one in SystemTypes.
         switch (type.FullName)
         {
-            case "System.Single" when !IsSubnormalSingle((uint)bits):
+            case "System.Single" when !IsSubnormal(bits, 32):
                 instruction.SetOperand(operandIndex, new FloatLiteral(BitConverter.ToSingle(BitConverter.GetBytes((uint)bits), 0)));
                 break;
-            case "System.Double" when !IsSubnormalDouble(bits):
+            case "System.Double" when !IsSubnormal(bits, 64):
                 instruction.SetOperand(operandIndex, new DoubleLiteral(BitConverter.ToDouble(BitConverter.GetBytes(bits), 0)));
                 break;
         }
@@ -67,9 +71,12 @@ public static class FloatLiteralRecovery
         return false;
     }
 
-    // A subnormal has a zero exponent and a non-zero mantissa (zero itself is exempt). Real source
-    // constants are never subnormal, so such a decode is a mislabelled integer rather than a float.
-    private static bool IsSubnormalSingle(uint bits) => (bits & 0x7F800000u) == 0 && (bits & 0x007FFFFFu) != 0;
-
-    private static bool IsSubnormalDouble(ulong bits) => (bits & 0x7FF0000000000000UL) == 0 && (bits & 0x000FFFFFFFFFFFFFUL) != 0;
+    // Subnormal source constants are valid. Their exponent is zero and their
+    // mantissa is nonzero; zero itself does not require this additional proof.
+    internal static bool IsSubnormal(ulong bits, int width) => width switch
+    {
+        32 => (bits & 0x7F800000u) == 0 && (bits & 0x007FFFFFu) != 0,
+        64 => (bits & 0x7FF0000000000000UL) == 0 && (bits & 0x000FFFFFFFFFFFFFUL) != 0,
+        _ => false,
+    };
 }

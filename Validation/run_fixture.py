@@ -171,6 +171,8 @@ import native_null_checked_invocation
 import native_scalar_pair_invocation
 import native_scalar_field_invocation
 import native_scalar_invocation_effects
+import native_subnormal_field_store
+import native_derived_receiver_invocation
 import call_result_engine_false_tail
 import engine_component_false_tail
 import internal_call_field
@@ -249,6 +251,10 @@ PROFILES = {
                                       "source": VALIDATION / "NativeScalarFieldInvocationFixture", "methods": 12},
     "native-scalar-invocation-effects": {"assembly": "NativeScalarInvocationEffectsFixture",
                                        "source": VALIDATION / "NativeScalarInvocationEffectsFixture", "methods": 6},
+    "native-subnormal-field-store": {"assembly": "NativeSubnormalFieldStoreFixture",
+                                    "source": VALIDATION / "NativeSubnormalFieldStoreFixture", "methods": 11},
+    "native-derived-receiver-invocation": {"assembly": "NativeDerivedReceiverInvocationFixture",
+                                          "source": VALIDATION / "NativeDerivedReceiverInvocationFixture", "methods": 7},
     "scalar-positive-zero-leaf": {"assembly": "ScalarPositiveZeroLeafFixture",
                                   "source": VALIDATION / "ScalarPositiveZeroLeafFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
@@ -599,6 +605,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_scalar_field_invocation.verify(path, stage, VERSION)
     if profile == "native-scalar-invocation-effects":
         return native_scalar_invocation_effects.verify(path, stage, VERSION)
+    if profile == "native-subnormal-field-store":
+        return native_subnormal_field_store.verify(path, stage, VERSION)
+    if profile == "native-derived-receiver-invocation":
+        return native_derived_receiver_invocation.verify(path, stage, VERSION)
     if profile == "scalar-positive-zero-leaf":
         return scalar_positive_zero_leaf.verify(path, stage, VERSION)
     if profile == "narrow-array":

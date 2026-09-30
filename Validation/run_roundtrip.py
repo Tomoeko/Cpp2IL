@@ -42,6 +42,8 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "native-scalar-pair-invocation",
     "native-scalar-field-invocation",
     "native-scalar-invocation-effects",
+    "native-subnormal-field-store",
+    "native-derived-receiver-invocation",
     "scalar-positive-zero-leaf",
     "fixed-boolean-conjunction",
     "boolean-literal-store",
