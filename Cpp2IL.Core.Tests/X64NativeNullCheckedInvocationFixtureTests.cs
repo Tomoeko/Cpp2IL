@@ -18,6 +18,60 @@ namespace Cpp2IL.Core.Tests;
 public class X64NativeNullCheckedInvocationFixtureTests
 {
     [Test]
+    public void NaturalCoalescingRetainsSingleScalarArgumentEvidence()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_NATIVE_NULL_CHECKED_INVOCATION_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_NATIVE_NULL_CHECKED_INVOCATION_FIXTURE_INPUT to the neutral exact player input.");
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(Path.Combine(directory!, "GameAssembly.dll"),
+                Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata", "global-metadata.dat"),
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            _ = new AsmResolverDllOutputFormatEmpty().BuildAssemblies(app);
+            var callers = app.GetAssemblyByName("NativeNullCheckedInvocationFixture")!.Types
+                .Single(type => type.Name == "InvocationHolder").Methods
+                .Where(method => method.Name.StartsWith("Set", StringComparison.Ordinal)).ToArray();
+            Assert.That(callers, Has.Length.EqualTo(7));
+            foreach (var caller in callers)
+            {
+                caller.Analyze();
+                Assert.That(X64NativeNullCheckedInvocationProof.HasEvidence(caller), Is.True, caller.Name);
+                Assert.That(X64NativeNullCheckedInvocationProof.IsValidFor(caller), Is.True, caller.Name);
+                var definition = caller.GetExtraData<MethodDefinition>("AsmResolverMethod")!;
+                Assert.DoesNotThrow(() => IlGenerator.GenerateIl(caller, definition), caller.Name);
+                var call = caller.ControlFlowGraph!.Instructions.Single(instruction => instruction.IsCall &&
+                    instruction.Operands[0] is MethodAnalysisContext { Parameters.Count: 1 });
+                var argumentIndex = call.OpCode == OpCode.Call ? 3 : 2;
+                var argument = call.Operands[argumentIndex];
+                // A legal typed literal still has to be the value established by the native callsite.
+                call.SetOperand(argumentIndex, argument is Immediate { Value: 0 } ? new Immediate(1) : new Immediate(0));
+                try
+                {
+                    Reject(caller);
+                    Assert.That(() => IlGenerator.GenerateIl(caller, definition), Throws.TypeOf<DecompilerException>());
+                }
+                finally { call.SetOperand(argumentIndex, argument); }
+
+                var admitted = caller.GetExtraData<object>(X64NativeNullCheckedInvocationProof.EvidenceKey);
+                caller.PutExtraData<object>(X64NativeNullCheckedInvocationProof.EvidenceKey, null!);
+                try
+                {
+                    Assert.That(X64NativeNullCheckedInvocationProof.HasEvidence(caller), Is.True);
+                    Assert.That(() => IlGenerator.GenerateIl(caller, definition), Throws.TypeOf<DecompilerException>());
+                }
+                finally { caller.PutExtraData(X64NativeNullCheckedInvocationProof.EvidenceKey, admitted!); }
+                Assert.That(X64NativeNullCheckedInvocationProof.IsValidFor(caller), Is.True, caller.Name);
+                Assert.DoesNotThrow(() => IlGenerator.GenerateIl(caller, definition), caller.Name);
+            }
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
     public void AnalysisAndIlGenerationAuthenticateTheComposedSnapshotWrite()
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_NATIVE_NULL_CHECKED_INVOCATION_FIXTURE_INPUT");

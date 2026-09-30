@@ -61,6 +61,13 @@ internal static class X86UnusedReceiverProof
             return true;
         }
 
+        if (!method.IsStatic && nativeRegister == Register.RCX &&
+            method.GetExtraData<X64ScalarFloatConversionCompositionProof.Proof>(
+                X64ScalarFloatConversionCompositionProof.EvidenceKey) is { Field: null } composition &&
+            X64ScalarFloatConversionCompositionProof.Find(method) is { } currentComposition &&
+            composition.Matches(currentComposition) && HasNoReceiverUseInClosedBody(composition.Body, Register.RCX))
+            return true;
+
         return IsUnused(X86Utils.Disassemble(method.RawBytes.AsSpan(), method.UnderlyingPointer, false), nativeRegister);
     }
 

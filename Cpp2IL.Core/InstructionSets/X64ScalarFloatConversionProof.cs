@@ -44,7 +44,7 @@ internal static class X64ScalarFloatConversionProof
     {
         if (!NativeRecoveryProofTracker.Has(method, EvidenceKey) ||
             method.GetExtraData<Shape>(EvidenceKey) is not { } admitted || Find(method) != admitted ||
-            method.ControlFlowGraph?.Instructions.ToArray() is not
+            !NativeStraightLineGraph.TryGetBody(method, out var instructions) || instructions is not
                 [var conversion, { OpCode: OpCode.Return, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct } returned] ||
             !FloatConversion.TryGet(conversion, out var shape) || shape.SourceWidth != admitted.SourceWidth ||
             shape.ResultWidth != admitted.ResultWidth || conversion.NativeAddress != admitted.Conversion.IP ||

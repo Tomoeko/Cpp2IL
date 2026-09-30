@@ -62,6 +62,17 @@ public class X64ScalarFloatConversionFixtureTests
             finally { conversion.SetOperand(1, source); }
             var definition = method.GetExtraData<MethodDefinition>("AsmResolverMethod")!;
             Assert.DoesNotThrow(() => IlGenerator.GenerateIl(method, definition));
+            var body = method.ControlFlowGraph.Blocks.Single(block => block.Instructions.Contains(conversion));
+            body.Instructions.Remove(conversion);
+            method.ControlFlowGraph.EntryBlock.Instructions.Add(conversion);
+            try
+            {
+                Assert.That(X64ScalarFloatConversionProof.IsValidFor(method), Is.False);
+                Assert.That(() => IlGenerator.GenerateIl(method, definition), Throws.TypeOf<DecompilerException>());
+            }
+            finally { method.ControlFlowGraph.EntryBlock.Instructions.Clear(); body.Instructions.Insert(0, conversion); }
+            Assert.That(X64ScalarFloatConversionProof.IsValidFor(method), Is.True);
+            Assert.DoesNotThrow(() => IlGenerator.GenerateIl(method, definition));
             method.PutExtraData<object>(X64ScalarFloatConversionProof.EvidenceKey, null!);
             Assert.That(X64ScalarFloatConversionProof.HasEvidence(method), Is.True);
             Assert.That(() => IlGenerator.GenerateIl(method, definition),

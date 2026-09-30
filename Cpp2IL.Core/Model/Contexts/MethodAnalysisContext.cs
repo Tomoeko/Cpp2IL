@@ -493,6 +493,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
 
     public void ReleaseAnalysisData()
     {
+        X64NativeNullCheckedInvocationProof.ReleaseAnalysisData(this);
         ConvertedIsil = null;
         ControlFlowGraph = null;
         DominatorInfo = null;

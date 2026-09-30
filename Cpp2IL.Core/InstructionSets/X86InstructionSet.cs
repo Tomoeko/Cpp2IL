@@ -100,8 +100,12 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return scalarZero; // The complete leaf clears all XMM0 bits before a scalar return.
         if (X64ScalarFloatConversionProof.TryLift(context, nativeInstructions) is { } scalarFloatConversion)
             return scalarFloatConversion; // The complete leaf binds the incoming and returned floating widths.
+        if (X64ScalarFloatConversionCompositionProof.TryLift(context, nativeInstructions) is { } scalarFloatComposition)
+            return scalarFloatComposition; // Preserve narrowing, per-operation precision and the complete ordered-negative branch.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
+        if (X64ReferenceScalarFieldEffectsProof.TryLift(context, nativeInstructions) is { } referenceScalarEffects)
+            return referenceScalarEffects; // The complete frame binds the GC marker and every subsequent field effect.
         if (X64ReferencePropertySetterProof.TryLift(context, nativeInstructions) is { } propertyStore)
             return propertyStore; // The complete folded setter tail binds its own field and GC marker.
         if (X64ComposedReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } composedReferenceStore)
@@ -674,6 +678,11 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertScalarFloatOperand(instruction, 1, instruction.Mnemonic == Mnemonic.Movss, context));
                 break;
             case Mnemonic.Movzx:
+                if (context != null && X64NativeNullCheckedInvocationProof.IsBooleanFieldArgumentLoad(context, instruction))
+                {
+                    Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), ConvertOperand(instruction, 1));
+                    break; // Final invocation proof retains this exact typed field capture.
+                }
                 if (context != null && context.GetExtraData<X86BooleanFieldReadProof.Proof>(
                         X86BooleanFieldReadProof.EvidenceKey) is { } fieldRead &&
                     instruction.IP == fieldRead.LoadIp)
@@ -695,9 +704,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                     instruction.Op0Register.GetFullRegister() != Register.RSP &&
                     instruction.Op1Kind == OpKind.Register &&
                     instruction.Op1Register is Register.AL or Register.BL or Register.CL or Register.DL or
-                        Register.SIL or Register.DIL or Register.R8L or Register.R9L or Register.R10L or Register.R11L or
+                        Register.BPL or Register.SIL or Register.DIL or Register.R8L or Register.R9L or Register.R10L or Register.R11L or
                         Register.R12L or Register.R13L or Register.R14L or Register.R15L or
-                        Register.AX or Register.BX or Register.CX or Register.DX or Register.SI or Register.DI or
+                        Register.AX or Register.BX or Register.CX or Register.DX or Register.BP or Register.SI or Register.DI or
                         Register.R8W or Register.R9W or Register.R10W or Register.R11W or
                         Register.R12W or Register.R13W or Register.R14W or Register.R15W &&
                     instruction.SegmentPrefix == Register.None && !instruction.HasLockPrefix &&

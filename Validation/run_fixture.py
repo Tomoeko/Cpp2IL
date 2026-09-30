@@ -166,8 +166,11 @@ import array_call_origins
 import guarded_array_tail_invocation
 import scalar_float_selection
 import scalar_float_conversion
+import scalar_float_conversion_composition
 import native_null_checked_invocation
 import native_scalar_pair_invocation
+import native_scalar_field_invocation
+import native_scalar_invocation_effects
 import call_result_engine_false_tail
 import engine_component_false_tail
 import internal_call_field
@@ -236,10 +239,16 @@ PROFILES = {
                                "source": VALIDATION / "ScalarFloatSelectionFixture", "methods": 9},
     "scalar-float-conversion": {"assembly": "ScalarFloatConversionFixture",
                                 "source": VALIDATION / "ScalarFloatConversionFixture", "methods": 2},
+    "scalar-float-conversion-composition": {"assembly": "ScalarFloatConversionCompositionFixture",
+                                            "source": VALIDATION / "ScalarFloatConversionCompositionFixture", "methods": 8},
     "native-null-checked-invocation": {"assembly": "NativeNullCheckedInvocationFixture",
                                       "source": VALIDATION / "NativeNullCheckedInvocationFixture", "methods": 18},
     "native-scalar-pair-invocation": {"assembly": "NativeScalarPairInvocationFixture",
                                      "source": VALIDATION / "NativeScalarPairInvocationFixture", "methods": 15},
+    "native-scalar-field-invocation": {"assembly": "NativeScalarFieldInvocationFixture",
+                                      "source": VALIDATION / "NativeScalarFieldInvocationFixture", "methods": 12},
+    "native-scalar-invocation-effects": {"assembly": "NativeScalarInvocationEffectsFixture",
+                                       "source": VALIDATION / "NativeScalarInvocationEffectsFixture", "methods": 6},
     "scalar-positive-zero-leaf": {"assembly": "ScalarPositiveZeroLeafFixture",
                                   "source": VALIDATION / "ScalarPositiveZeroLeafFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
@@ -580,10 +589,16 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return scalar_float_selection.verify(path, stage, VERSION)
     if profile == "scalar-float-conversion":
         return scalar_float_conversion.verify(path, stage, VERSION)
+    if profile == "scalar-float-conversion-composition":
+        return scalar_float_conversion_composition.verify(path, stage, VERSION)
     if profile == "native-null-checked-invocation":
         return native_null_checked_invocation.verify(path, stage, VERSION)
     if profile == "native-scalar-pair-invocation":
         return native_scalar_pair_invocation.verify(path, stage, VERSION)
+    if profile == "native-scalar-field-invocation":
+        return native_scalar_field_invocation.verify(path, stage, VERSION)
+    if profile == "native-scalar-invocation-effects":
+        return native_scalar_invocation_effects.verify(path, stage, VERSION)
     if profile == "scalar-positive-zero-leaf":
         return scalar_positive_zero_leaf.verify(path, stage, VERSION)
     if profile == "narrow-array":

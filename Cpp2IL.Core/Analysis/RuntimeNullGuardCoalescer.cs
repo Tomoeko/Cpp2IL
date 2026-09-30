@@ -423,16 +423,22 @@ internal static class RuntimeNullGuardCoalescer
                         // normalize that write before admitting this invocation.
                         var composedStore = requireNativeFieldBinding && graph.Instructions.Any(rawStore =>
                             rawStore is { OpCode: OpCode.Move, Operands: [MemoryOperand, _] });
-                        // The two-scalar shape requires retained native argument evidence,
+                        // Scalar arguments require retained native argument evidence,
                         // even when both operands already have their incoming managed types.
                         // A unique target alone cannot authenticate their ordered values.
-                        var scalarPair = requireNativeFieldBinding &&
-                            X64NativeNullCheckedInvocationProof.HasTwoScalarParameters(target);
-                        var targetBound = scalarPair && HasGuardedArrayInvocationEvidence(method,
+                        var scalarArguments = requireNativeFieldBinding &&
+                            X64NativeNullCheckedInvocationProof.HasScalarParameters(target);
+                        // Once a native site records this body's effects and controls,
+                        // later guard removal must also retain its exact native site.
+                        var retainedNativeInvocation = requireNativeFieldBinding &&
+                            X64NativeNullCheckedInvocationProof.HasEvidence(method);
+                        var targetBound = scalarArguments && HasGuardedArrayInvocationEvidence(method,
                             comparison, branch, instruction, target) ||
-                            (composedStore || scalarPair) && X64NativeNullCheckedInvocationProof.TryRecord(method,
+                            (composedStore || scalarArguments || retainedNativeInvocation) &&
+                            X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
-                        if (!targetBound && !scalarPair && ordinaryTypedCall && !pendingTypedInvocationSetup &&
+                        if (!targetBound && !scalarArguments && !retainedNativeInvocation &&
+                            ordinaryTypedCall && !pendingTypedInvocationSetup &&
                             !(requireNativeFieldBinding && originKind is
                                 ReceiverOrigin.CopiedCallResult or ReceiverOrigin.InvalidCopyChain))
                             targetBound = requireNativeFieldBinding && originKind == ReceiverOrigin.DirectCallResult
@@ -440,7 +446,7 @@ internal static class RuntimeNullGuardCoalescer
                                     receiver, origin!, instruction, target,
                                     requireTail: pendingTailArgumentSetup)
                                 : !pendingTailArgumentSetup && provesNativeTarget(target);
-                        if (!targetBound && requireNativeFieldBinding && !scalarPair)
+                        if (!targetBound && requireNativeFieldBinding && !scalarArguments && !retainedNativeInvocation)
                             targetBound = X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
                         if (!targetBound)
@@ -504,6 +510,19 @@ internal static class RuntimeNullGuardCoalescer
                     }
                     if (instruction.OpCode == OpCode.Nop && instruction.IntegerBitWidth == 0 && instruction.Operands.Count == 0)
                         continue;
+                    // This read remains at its captured native site. It may only
+                    // form an argument when the subsequent complete invocation
+                    // proof binds its owner, field, width and reaching definition.
+                    if (requireNativeFieldBinding &&
+                        instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                            Operands: [LocalVariable capturedField, FieldReference capturedAccess] } &&
+                        OperandEffects.ReadLocals(instruction).All(local => Available(local, entry, instruction)) &&
+                        X64NativeNullCheckedInvocationProof.IsScalarFieldArgumentCapture(method,
+                            capturedField, instruction, capturedAccess.Field.FieldType))
+                    {
+                        pendingTypedInvocationSetup = true;
+                        continue;
+                    }
                     // These operations only form a register argument. The new
                     // invocation proof must bind the original typed parameter or
                     // literal and its native bits before this path is admitted.

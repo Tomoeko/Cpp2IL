@@ -189,4 +189,16 @@ public enum OpCode
     /// Models result bits under default rounding and masked exceptions, not floating control/status effects.
     /// </summary>
     FloatConvert,
+
+    /// <summary>
+    /// Scalar IEEE division: destination, numerator, divisor, width (32/64), rounding the result at that width.
+    /// Models default rounding and masked exceptions, not floating control/status effects.
+    /// </summary>
+    FloatDivide,
+
+    /// <summary>
+    /// Ordered negative selection: destination, source, width (32/64). Negate source only if source &lt; +0.
+    /// Preserves negative zero and unordered NaNs under masked exceptions; no floating status/control claim.
+    /// </summary>
+    FloatNegateNegative,
 }

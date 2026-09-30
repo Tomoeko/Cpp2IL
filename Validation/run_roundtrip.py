@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 
+import declaration_comparer_snapshot as comparer_snapshot
+
 from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process,
                          write_json, resolved_package_lock_sha256, embedded_reference_lock_sha256,
                          embedded_package_lock_sha256, profile_harness_directory,
@@ -35,8 +37,11 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "guarded-array-tail-invocation",
     "scalar-float-selection",
     "scalar-float-conversion",
+    "scalar-float-conversion-composition",
     "native-null-checked-invocation",
     "native-scalar-pair-invocation",
+    "native-scalar-field-invocation",
+    "native-scalar-invocation-effects",
     "scalar-positive-zero-leaf",
     "fixed-boolean-conjunction",
     "boolean-literal-store",
@@ -179,6 +184,14 @@ def verify_snapshot_inputs(directory, receipt):
                     not path.resolve().is_relative_to((directory / root).resolve()) or
                     not owned_snapshot_file(directory, path) or digest(path) != item["sha256"]):
                 raise ValueError("Validation snapshot changed: " + key)
+    if "comparisonToolManifest" in receipt:
+        record = receipt["comparisonToolManifest"]
+        manifest = directory / comparer_snapshot.MANIFEST
+        if record.get("path") != manifest.name or not owned_snapshot_file(directory, manifest):
+            raise ValueError("Declaration comparer manifest is missing or linked")
+        snapshot = comparer_snapshot.checked(ROOT, manifest, record.get("sha256"))
+        if snapshot["files"] != receipt["comparisonToolFiles"]:
+            raise ValueError("Declaration comparer receipt differs from its authenticated snapshot")
     checked_managed_oracle_snapshots(directory, receipt["scope"], receipt["managedOracles"]["files"])
 
 
@@ -336,6 +349,8 @@ def main():
     parser.add_argument("--profile", choices=sorted(PROFILES), default="arithmetic")
     parser.add_argument("--defer-unity", action="store_true",
                         help="Prepare verified recovered source for run_roundtrip_batch; Unity gates remain pending")
+    parser.add_argument("--comparison-tool-manifest", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--comparison-tool-manifest-sha256", help=argparse.SUPPRESS)
     args = parser.parse_args()
     profile = PROFILES[args.profile]
     assembly, expected_methods = profile["assembly"], profile["methods"]
@@ -347,6 +362,15 @@ def main():
         parser.error("--run-dir must be ignored by Git")
     if args.timeout <= 0 or not args.cpp2il.is_file():
         parser.error("Provide a positive timeout and an existing built Cpp2IL.dll")
+    if bool(args.comparison_tool_manifest) != bool(args.comparison_tool_manifest_sha256):
+        parser.error("Both declaration comparer snapshot arguments are required")
+    if args.comparison_tool_manifest:
+        expected_manifest = directory.parent / "shared-comparer" / comparer_snapshot.MANIFEST
+        if (not args.defer_unity or args.comparison_tool_manifest.absolute() != expected_manifest or
+                not owned_snapshot_file(directory.parent, expected_manifest)):
+            parser.error("Only an authenticated comparer owned by the current deferred Unity batch may be reused")
+        comparer_snapshot.checked_batch(ROOT, directory.parent, args.profile,
+                                        expected_manifest, args.comparison_tool_manifest_sha256)
     if (args.profile == "external-references" or args.profile in EMBEDDED_FIXTURE_PACKAGES) and \
             args.external_reference_map is None:
         parser.error("This fixture requires an explicit reference map")
@@ -604,16 +628,23 @@ def main():
         receipt["managedOracles"] = {"provenance": "original-baseline-validation-only",
                                      "files": oracle_snapshots}
         # Snapshot the independent comparer too, since other local work may rebuild it.
-        comparison_project = ROOT / "Validation/DeclarationComparer/DeclarationComparer.csproj"
-        run("build-declaration-comparer", [args.dotnet, "build", str(comparison_project), "-c", "Release", "--nologo", "-v", "quiet"])
-        comparison_directory = directory / "declaration-comparer"
-        comparison_directory.mkdir()
-        receipt["comparisonToolFiles"] = []
-        for path in sorted((comparison_project.parent / "bin/Release/net10.0").iterdir()):
-            if path.is_file() and path.suffix in {".dll", ".json"}:
-                target = comparison_directory / path.name
-                shutil.copyfile(path, target)
-                receipt["comparisonToolFiles"].append({"path": path.name, "sha256": digest(target)})
+        if args.comparison_tool_manifest:
+            comparer_snapshot.checked_batch(ROOT, directory.parent, args.profile,
+                                            expected_manifest, args.comparison_tool_manifest_sha256)
+            comparison_manifest = comparer_snapshot.copy_checked(
+                ROOT, expected_manifest, args.comparison_tool_manifest_sha256, directory)
+        else:
+            comparison_sources = comparer_snapshot.source_files(ROOT)
+            run("build-declaration-comparer", comparer_snapshot.build_command(ROOT, args.dotnet))
+            comparison_manifest = comparer_snapshot.freeze(
+                ROOT, (ROOT / comparer_snapshot.PROJECT).parent / "bin/Release/net10.0", directory,
+                receipt["commands"][-1], comparison_sources)
+        comparison_hash = digest(comparison_manifest)
+        comparison_snapshot = comparer_snapshot.checked(ROOT, comparison_manifest, comparison_hash)
+        comparison_directory = directory / comparer_snapshot.RUNTIME_DIRECTORY
+        receipt["comparisonToolFiles"] = comparison_snapshot["files"]
+        receipt["comparisonToolManifest"] = {"path": comparison_manifest.name, "sha256": comparison_hash,
+                                              "provenance": "current-batch-build" if args.comparison_tool_manifest else "fresh-build"}
         def compare_declarations(name, candidate):
             oracles = checked_managed_oracle_snapshots(directory, assembly, oracle_snapshots)
             output = directory / name

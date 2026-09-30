@@ -241,6 +241,7 @@ public static class LocalVariables
         SeedFloatingSelections(method);
         SeedFloatingProjections(method);
         SeedFloatingConversions(method);
+        SeedFloatingArithmetic(method);
         SeedFloatLiterals(method);
 
         // Everywhere there's a CallVoid after a Newobj, we can resolve the constructor call.
@@ -448,6 +449,21 @@ public static class LocalVariables
                 SetTypeIfUnknown((LocalVariable)instruction.Operands[0], conversion.ResultType(method.AppContext.SystemTypes));
                 SetTypeIfUnknown((LocalVariable)instruction.Operands[1], conversion.SourceType(method.AppContext.SystemTypes));
             }
+    }
+
+    private static void SeedFloatingArithmetic(MethodAnalysisContext method)
+    {
+        foreach (var instruction in method.ControlFlowGraph!.Instructions)
+        {
+            if (FloatDivision.TryGet(instruction, out var division))
+                for (var index = 0; index < 3; index++)
+                    SetTypeIfUnknown((LocalVariable)instruction.Operands[index],
+                        division.ResultType(method.AppContext.SystemTypes));
+            if (FloatNegativeSelection.TryGet(instruction, out var selection))
+                for (var index = 0; index < 2; index++)
+                    SetTypeIfUnknown((LocalVariable)instruction.Operands[index],
+                        selection.ResultType(method.AppContext.SystemTypes));
+        }
     }
 
     private static void SeedFloatingProjections(MethodAnalysisContext method)

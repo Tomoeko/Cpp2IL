@@ -203,6 +203,7 @@ public static class UnitySourceProjectEmitter
                 resolver.ValidateReferenceClosure(file);
                 var settings = CreateSettings();
                 var decompiler = new CSharpDecompiler(file, resolver, settings);
+                UnityFloatingLiteralSourceFidelity.Validate(module, decompiler.TypeSystem, report.Diagnostics);
                 decompiler.ILTransforms.Add(new CollectWarnings(report.Diagnostics, name));
                 var sources = UnityComponentSourceLayout.Split(decompiler.DecompileWholeModuleAsSingleFile(), settings, name, report.Diagnostics);
                 var relativeDirectory = name == "Assembly-CSharp-firstpass"

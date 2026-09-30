@@ -9,6 +9,8 @@ import subprocess
 import sys
 import time
 
+import declaration_comparer_snapshot as comparer_snapshot
+
 from run_fixture import (ROOT, VERSION, EMBEDDED_FIXTURE_PACKAGES, run_process, write_json,
                          verify_behavior, verify_embedded_fixture_dependency, verify_source_copy)
 from run_roundtrip import (PROFILES, checked_baseline, current_source_files, digest,
@@ -139,11 +141,24 @@ def main(argv=None):
     try:
         for name, baseline in baselines.items():
             checked_baseline(baseline, name, expected_code_generation=args.code_generation)
+        comparison_sources = comparer_snapshot.source_files(ROOT)
+        run("build-declaration-comparer", comparer_snapshot.build_command(ROOT, args.dotnet))
+        comparison_manifest = comparer_snapshot.freeze(
+            ROOT, (ROOT / comparer_snapshot.PROJECT).parent / "bin/Release/net10.0", directory / "shared-comparer",
+            receipt["commands"][-1], comparison_sources)
+        comparison_hash = digest(comparison_manifest)
+        comparer_snapshot.checked(ROOT, comparison_manifest, comparison_hash)
+        receipt["comparisonToolManifest"] = {"path": comparison_manifest.relative_to(directory).as_posix(),
+                                             "sha256": comparison_hash}
+        write_json(directory / "roundtrip.json", receipt)
+        for name, baseline in baselines.items():
             target = directory / name
             command = [sys.executable, str(ROOT / "Validation/run_roundtrip.py"),
                        "--profile", name, "--editor", str(args.editor), "--cpp2il", str(args.cpp2il),
                        "--dotnet", args.dotnet, "--baseline-run", str(baseline), "--run-dir", str(target),
-                       "--timeout", str(remaining()), "--code-generation", args.code_generation, "--defer-unity"]
+                       "--timeout", str(remaining()), "--code-generation", args.code_generation, "--defer-unity",
+                       "--comparison-tool-manifest", str(comparison_manifest),
+                       "--comparison-tool-manifest-sha256", comparison_hash]
             if args.wine:
                 command += ["--wine", args.wine]
             if args.toolchain_root:
@@ -239,6 +254,7 @@ def main(argv=None):
             if digest(managed_oracle(batch_directory, assembly)) != expected:
                 raise ValueError("Rebuilt managed declaration oracle changed during comparison")
         remaining()
+        comparer_snapshot.checked(ROOT, comparison_manifest, comparison_hash)
         # Publish individual successes only after all shared evidence and the
         # execution budget have been checked. A late failure leaves them pending.
         for name, prepared in finalized.items():

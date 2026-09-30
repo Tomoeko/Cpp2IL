@@ -80,6 +80,9 @@ public static partial class IlGenerator
         ValidateOpenGenericPrefixFields(context);
         ValidateScalarVirtualDispatch(context);
         ValidateCallSemantics(context);
+        if (X64ReferenceScalarFieldEffectsProof.HasEvidence(context) &&
+            !X64ReferenceScalarFieldEffectsProof.IsValidFor(context))
+            throw new DecompilerException("Reference and scalar field effects lost their complete native frame, layout or effect-order proof");
         if (X64NativeNullCheckedInvocationProof.HasEvidence(context) &&
             !X64NativeNullCheckedInvocationProof.IsValidFor(context))
             throw new DecompilerException("Native null-checked invocation lost its receiver, argument, target or effect-order proof");
@@ -89,6 +92,9 @@ public static partial class IlGenerator
         if (X64ScalarFloatConversionProof.HasEvidence(context) &&
             !X64ScalarFloatConversionProof.IsValidFor(context))
             throw new DecompilerException("Floating conversion lost its complete native leaf, signature or typed parameter proof");
+        if (X64ScalarFloatConversionCompositionProof.HasEvidence(context) &&
+            !X64ScalarFloatConversionCompositionProof.IsValidFor(context))
+            throw new DecompilerException("Floating conversion composition lost its complete native body, precision, argument, field or selection proof");
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
         ValidateGuardedArrayOperations(context);
@@ -584,6 +590,14 @@ public static partial class IlGenerator
 
             case OpCode.FloatConvert:
                 EmitFloatingConversion(instruction, method, locals);
+                break;
+
+            case OpCode.FloatDivide:
+                EmitFloatingDivision(instruction, method, locals);
+                break;
+
+            case OpCode.FloatNegateNegative:
+                EmitFloatingNegativeSelection(instruction, method, locals);
                 break;
 
             case OpCode.IntegerExtend:

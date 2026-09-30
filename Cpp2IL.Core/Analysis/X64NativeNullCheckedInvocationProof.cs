@@ -30,7 +30,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
     private sealed record Origin(int Entry, TypeAnalysisContext Type, Instruction? Definition = null,
         MethodAnalysisContext? Producer = null, FieldAnalysisContext? Field = null, int SourceEntry = -2,
         int Offset = 0);
-    private readonly record struct Argument(int? Entry, long? Literal);
+    private readonly record struct Argument(int? Entry, long? Literal, ScalarFieldArgument? Field = null);
     private sealed record ValueKey(string Kind, object? Value, ValueKey[] Children);
     private sealed record OrderedEffect(Instruction Operation, ulong Address, bool Before, bool After,
         CallSemantics Semantics, ValueKey Value);
@@ -42,10 +42,21 @@ internal static partial class X64NativeNullCheckedInvocationProof
         OrderedEffect[] Effects, Control[] Controls, ReferenceStore[] Stores);
 
     internal static bool HasEvidence(MethodAnalysisContext method) =>
-        NativeRecoveryProofTracker.Has(method, EvidenceKey) || method.GetExtraData<List<Site>>(EvidenceKey) != null;
+        NativeRecoveryProofTracker.Has(method, EvidenceKey) ||
+        NativeRecoveryProofTracker.Has(method, BooleanFieldArgumentEvidenceKey) ||
+        method.GetExtraData<List<Site>>(EvidenceKey) != null;
 
-    internal static bool HasTwoScalarParameters(MethodAnalysisContext target) =>
-        target.Parameters.Count == 2 && target.Parameters.All(parameter => Scalar(parameter.ParameterType));
+    internal static void ReleaseAnalysisData(MethodAnalysisContext method)
+    {
+        // Sites retain instructions and blocks from one analysis graph. Fresh
+        // analysis must authenticate new sites, while immutable admission still
+        // prevents missing or failed replacement evidence from reaching emission.
+        method.PutExtraData<object>(EvidenceKey, null!);
+        method.PutExtraData<object>(BooleanFieldArgumentEvidenceKey, null!);
+    }
+
+    internal static bool HasScalarParameters(MethodAnalysisContext target) =>
+        target.Parameters.Count is 1 or 2 && target.Parameters.All(parameter => Scalar(parameter.ParameterType));
 
     internal static bool TryRecord(MethodAnalysisContext caller, Instruction comparison, Instruction branch,
         LocalVariable receiver, Instruction invocation, MethodAnalysisContext target)
@@ -130,6 +141,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
     }
 
     private static IOperand CanonicalArgument(MethodAnalysisContext caller, Argument argument) =>
+        argument.Field is { } field ? field.Definition.Destination! :
         argument.Literal is { } literal ? new Immediate(literal) : caller.ParameterLocals.Single(local =>
             !local.IsThis && LocalVariables.GetIncomingParameterIndex(caller, local) == argument.Entry);
 
@@ -140,6 +152,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
             if (!NativeRecoveryProofTracker.Has(caller, EvidenceKey) ||
                 caller.GetExtraData<List<Site>>(EvidenceKey) is not { Count: > 0 } sites ||
                 caller.ControlFlowGraph?.Instructions.Any(instruction => instruction.OpCode == OpCode.RuntimeNullThrow) != false ||
+                !FloatingStoreLiteralTypesRetained(caller) ||
                 ReadBody(caller, out var body, out _) is not { } values)
                 return false;
             foreach (var site in sites)
@@ -160,7 +173,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     site.Stores.Any(store => !ReferenceStoreRetained(caller, body, values, store)))
                     return false;
             }
-            return true;
+            return BooleanFieldArgumentLoadsRetained(caller, body, values, sites) &&
+                   ScalarFieldArgumentUsesRetained(caller, sites);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
@@ -280,7 +294,9 @@ internal static partial class X64NativeNullCheckedInvocationProof
             var parameter = target.Parameters[index];
             if (!Scalar(parameter.ParameterType) || parameter.Definition?.RawType?.Type != parameter.ParameterType.Type ||
                 !TryArgument(caller, call.Operands[argumentIndex + index], call,
-                    parameter.ParameterType, out var source, out var managed) ||
+                    parameter.ParameterType, out var source, out var managed))
+                return false;
+            if (managed.Field is { } field && !BindScalarFieldArgument(caller, field, body, values, address, out source) ||
                 !values.Matches(address, index == 0 ? NativeRegister.RDX : NativeRegister.R8,
                     parameter.ParameterType.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32, source))
                 return false;
@@ -409,6 +425,11 @@ internal static partial class X64NativeNullCheckedInvocationProof
                              Immediate { Value: 0 }, Immediate { Value: >= int.MinValue and <= int.MaxValue } constant] } &&
                      ReferenceEquals(arithmetic, local))
                 operand = new Immediate(definition.OpCode == OpCode.Add ? constant.Value : unchecked(-(int)constant.Value));
+            else if (TryScalarFieldArgument(method, local, definition, type, out var field))
+            {
+                argument = new(null, null, field);
+                return true;
+            }
             else if (ReferenceEquals(local.Type, type) && definition is { OpCode: OpCode.Move, IntegerBitWidth: 0,
                          CallSemantics: CallSemantics.Direct, Operands: [LocalVariable destination, var copied] } &&
                      ReferenceEquals(destination, local)) operand = copied;
@@ -736,6 +757,14 @@ internal static partial class X64NativeNullCheckedInvocationProof
             for (var index = 0; index < operation.Operands.Count; index++)
             {
                 if (index == 0 && operation.Destination is LocalVariable) continue;
+                if (index == 1 && operation is { OpCode: OpCode.Move, Operands: [FieldReference access, var literal] } &&
+                    FloatingWidth(method, access.Field.FieldType) is var width and not 0 &&
+                    literal is Immediate or FloatLiteral or DoubleLiteral)
+                {
+                    if (!TryFloatingStoreLiteralKey(method, operation, access, literal, width, out var stored)) return false;
+                    children.Add(stored);
+                    continue;
+                }
                 if (!OperandKey(method, operation.Operands[index], operation, seen, out var value)) return false;
                 children.Add(value);
             }

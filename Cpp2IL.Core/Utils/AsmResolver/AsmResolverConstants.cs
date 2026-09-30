@@ -34,7 +34,9 @@ public static class AsmResolverConstants
             string s => new(ElementType.String, new(Encoding.Unicode.GetBytes(s))),
             bool b => b ? BoolTrue : BoolFalse,
             byte and >= 0 and < 16 => ByteCache[(byte)@from],
-            float and 0 => SingleZero,
+            // Numeric equality also matches negative zero; only positive zero
+            // can share the cached metadata bit pattern.
+            float value when value == 0.0F && BitConverter.ToInt32(BitConverter.GetBytes(value), 0) == 0 => SingleZero,
             >= 0 and < 16 => IntegerCache[(int)from],
             _ => CreateNewConstant((IConvertible)from),
         };

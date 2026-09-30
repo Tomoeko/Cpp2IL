@@ -181,6 +181,8 @@ public class CallResultFalseTailNullGuardProofTests
                         Is.EqualTo(CallSemantics.NullCheckedInstance));
                     Assert.That(caller.ControlFlowGraph.Instructions.Any(instruction =>
                         instruction.OpCode == OpCode.RuntimeNullThrow), Is.False);
+                    Assert.That(X64NativeNullCheckedInvocationProof.IsValidFor(caller), Is.True,
+                        "Reanalysis must replace sites from the released graph and rebind every scalar argument.");
                     var generated = caller.GetExtraData<MethodDefinition>("AsmResolverMethod")!;
                     Assert.DoesNotThrow(() => IlGenerator.GenerateIl(caller, generated));
                     Assert.That(generated.CilMethodBody!.Instructions.Count(instruction =>
@@ -188,6 +190,18 @@ public class CallResultFalseTailNullGuardProofTests
                     Assert.That(generated.CilMethodBody.Instructions.Count(instruction =>
                         instruction.OpCode == AsmResolver.PE.DotNet.Cil.CilOpCodes.Callvirt), Is.EqualTo(1),
                         "The producer remains direct, while the tail retains the result's null failure.");
+
+                    var evidence = caller.GetExtraData<object>(X64NativeNullCheckedInvocationProof.EvidenceKey)!;
+                    try
+                    {
+                        caller.PutExtraData<object>(X64NativeNullCheckedInvocationProof.EvidenceKey, null!);
+                        Assert.That(X64NativeNullCheckedInvocationProof.HasEvidence(caller), Is.True,
+                            "Releasing mutable proof data must preserve its immutable admission marker.");
+                        Assert.Throws<DecompilerException>(() => IlGenerator.GenerateIl(caller, generated),
+                            "A checked scalar call cannot fall back to target-only evidence after its sites disappear.");
+                    }
+                    finally { caller.PutExtraData(X64NativeNullCheckedInvocationProof.EvidenceKey, evidence); }
+                    Assert.DoesNotThrow(() => IlGenerator.GenerateIl(caller, generated));
                 }
 
                 RejectReanalysis(
