@@ -245,6 +245,7 @@ internal static class X64SmallAggregateFieldGetterProof
         values.Add(type.Namespace);
         values.Add(type.Attributes);
         values.Add(type.BaseType!);
+        values.Add(type.DeclaringType!);
         values.Add(definition.NameIndex);
         values.Add(definition.NamespaceIndex);
         values.Add(definition.Token);
@@ -252,6 +253,7 @@ internal static class X64SmallAggregateFieldGetterProof
         values.Add(definition.Bitfield);
         values.Add(definition.ByvalTypeIndex);
         values.Add(definition.ParentIndex);
+        values.Add(definition.DeclaringTypeIndex);
         values.Add(definition.GenericContainerIndex);
         values.Add(definition.FirstFieldIdx);
         values.Add(definition.FieldCount);

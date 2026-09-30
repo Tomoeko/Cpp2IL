@@ -129,9 +129,17 @@ internal static class NarrowFieldEqualityProof
             width == 64 && reference.Field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R8) &&
            HasUnchangedFieldLayout(reference, width, false, false, true);
 
+    // Field-address recovery separately proves the complete aggregate declaration
+    // and call ABI. Reuse the class/base overlap checks without widening scalar IL.
+    internal static bool HasUnchangedAggregateFieldLayout(FieldReference reference, int byteSize)
+        => byteSize is 4 or 8 && reference.Field.FieldType.IsValueType &&
+           !reference.Field.FieldType.IsEnumType &&
+           TypeSizes.UnboxedSize(reference.Field.FieldType, 8) == byteSize &&
+           HasUnchangedFieldLayout(reference, byteSize * 8, false, aggregateField: true);
+
     private static bool HasUnchangedFieldLayout(FieldReference reference, int width,
         bool referenceField, bool allowFieldlessConstructedBase = false,
-        bool floatingField = false, bool enumField = false)
+        bool floatingField = false, bool enumField = false, bool aggregateField = false)
     {
         var field = reference.Field;
         var owner = field.DeclaringType;
@@ -142,7 +150,7 @@ internal static class NarrowFieldEqualityProof
             // Resolving a metadata array type can create a new wrapper each time. The
             // override records an actual change; object identity does not.
             field.OverrideFieldType != null ||
-            !(referenceField ||
+            !(referenceField || aggregateField ||
               (floatingField && (width == 32 && field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R4 ||
                                  width == 64 && field.FieldType.Type == Il2CppTypeEnum.IL2CPP_TYPE_R8)) ||
               enumField && width == 32 && Enum32StorageProof.IsUnchanged(field.FieldType) ||

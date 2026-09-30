@@ -176,6 +176,9 @@ import native_scalar_pair_invocation
 import native_scalar_field_invocation
 import native_scalar_producer_invocation
 import native_reference_producer_invocation
+import native_reference_field_invocation
+import signed_field_comparison
+import typed_field_address
 import native_scalar_invocation_effects
 import native_subnormal_field_store
 import native_derived_receiver_invocation
@@ -271,6 +274,12 @@ PROFILES = {
                                         "source": VALIDATION / "NativeScalarProducerInvocationFixture", "methods": 7},
     "native-reference-producer-invocation": {"assembly": "NativeReferenceProducerInvocationFixture",
                                            "source": VALIDATION / "NativeReferenceProducerInvocationFixture", "methods": 8},
+    "native-reference-field-invocation": {"assembly": "NativeReferenceFieldInvocationFixture",
+                                        "source": VALIDATION / "NativeReferenceFieldInvocationFixture", "methods": 5},
+    "signed-field-comparison": {"assembly": "SignedFieldComparisonFixture",
+                                "source": VALIDATION / "SignedFieldComparisonFixture", "methods": 6},
+    "typed-field-address": {"assembly": "TypedFieldAddressFixture",
+                            "source": VALIDATION / "TypedFieldAddressFixture", "methods": 12},
     "reference-array-search": {"assembly": "ReferenceArraySearchFixture",
                                "source": VALIDATION / "ReferenceArraySearchFixture", "methods": 8},
     "native-scalar-invocation-effects": {"assembly": "NativeScalarInvocationEffectsFixture",
@@ -682,6 +691,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_scalar_producer_invocation.verify(path, stage, VERSION)
     if profile == "native-reference-producer-invocation":
         return native_reference_producer_invocation.verify(path, stage, VERSION)
+    if profile == "native-reference-field-invocation":
+        return native_reference_field_invocation.verify(path, stage, VERSION)
+    if profile == "signed-field-comparison":
+        return signed_field_comparison.verify(path, stage, VERSION)
+    if profile == "typed-field-address":
+        return typed_field_address.verify(path, stage, VERSION)
     if profile == "reference-array-search":
         return reference_array_search.verify(path, stage, VERSION)
     if profile == "native-scalar-invocation-effects":
@@ -1350,7 +1365,10 @@ def copy_harness(profile, destination):
     serializer = VALIDATION / "Harness" / "Runtime" / "ReportJson.cs"
     shutil.copyfile(serializer, destination / "Runtime" / "ReportJson.cs")
     copied.append({"path": "Runtime/ReportJson.cs", "sha256": hashlib.sha256(serializer.read_bytes()).hexdigest()})
-    return sorted(copied, key=lambda item: item["path"])
+    # Shared infrastructure overlays profile files. Retain one record for the
+    # final copied contents rather than duplicating a profile serializer entry.
+    final_files = {item["path"]: item for item in copied}
+    return sorted(final_files.values(), key=lambda item: item["path"])
 
 
 def _mapped_wine_path(path, prefix_value):

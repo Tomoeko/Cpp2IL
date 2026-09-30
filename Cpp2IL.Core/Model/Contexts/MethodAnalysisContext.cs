@@ -473,6 +473,7 @@ public class MethodAnalysisContext : HasGenericParameters, IMethodInfoProvider, 
         ConstructorChainRecovery.Run(this);
         DeadCodeEliminator.Run(this);
 
+        TypedFieldAddressRecovery.Run(this);
         ReferenceFieldAddressStoreRecovery.Run(this);
         NarrowScalarFieldGetterRecovery.Run(this);
         WideFieldLow32ReadRecovery.Run(this);

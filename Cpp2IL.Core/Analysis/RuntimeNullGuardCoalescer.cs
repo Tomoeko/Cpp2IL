@@ -432,16 +432,20 @@ internal static class RuntimeNullGuardCoalescer
                             X64NativeNullCheckedInvocationProof.IsScalarProducerForInvocation(method, instruction);
                         var referenceProducer = requireNativeFieldBinding &&
                             X64NativeNullCheckedInvocationProof.IsReferenceProducerForInvocation(method, instruction);
+                        var referenceArguments = requireNativeFieldBinding &&
+                            X64NativeNullCheckedInvocationProof.HasReferenceFieldArguments(method, instruction);
                         // Once a native site records this body's effects and controls,
                         // later guard removal must also retain its exact native site.
                         var retainedNativeInvocation = requireNativeFieldBinding &&
                             X64NativeNullCheckedInvocationProof.HasEvidence(method);
                         var targetBound = scalarArguments && HasGuardedArrayInvocationEvidence(method,
                             comparison, branch, instruction, target) ||
-                            (composedStore || scalarArguments || scalarProducer || referenceProducer || retainedNativeInvocation) &&
+                            (composedStore || scalarArguments || scalarProducer || referenceProducer || referenceArguments ||
+                                retainedNativeInvocation) &&
                             X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
-                        if (!targetBound && !scalarArguments && !scalarProducer && !referenceProducer && !retainedNativeInvocation &&
+                        if (!targetBound && !scalarArguments && !scalarProducer && !referenceProducer && !referenceArguments &&
+                            !retainedNativeInvocation &&
                             ordinaryTypedCall && !pendingTypedInvocationSetup &&
                             !(requireNativeFieldBinding && originKind is
                                 ReceiverOrigin.CopiedCallResult or ReceiverOrigin.InvalidCopyChain))
@@ -451,7 +455,7 @@ internal static class RuntimeNullGuardCoalescer
                                     requireTail: pendingTailArgumentSetup)
                                 : !pendingTailArgumentSetup && provesNativeTarget(target);
                         if (!targetBound && requireNativeFieldBinding && !scalarArguments && !scalarProducer &&
-                            !referenceProducer && !retainedNativeInvocation)
+                            !referenceProducer && !referenceArguments && !retainedNativeInvocation)
                             targetBound = X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
                         if (!targetBound)
@@ -532,9 +536,12 @@ internal static class RuntimeNullGuardCoalescer
                     if (requireNativeFieldBinding &&
                         instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0,
                             Operands: [LocalVariable capturedField, FieldReference capturedAccess] } &&
+                        capturedAccess.Field.BackingData?.Field.RawFieldType is { Data: not null } &&
                         OperandEffects.ReadLocals(instruction).All(local => Available(local, entry, instruction)) &&
-                        X64NativeNullCheckedInvocationProof.IsScalarFieldArgumentCapture(method,
-                            capturedField, instruction, capturedAccess.Field.FieldType))
+                        (X64NativeNullCheckedInvocationProof.IsScalarFieldArgumentCapture(method,
+                            capturedField, instruction, capturedAccess.Field.FieldType) ||
+                         X64NativeNullCheckedInvocationProof.IsReferenceFieldArgumentCapture(method,
+                            capturedField, instruction)))
                     {
                         pendingTypedInvocationSetup = true;
                         continue;

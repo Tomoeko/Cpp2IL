@@ -44,6 +44,7 @@ internal static class NullCheckedCall
         {
             var parameter = candidate.Parameters[index];
             if (parameter.ParameterIndex != index || !ReferenceEquals(parameter.DeclaringMethod, candidate) ||
+                parameter.Definition is { } definition && definition.RawType is not { Data: not null } ||
                 parameter.IsRef || parameter.Attributes != parameter.DefaultAttributes ||
                 parameter.OverrideParameterType != null ||
                 !IsOrdinaryValue(parameter.ParameterType) ||

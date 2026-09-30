@@ -155,6 +155,7 @@ public static partial class IlGenerator
             throw new DecompilerException($"Managed values use {entryValues.UnprovedValueCount} unproved native entry register or stack slot value(s); zero-initialized IL locals cannot supply them");
 
         NarrowFieldEqualityProof.Validate(context);
+        ValidateTypedFieldAddresses(context);
 
         // Native return registers can remain live even when metadata identifies a void callee.
         // There is no managed value to store in that case. Check before constructor fusion can
@@ -964,6 +965,9 @@ public static partial class IlGenerator
                 LoadLocal(arrayLength.Array, method, locals);
                 instructions.Add(CilOpCodes.Ldlen);
                 instructions.Add(CilOpCodes.Conv_I4);
+                break;
+            case AddressOf { Target: FieldReference addressedField }:
+                LoadTypedFieldAddress(addressedField, method, locals);
                 break;
             case AddressOf { Target: LocalVariable addressed }:
                 if (locals.Parameters.TryGetValue(addressed, out var addressedParameter))

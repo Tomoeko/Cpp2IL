@@ -216,6 +216,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64SignedFieldComparisonRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Signed Int32 field comparison IL emitted from complete bounded native and metadata evidence, preserving ordered null checks and each evidenced field read; behavior remains unverified.");
+                return;
+            }
+
             if (X64ReferenceArraySearchRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,

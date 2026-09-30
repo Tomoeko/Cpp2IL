@@ -32,7 +32,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
         int Offset = 0, bool ReferenceWidened = false);
     private readonly record struct Argument(int? Entry, long? Literal, ScalarFieldArgument? Field = null,
         BooleanToggleArgument? Toggle = null, BooleanPredicateArgument? Predicate = null,
-        ScalarProducerArgument? Producer = null);
+        ScalarProducerArgument? Producer = null, ReferenceFieldArgument? Reference = null);
     private sealed record ValueKey(string Kind, object? Value, ValueKey[] Children);
     private sealed record OrderedEffect(Instruction Operation, ulong Address, bool Before, bool After,
         CallSemantics Semantics, ValueKey Value);
@@ -41,7 +41,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
     private sealed record Site(Instruction Invocation, MethodAnalysisContext Target, Origin Receiver,
         Argument[] Arguments, ulong Comparison, ulong Branch, ulong NullCall, RuntimeNullThrowEvidence Helper,
         Instruction GuardBranch, Block GuardOwner, Block NormalArm, NativeInstruction[] Body,
-        OrderedEffect[] Effects, Control[] Controls, ReferenceStore[] Stores, ValueKey? ReceiverDeclarations);
+        OrderedEffect[] Effects, Control[] Controls, ReferenceStore[] Stores, ValueKey? ReceiverDeclarations,
+        ValueKey? ArgumentDeclarations);
 
     internal static bool HasEvidence(MethodAnalysisContext method) =>
         NativeRecoveryProofTracker.Has(method, EvidenceKey) ||
@@ -91,15 +92,18 @@ internal static partial class X64NativeNullCheckedInvocationProof
                         [{ NativeAddress: { } onlyNullCall }] || onlyNullCall != nullCall ||
                     !BindInvocation(caller, invocation, target, origin, body, values, out var arguments, comparisonIp) ||
                     !TryReceiverDeclarations(caller, origin, target, out var receiverDeclarations) ||
+                    !TryReferenceArgumentDeclarations(target, arguments, out var argumentDeclarations) ||
                     !TryEffects(caller, invocation, out var effects) ||
                     !TryControls(caller, branch, body, out var controls)) return false;
                 var sites = caller.GetExtraData<List<Site>>(EvidenceKey) ?? [];
                 if (sites.Any(site => ReferenceEquals(site.Invocation, invocation))) return false;
                 sites.Add(new(invocation, target, origin, arguments, comparisonIp, branchIp, nullCall, helper,
-                    branch, guardOwner, normalArm, body, effects, controls, stores, receiverDeclarations));
+                    branch, guardOwner, normalArm, body, effects, controls, stores, receiverDeclarations,
+                    argumentDeclarations));
                 var argumentIndex = invocation.OpCode == OpCode.Call ? 3 : 2;
                 for (var index = 0; index < arguments.Length; index++)
-                    invocation.SetOperand(argumentIndex + index, CanonicalArgument(caller, arguments[index]));
+                    if (arguments[index].Reference == null)
+                        invocation.SetOperand(argumentIndex + index, CanonicalArgument(caller, arguments[index]));
                 caller.PutExtraData(EvidenceKey, sites);
                 NativeRecoveryProofTracker.Mark(caller, EvidenceKey);
                 admitted = true;
@@ -123,6 +127,11 @@ internal static partial class X64NativeNullCheckedInvocationProof
     internal static bool TryGetCandidate(MethodAnalysisContext caller, Instruction call,
         out MethodAnalysisContext target, out LocalVariable receiver)
     {
+        target = null!;
+        receiver = null!;
+        if (call.Operands.FirstOrDefault() is MethodAnalysisContext descriptor &&
+            descriptor.Parameters.Any(parameter => parameter.Definition?.RawType is not { Data: not null }))
+            return false;
         if (NullCheckedCall.TryGet(call, out target, out receiver)) return true;
         target = null!;
         receiver = null!;
@@ -157,6 +166,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
         {
             if (!NativeRecoveryProofTracker.Has(caller, EvidenceKey) ||
                 caller.GetExtraData<List<Site>>(EvidenceKey) is not { Count: > 0 } sites ||
+                !ReferenceArgumentDescriptorsValid(sites) ||
                 caller.ControlFlowGraph is not { EntryBlock.Instructions.Count: 0, ExitBlock.Instructions.Count: 0 } ||
                 caller.ControlFlowGraph?.Instructions.Any(instruction => instruction.OpCode == OpCode.RuntimeNullThrow) != false ||
                 !FloatingStoreLiteralTypesRetained(caller) ||
@@ -176,7 +186,9 @@ internal static partial class X64NativeNullCheckedInvocationProof
                         out var nullCall, out var helper, site.Helper, site.NullCall) ||
                     nullCall != site.NullCall || helper.NativeTarget != site.Helper.NativeTarget ||
                     !BindInvocation(caller, call, target, origin, body, values, out var arguments, site.Comparison) ||
-                    !arguments.SequenceEqual(site.Arguments) || !EffectsRetained(caller, call, site.Effects) ||
+                    !arguments.SequenceEqual(site.Arguments) ||
+                    !ReferenceArgumentDeclarationsRetained(target, arguments, site.ArgumentDeclarations) ||
+                    !EffectsRetained(caller, call, site.Effects) ||
                     !ControlsRetained(caller, body, site.Controls) ||
                     site.Stores.Any(store => !ReferenceStoreRetained(caller, body, values, store)))
                     return false;
@@ -185,7 +197,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                    ScalarFieldArgumentUsesRetained(caller, sites) && ReferenceReceiverUsesRetained(caller, sites) &&
                    BooleanToggleArgumentUsesRetained(caller, sites) && BooleanPredicateArgumentUsesRetained(caller, sites) &&
                    ScalarProducerArgumentUsesRetained(caller, sites) &&
-                   ReferenceProducerUsesRetained(caller, sites);
+                   ReferenceProducerUsesRetained(caller, sites) && ReferenceArgumentUsesRetained(caller, sites);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
@@ -310,10 +322,22 @@ internal static partial class X64NativeNullCheckedInvocationProof
         for (var index = 0; index < target.Parameters.Count; index++)
         {
             var parameter = target.Parameters[index];
-            if (!Scalar(parameter.ParameterType) || parameter.Definition?.RawType?.Type != parameter.ParameterType.Type ||
+            if ((!Scalar(parameter.ParameterType) && !OrdinaryClass(parameter.ParameterType)) ||
+                parameter.Definition?.RawType?.Type != parameter.ParameterType.Type ||
                 !TryArgument(caller, call.Operands[argumentIndex + index], call,
                     parameter.ParameterType, out var source, out var managed))
                 return false;
+            var register = index == 0 ? NativeRegister.RDX : NativeRegister.R8;
+            if (managed.Reference is { } reference)
+            {
+                if (!BindReceiver(caller, reference.Origin, body, values, address, register)) return false;
+                bound[index] = managed;
+                continue;
+            }
+            // Ordinary references are admitted only through the captured field
+            // route above. Incoming references, literals and producer arguments
+            // need their own immutable declaration and use proofs.
+            if (!Scalar(parameter.ParameterType)) return false;
             if (managed.Field is { } field && !BindScalarFieldArgument(caller, field, body, values, address, out source) ||
                 managed.Toggle is { } toggle && (target.Parameters.Count != 1 ||
                     !BindBooleanToggleArgument(caller, toggle, receiver, body, values, address, out source)) ||
@@ -322,7 +346,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                 managed.Producer is { } producer &&
                     !BindScalarProducerArgument(caller, call, receiver, producer, body, values, address,
                         comparison, out source) ||
-                !values.Matches(address, index == 0 ? NativeRegister.RDX : NativeRegister.R8,
+                !values.Matches(address, register,
                     parameter.ParameterType.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32, source))
                 return false;
             bound[index] = managed;
@@ -416,6 +440,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
             { origin = new(-2, type, definition, producer); return true; }
             if (definition is { OpCode: OpCode.Move, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct,
                     Operands: [LocalVariable fieldValue, FieldReference field] } && ReferenceEquals(fieldValue, value) &&
+                field.Field.BackingData?.Field.RawFieldType is { Data: not null } &&
                 ReferenceUpcast(field.Field.FieldType, type) && EntryIndex(method, field.Local, out var sourceEntry))
             {
                 // This extension owns only an unchanged field captured from the current
@@ -437,6 +462,12 @@ internal static partial class X64NativeNullCheckedInvocationProof
     {
         source = default;
         argument = default;
+        if (OrdinaryClass(type))
+        {
+            if (!TryReferenceFieldArgument(method, operand, use, type, out var reference)) return false;
+            argument = new(null, null, Reference: reference);
+            return true;
+        }
         var visited = new HashSet<LocalVariable>();
         while (operand is LocalVariable local && visited.Add(local))
         {
@@ -501,29 +532,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
         out Instruction? definition)
     {
         definition = null;
-        if (method.ControlFlowGraph is not { } graph || graph.FindBlockByInstruction(use) is not { } block) return false;
-        var visiting = new HashSet<Block>();
-        return Before(block, block.Instructions.IndexOf(use), out definition);
-
-        bool Before(Block current, int limit, out Instruction? found)
-        {
-            found = null;
-            for (var index = limit - 1; index >= 0; index--)
-                if (ReferenceEquals(current.Instructions[index].Destination, value))
-                { found = current.Instructions[index]; return true; }
-            if (current == graph.EntryBlock) return method.ParameterLocals.Contains(value);
-            if (!visiting.Add(current) || current.Predecessors.Count == 0) return false;
-            var first = true;
-            foreach (var previous in current.Predecessors)
-            {
-                if (!Before(previous, previous.Instructions.Count, out var input) || !first && !ReferenceEquals(input, found))
-                { visiting.Remove(current); return false; }
-                found = input;
-                first = false;
-            }
-            visiting.Remove(current);
-            return true;
-        }
+        return method.ControlFlowGraph is { } graph &&
+               TryReachingDefinition(graph, method.ParameterLocals, value, use, out definition);
     }
 
     private static bool EntryIndex(MethodAnalysisContext method, LocalVariable local, out int index)
@@ -614,9 +624,9 @@ internal static partial class X64NativeNullCheckedInvocationProof
         for (var current = type; current != null; current = current.DeclaringType)
             if (!visited.Add(current) || !NullCheckedCall.IsReferenceClass(current) ||
                 current.Name != current.DefaultName || current.Namespace != current.DefaultNamespace ||
-                current.Definition is not { RawType: { NumMods: 0, Byref: 0, Pinned: 0,
+                current.Definition is not { RawType: { Data: not null, NumMods: 0, Byref: 0, Pinned: 0,
                     Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS or Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or Il2CppTypeEnum.IL2CPP_TYPE_STRING } } definition ||
-                definition.RawBaseType is { } rawBase && (rawBase.NumMods != 0 || rawBase.Byref != 0 || rawBase.Pinned != 0 ||
+                definition.RawBaseType is { } rawBase && (rawBase.Data == null || rawBase.NumMods != 0 || rawBase.Byref != 0 || rawBase.Pinned != 0 ||
                     rawBase.Type is not (Il2CppTypeEnum.IL2CPP_TYPE_CLASS or Il2CppTypeEnum.IL2CPP_TYPE_OBJECT)) ||
                 !ReferenceEquals(definition.DeclaringType, current.DeclaringType?.Definition) ||
                 current.DeclaringType != null && current.DeclaringType.NestedTypes.Count(candidate => ReferenceEquals(candidate, current)) != 1)
