@@ -9,7 +9,8 @@ def observations():
          "storedPointer": value, "storedReferenceMatches": True,
          "expectedPointer": value, "flag": flag, "storedFlag": flag,
          "neighborFlag": neighbor, "expectedFlag": flag,
-         "expectedNeighborFlag": neighbor}
+         "expectedNeighborFlag": neighbor, "singleFlag": flag,
+         "singleStoredFlag": flag, "singleNeighborFlag": neighbor}
         for kind, value, flag, neighbor in (("initial", 0, False, False),
                                             ("first", 17, True, False),
                                             ("second", -17, False, True),
@@ -27,6 +28,6 @@ def verify(path, stage, version):
     expected = observations()
     if json.dumps(report.get("observations"), sort_keys=True) != json.dumps(expected, sort_keys=True):
         raise ValueError("Static getter behavior differs from the independent oracle")
-    return {"status": "passed", "observations": len(expected), "methods": 4,
+    return {"status": "passed", "observations": len(expected), "methods": 5,
             "platform": report["platform"], "profile": "static-field-getter",
             "scope": "native pointer values, object identity, Boolean values, neighboring static field and repeated reads"}

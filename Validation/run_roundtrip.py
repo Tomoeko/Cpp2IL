@@ -50,6 +50,7 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "native-scalar-field-invocation",
     "native-scalar-producer-invocation",
     "native-reference-producer-invocation",
+    "reference-array-search",
     "native-scalar-invocation-effects",
     "native-subnormal-field-store",
     "native-derived-receiver-invocation",

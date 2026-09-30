@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using AssetRipper.Primitives;
 using Cpp2IL.Core.InstructionSets;
+using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 using Iced.Intel;
 using LibCpp2IL;
@@ -15,6 +16,118 @@ namespace Cpp2IL.Core.Tests;
 [NonParallelizable]
 public class X64MetadataStaticGetterFixtureTests
 {
+    [Test]
+    public void ConstantsAtTheStoredFieldOffsetDoNotEstablishStorageAliases()
+    {
+        WithFixture(app =>
+        {
+            var owner = app.GetAssemblyByName("StaticFieldGetterFixture")!.Types
+                .Single(type => type.Name == "StaticState");
+            var method = owner.Methods.Single(candidate => candidate.Name == "ReadPointer");
+            var field = owner.Fields.Single(candidate => candidate.Name == "Pointer");
+            var constants = owner.Fields.Where(candidate =>
+                (candidate.Attributes & FieldAttributes.Literal) != 0).ToArray();
+            Assert.That(constants, Has.Length.EqualTo(2));
+            Assert.That(constants.All(candidate => candidate.Offset == field.Offset), Is.True);
+            Assert.That(X64MetadataStaticGetterProof.Find(method)?.Field, Is.SameAs(field));
+
+            foreach (var constant in constants)
+            {
+                try
+                {
+                    constant.OverrideAttributes = constant.DefaultAttributes & ~FieldAttributes.Literal;
+                    Assert.That(X64MetadataStaticGetterProof.Find(method), Is.Null,
+                        "An output declaration changed into storage cannot be ignored as a constant.");
+                }
+                finally { constant.OverrideAttributes = null; }
+            }
+        });
+    }
+
+    [Test]
+    public void BooleanLoadUsesTheAuthenticatedStaticStorageRegister()
+    {
+        WithFixture(app =>
+        {
+            var owner = app.GetAssemblyByName("StaticFieldGetterFixture")!.Types
+                .Single(type => type.Name == "SingleFlagState");
+            var method = owner.Methods.Single(candidate => candidate.Name == "ReadFlag");
+            var field = owner.Fields.Single(candidate => candidate.Name == "Flag");
+            Assert.That(X64MetadataStaticGetterProof.Find(method)?.Field, Is.SameAs(field));
+            var native = X86Utils.Iterate(method).Take(11).ToArray();
+            Assert.Multiple(() =>
+            {
+                Assert.That(native[7].Op0Register, Is.AnyOf(Register.RAX, Register.RCX));
+                Assert.That(native[8].Code, Is.EqualTo(Code.Movzx_r32_rm8));
+                Assert.That(native[8].MemoryBase, Is.EqualTo(native[7].Op0Register));
+                Assert.That(field.Offset, Is.Zero);
+            });
+            Assert.That(X64MetadataStaticGetterProof.FieldLoadPair(native[7], native[8],
+                out var offset, out var width), Is.True);
+            Assert.That(offset, Is.Zero);
+            Assert.That(width, Is.EqualTo(1));
+
+            foreach (var basis in new[] { Register.RAX, Register.RCX })
+            {
+                var storage = native[7];
+                var load = native[8];
+                storage.Op0Register = basis;
+                load.MemoryBase = basis;
+                Assert.That(X64MetadataStaticGetterProof.FieldLoadPair(storage, load,
+                    out offset, out width), Is.True,
+                    "The full storage pointer reaches the Boolean load without an intervening instruction.");
+                Assert.That(offset, Is.Zero);
+                Assert.That(width, Is.EqualTo(1));
+            }
+
+            foreach (var defect in new[] { "different storage base", "truncated pointer", "signed byte",
+                         "word", "indexed load", "wrong result" })
+            {
+                var storage = native[7];
+                var load = native[8];
+                switch (defect)
+                {
+                    case "different storage base": load.MemoryBase = Register.RDX; break;
+                    case "truncated pointer": storage.Op0Register = Register.EAX; break;
+                    case "signed byte": load.Code = Code.Movsx_r32_rm8; break;
+                    case "word": load.Code = Code.Movzx_r32_rm16; break;
+                    case "indexed load": load.MemoryIndex = Register.RDX; break;
+                    case "wrong result": load.Op0Register = Register.EDX; break;
+                }
+                Assert.That(X64MetadataStaticGetterProof.FieldLoadPair(storage, load,
+                    out _, out _), Is.False, defect);
+            }
+
+            var neighbor = owner.Fields.Single(candidate => candidate.Name == "NeighborFlag");
+            try
+            {
+                neighbor.OverrideOffset = field.Offset;
+                Assert.That(X64MetadataStaticGetterProof.Find(method), Is.Null,
+                    "A second stored field at the same address remains ambiguous.");
+            }
+            finally { neighbor.OverrideOffset = null; }
+        });
+    }
+
+    private static void WithFixture(Action<ApplicationAnalysisContext> test)
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_STATIC_GETTER_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_STATIC_GETTER_FIXTURE_INPUT to the synthetic static getter player-input directory.");
+        var binary = Path.Combine(directory!, "GameAssembly.dll");
+        var metadata = Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata",
+            "global-metadata.dat");
+        Assert.That(File.Exists(binary) && File.Exists(metadata), Is.True);
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(binary, metadata, UnityVersion.Parse("2021.3.35f1"));
+            test(Cpp2IlApi.CurrentAppContext!);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
     [Test]
     public void OnlyOwnUnchangedFieldsWithoutClassConstructorAreAccepted()
     {

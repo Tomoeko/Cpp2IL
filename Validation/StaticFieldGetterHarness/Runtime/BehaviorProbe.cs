@@ -44,6 +44,8 @@ namespace RecoveryValidation
         private static void Record(List<object> observations, string kind, ReferenceHolder expected,
             long pointer, bool expectedFlag, bool expectedNeighborFlag)
         {
+            SingleFlagState.Flag = expectedFlag;
+            SingleFlagState.NeighborFlag = expectedNeighborFlag;
             var returned = StaticState.ReadReference();
             observations.Add(new Dictionary<string, object>
             {
@@ -56,7 +58,10 @@ namespace RecoveryValidation
                 { "storedFlag", StaticState.Flag },
                 { "neighborFlag", StaticState.NeighborFlag },
                 { "expectedFlag", expectedFlag },
-                { "expectedNeighborFlag", expectedNeighborFlag }
+                { "expectedNeighborFlag", expectedNeighborFlag },
+                { "singleFlag", SingleFlagState.ReadFlag() },
+                { "singleStoredFlag", SingleFlagState.Flag },
+                { "singleNeighborFlag", SingleFlagState.NeighborFlag }
             });
         }
 

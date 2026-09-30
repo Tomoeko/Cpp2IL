@@ -20,6 +20,7 @@ import guarded_boxed_cast
 import reference_field
 import native_int_field
 import reference_array
+import reference_array_search
 import range_array_read
 import exception_regions
 import field_array
@@ -270,6 +271,8 @@ PROFILES = {
                                         "source": VALIDATION / "NativeScalarProducerInvocationFixture", "methods": 7},
     "native-reference-producer-invocation": {"assembly": "NativeReferenceProducerInvocationFixture",
                                            "source": VALIDATION / "NativeReferenceProducerInvocationFixture", "methods": 8},
+    "reference-array-search": {"assembly": "ReferenceArraySearchFixture",
+                               "source": VALIDATION / "ReferenceArraySearchFixture", "methods": 8},
     "native-scalar-invocation-effects": {"assembly": "NativeScalarInvocationEffectsFixture",
                                        "source": VALIDATION / "NativeScalarInvocationEffectsFixture", "methods": 6},
     "native-subnormal-field-store": {"assembly": "NativeSubnormalFieldStoreFixture",
@@ -371,7 +374,7 @@ PROFILES = {
     "constructor-thunk-chain": {"assembly": "ConstructorThunkChainFixture", "source": VALIDATION / "ConstructorThunkChainFixture", "methods": 7},
     "array-call": {"assembly": "ArrayCallFixture", "source": VALIDATION / "ArrayCallFixture", "methods": 10},
     "enum-passthrough": {"assembly": "EnumPassthroughFixture", "source": VALIDATION / "EnumPassthroughFixture", "methods": 4},
-    "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 4},
+    "static-field-getter": {"assembly": "StaticFieldGetterFixture", "source": VALIDATION / "StaticFieldGetterFixture", "methods": 5},
     "static-word-getter": {"assembly": "StaticWordGetterFixture", "source": VALIDATION / "StaticWordGetterFixture", "methods": 2},
     "static-scalar-setter": {"assembly": "StaticScalarSetterFixture", "source": VALIDATION / "StaticScalarSetterFixture", "methods": 1},
     "instance-reference-property": {"assembly": "InstanceReferencePropertyFixture", "source": VALIDATION / "InstanceReferencePropertyFixture", "methods": 5},
@@ -679,6 +682,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_scalar_producer_invocation.verify(path, stage, VERSION)
     if profile == "native-reference-producer-invocation":
         return native_reference_producer_invocation.verify(path, stage, VERSION)
+    if profile == "reference-array-search":
+        return reference_array_search.verify(path, stage, VERSION)
     if profile == "native-scalar-invocation-effects":
         return native_scalar_invocation_effects.verify(path, stage, VERSION)
     if profile == "native-subnormal-field-store":

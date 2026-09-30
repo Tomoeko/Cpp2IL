@@ -64,7 +64,7 @@ internal static class X64ReferenceFieldNullComparisonProof
                 { NumMods: 0, Byref: 0, Pinned: 0 } ||
             // Exact Windows player observations also cover reference slots at
             // offsets 72 and 88, including null-receiver faults. Other wider
-            // offsets and entry padding remain unproved.
+            // offsets remain unproved.
             !IsProvedNullReceiverOffset(field.Offset, pe.PointerSizeBytes) ||
             field.Offset != field.Field.Offset ||
             field.Offset != field.Field.DefaultOffset ||
@@ -125,14 +125,27 @@ internal static class X64ReferenceFieldNullComparisonProof
         ulong compareIP, ulong predicateIP, ulong end, int fieldOffset,
         string receiverRegister, ManagedOpCode op)
     {
-        // The entire decoded body is one field read, one flag consumer into AL,
-        // and a plain return. No tail transfer, call or hidden effect fits.
-        return body is [var compare, var predicate, var ret] &&
-               compare.IP == entry && compare.IP == compareIP &&
+        // A single two-byte AX self-exchange is an architectural NOP. Apart
+        // from that bounded entry padding, the entire body is one field read,
+        // one flag consumer into AL, and a plain return.
+        var first = body.Count == 4 && IsEntryPadding(body[0], entry) ? 1 : 0;
+        if (body.Count != first + 3)
+            return false;
+        var compare = body[first];
+        var predicate = body[first + 1];
+        var ret = body[first + 2];
+        return compare.IP == (first == 0 ? entry : body[0].NextIP) && compare.IP == compareIP &&
                predicate.IP == predicateIP && ret.IP == predicate.NextIP &&
                ret.Code == Code.Retnq && ret.OpCount == 0 && ret.NextIP == end &&
                IsExactNativeSite(compare, predicate, fieldOffset, receiverRegister, op);
     }
+
+    private static bool IsEntryPadding(NativeInstruction instruction, ulong entry) =>
+        instruction.IP == entry && instruction.Length == 2 &&
+        instruction.Code == Code.Nopw && instruction.CodeSize == CodeSize.Code64 &&
+        instruction.OpCount == 0 &&
+        instruction.SegmentPrefix == NativeRegister.None &&
+        !instruction.HasLockPrefix && !instruction.HasRepPrefix && !instruction.HasRepnePrefix;
 
     internal static bool IsExactNativeSite(NativeInstruction compare, NativeInstruction predicate,
         int fieldOffset, string receiverRegister, ManagedOpCode op)

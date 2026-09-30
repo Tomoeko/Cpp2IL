@@ -24,6 +24,29 @@ public class X64ReferenceFieldNullComparisonProofTests
         Assert.That(IsClosed(body, op), Is.True);
     }
 
+    [TestCase("669048837910000F94C0C3", 16, ManagedOpCode.CheckEqual)]
+    [TestCase("669048837910000F95C0C3", 16, ManagedOpCode.CheckNotEqual)]
+    [TestCase("669048837910000F97C0C3", 16, ManagedOpCode.CheckGreaterUnsigned)]
+    [TestCase("669048837910000F96C0C3", 16, ManagedOpCode.CheckLessOrEqualUnsigned)]
+    [TestCase("669048837948000F97C0C3", 72, ManagedOpCode.CheckGreaterUnsigned)]
+    [TestCase("669048837958000F94C0C3", 88, ManagedOpCode.CheckEqual)]
+    public void OneWordNopPreservesTheCompleteNullLeaf(string hex, int offset, ManagedOpCode op)
+    {
+        Assert.That(IsClosed(Decode(hex), op, offset, 1), Is.True);
+    }
+
+    [TestCase("669248837948000F97C0C3", 1)] // exchanges AX with DX
+    [TestCase("66870148837948000F97C0C3", 1)] // exchanges AX with memory
+    [TestCase("F39048837948000F97C0C3", 1)] // PAUSE is not the admitted entry padding
+    [TestCase("6690669048837948000F97C0C3", 2)] // two word NOPs
+    [TestCase("66669048837948000F97C0C3", 1)] // extra prefix exceeds the exact two-byte pad
+    [TestCase("6690488379480083C0010F97C0C3", 1)] // changes flags before SETcc
+    [TestCase("488379480066900F97C0C3", 0)] // padding is not at entry
+    public void PaddingDoesNotAdmitOtherSetupOrHiddenEffects(string hex, int compareIndex)
+    {
+        Assert.That(IsClosed(Decode(hex), ManagedOpCode.CheckGreaterUnsigned, 72, compareIndex), Is.False);
+    }
+
     [TestCase("48837910000F95C0C3")] // the opposite SETcc
     [TestCase("488379100083C0010F94C0C3")] // flag-changing ADD between CMP and SETcc
     [TestCase("48837910007400C3")] // unproved conditional branch
@@ -46,7 +69,6 @@ public class X64ReferenceFieldNullComparisonProofTests
         Assert.That(IsClosed(Decode(hex), op, offset), Is.True);
     }
 
-    [TestCase("669048837948000F97C0C3", 72, ManagedOpCode.CheckGreaterUnsigned, 1)] // unproved entry NOPW
     [TestCase("48837948000F94C0C3", 72, ManagedOpCode.CheckGreaterUnsigned, 0)] // wrong flag consumer
     [TestCase("48837948000F97C1C3", 72, ManagedOpCode.CheckGreaterUnsigned, 0)] // wrong result register
     [TestCase("48837950000F97C0C3", 72, ManagedOpCode.CheckGreaterUnsigned, 0)] // wrong offset

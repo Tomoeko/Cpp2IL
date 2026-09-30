@@ -216,6 +216,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64ReferenceArraySearchRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Captured reference-array first-match search IL emitted from complete bounded native and metadata evidence, preserving evidenced element reads and captures, null-element skips and signed Int32 keys; behavior remains unverified.");
+                return;
+            }
+
             if (X64CallResultInt32ArrayReadRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,

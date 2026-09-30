@@ -101,13 +101,22 @@ internal static class X64MetadataStaticGetterProof
             fieldOffset > int.MaxValue || fieldOffset + loadSize > owner.Definition.RawSizes.static_fields_size)
             return null;
 
-        var fields = owner.Fields.Where(field => field.IsStatic && field.Offset == (long)fieldOffset)
+        var fields = owner.Fields.Where(field => field.IsStatic && field.Offset == (long)fieldOffset &&
+                !IsUnchangedLiteral(field))
             .ToArray();
         if (fields is not [{ } matched] || !UnchangedField(matched, method.ReturnType,
                 definition.RawReturnType, loadSize))
             return null;
         return new Evidence(matched, slot);
     }
+
+    // Metadata constants have no static storage. Their recorded offset can be
+    // zero, just like the first stored field; it does not establish an alias.
+    // A changed declaration is retained as an ambiguous candidate instead.
+    private static bool IsUnchangedLiteral(FieldAnalysisContext field) =>
+        field.Attributes == field.DefaultAttributes &&
+        (field.DefaultAttributes & FieldAttributes.Literal) != 0 &&
+        (field.DefaultAttributes & FieldAttributes.HasFieldRVA) == 0;
 
     private static bool OrdinaryGetter(MethodAnalysisContext method) =>
         method.IsStatic && !method.IsVirtual && !method.IsVoid &&
@@ -178,13 +187,15 @@ internal static class X64MetadataStaticGetterProof
             return true;
         }
 
-        if (StaticFieldsPointerToRcx(staticFieldsLoad) && DwordFieldLoadToEax(fieldLoad, out fieldOffset))
+        if (StaticFieldsPointer(staticFieldsLoad, out var basis) &&
+            DwordFieldLoadToEax(fieldLoad, basis, out fieldOffset))
         {
             loadSize = 4;
             return true;
         }
 
-        if (StaticFieldsPointerToRcx(staticFieldsLoad) && ByteFieldZeroExtendToEax(fieldLoad, out fieldOffset))
+        if (StaticFieldsPointer(staticFieldsLoad, out basis) &&
+            ByteFieldZeroExtendToEax(fieldLoad, basis, out fieldOffset))
         {
             loadSize = 1;
             return true;
@@ -195,28 +206,33 @@ internal static class X64MetadataStaticGetterProof
         return false;
     }
 
-    private static bool StaticFieldsPointerToRcx(NativeInstruction instruction) =>
-        instruction.Code == Code.Mov_r64_rm64 && instruction.Op0Kind == OpKind.Register &&
-        instruction.Op0Register == NativeRegister.RCX && instruction.Op1Kind == OpKind.Memory &&
-        instruction.MemoryBase == NativeRegister.RAX && instruction.MemoryIndex == NativeRegister.None &&
-        instruction.MemorySize.GetSize() == 8 &&
-        instruction.MemoryDisplacement64 == (ulong)Il2CppClassLayout.StaticFieldsOffset64;
+    private static bool StaticFieldsPointer(NativeInstruction instruction, out NativeRegister basis)
+    {
+        basis = instruction.Op0Register;
+        return instruction.Code == Code.Mov_r64_rm64 && instruction.Op0Kind == OpKind.Register &&
+               basis is NativeRegister.RAX or NativeRegister.RCX &&
+               instruction.Op1Kind == OpKind.Memory && instruction.MemoryBase == NativeRegister.RAX &&
+               instruction.MemoryIndex == NativeRegister.None && instruction.MemorySize.GetSize() == 8 &&
+               instruction.MemoryDisplacement64 == (ulong)Il2CppClassLayout.StaticFieldsOffset64;
+    }
 
-    private static bool DwordFieldLoadToEax(NativeInstruction instruction, out ulong fieldOffset)
+    private static bool DwordFieldLoadToEax(NativeInstruction instruction, NativeRegister basis,
+        out ulong fieldOffset)
     {
         fieldOffset = instruction.MemoryDisplacement64;
         return instruction.Code == Code.Mov_r32_rm32 && instruction.Op0Kind == OpKind.Register &&
                instruction.Op0Register == NativeRegister.EAX && instruction.Op1Kind == OpKind.Memory &&
-               instruction.MemoryBase == NativeRegister.RCX && instruction.MemoryIndex == NativeRegister.None &&
+               instruction.MemoryBase == basis && instruction.MemoryIndex == NativeRegister.None &&
                instruction.MemorySize.GetSize() == 4;
     }
 
-    private static bool ByteFieldZeroExtendToEax(NativeInstruction instruction, out ulong fieldOffset)
+    private static bool ByteFieldZeroExtendToEax(NativeInstruction instruction, NativeRegister basis,
+        out ulong fieldOffset)
     {
         fieldOffset = instruction.MemoryDisplacement64;
         return instruction.Code == Code.Movzx_r32_rm8 && instruction.Op0Kind == OpKind.Register &&
                instruction.Op0Register == NativeRegister.EAX && instruction.Op1Kind == OpKind.Memory &&
-               instruction.MemoryBase == NativeRegister.RCX && instruction.MemoryIndex == NativeRegister.None &&
+               instruction.MemoryBase == basis && instruction.MemoryIndex == NativeRegister.None &&
                instruction.MemorySize.GetSize() == 1;
     }
 
