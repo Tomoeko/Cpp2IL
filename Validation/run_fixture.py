@@ -32,6 +32,9 @@ import nested_single_getter
 import fixed_reference_array
 import folded_reference_array
 import folded_boolean_array_store
+import boolean_array_fill_loop
+import base_effect_boolean_tail
+import scalar_positive_zero_leaf
 import owner_indexed_enum_array
 import nested_array_call
 import array_element_scalar_field
@@ -202,6 +205,12 @@ PROFILES = {
     "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 6},
     "folded-boolean-array-store": {"assembly": "FoldedBooleanArrayStoreFixture",
                                    "source": VALIDATION / "FoldedBooleanArrayStoreFixture", "methods": 5},
+    "boolean-array-fill-loop": {"assembly": "BooleanArrayFillLoopFixture",
+                                "source": VALIDATION / "BooleanArrayFillLoopFixture", "methods": 3},
+    "base-effect-boolean-tail": {"assembly": "BaseEffectBooleanTailFixture",
+                                "source": VALIDATION / "BaseEffectBooleanTailFixture", "methods": 13},
+    "scalar-positive-zero-leaf": {"assembly": "ScalarPositiveZeroLeafFixture",
+                                  "source": VALIDATION / "ScalarPositiveZeroLeafFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 6},
     "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 4},
@@ -511,6 +520,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return constructed_base_boolean_array.verify(path, stage, VERSION)
     if profile == "folded-boolean-array-store":
         return folded_boolean_array_store.verify(path, stage, VERSION)
+    if profile == "boolean-array-fill-loop":
+        return boolean_array_fill_loop.verify(path, stage, VERSION)
+    if profile == "base-effect-boolean-tail":
+        return base_effect_boolean_tail.verify(path, stage, VERSION)
+    if profile == "scalar-positive-zero-leaf":
+        return scalar_positive_zero_leaf.verify(path, stage, VERSION)
     if profile == "narrow-array":
         return narrow_array.verify(path, stage, VERSION)
     if profile == "nested-boolean-store":

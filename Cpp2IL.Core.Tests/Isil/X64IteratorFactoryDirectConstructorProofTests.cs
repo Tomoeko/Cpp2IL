@@ -83,6 +83,17 @@ public class X64IteratorFactoryDirectConstructorProofTests
 
             proof.Constructor.EnsureRawBytes();
             var constructorNative = X86Utils.Iterate(proof.Constructor).ToArray();
+            var constructorBytes = proof.Constructor.RawBytes;
+            var changedCache = constructorBytes.AsSpan().ToArray();
+            changedCache[0] ^= 1;
+            proof.Constructor.RawBytes = new BinarySlice(changedCache);
+            try
+            {
+                Assert.That(X64IteratorFactoryProof.FindDirectConstructor(factory, native), Is.Null,
+                    "A direct factory must preserve and reject its conflicting constructor cache.");
+            }
+            finally { proof.Constructor.RawBytes = constructorBytes; }
+            Assert.That(X64IteratorFactoryProof.FindDirectConstructor(factory, native), Is.Not.Null);
             Assert.That(constructorNative[7].MemoryDisplacement64, Is.EqualTo(16UL));
             Assert.That(constructorNative[7].MemorySize.GetSize(), Is.EqualTo(4));
             var pe = (PE)app.Binary;

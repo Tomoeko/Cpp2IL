@@ -209,10 +209,24 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64BooleanArrayFillLoopRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Field-backed Boolean array fill loop IL emitted from complete bounded native and metadata evidence, preserving each post-store field reload and null check; behavior remains unverified.");
+                return;
+            }
+
             if (X64CallResultInt32ArrayReadRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
                     "Call-result Int32 array read IL emitted from complete bounded native and metadata evidence; behavior remains unverified.");
+                return;
+            }
+
+            if (X64BaseEffectBooleanTailRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Declared base effect, reference producer and guarded Boolean tail IL emitted from complete bounded native and metadata evidence; folded tails bind one applicable original declaration with an independently proved setter body, and behavior remains unverified.");
                 return;
             }
 

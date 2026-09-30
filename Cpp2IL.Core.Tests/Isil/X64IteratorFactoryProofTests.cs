@@ -6,11 +6,89 @@ using AssetRipper.Primitives;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Utils;
 using Iced.Intel;
+using static Iced.Intel.AssemblerRegisters;
 
 namespace Cpp2IL.Core.Tests.Isil;
 
 public class X64IteratorFactoryProofTests
 {
+    [TestCase(false)]
+    [TestCase(true)]
+    public void InlinedStoresBindTheStateAndCapturedOwner(bool stateBeforeOwner)
+    {
+        var assembler = new Assembler(64);
+        assembler.lea(rcx, __[rbx + 0x28]);
+        if (stateBeforeOwner)
+        {
+            assembler.mov(__dword_ptr[rbx + 0x18], 0);
+            assembler.mov(rdx, rdi);
+            assembler.mov(__qword_ptr[rbx + 0x28], rdi);
+        }
+        else
+        {
+            assembler.mov(rdx, rdi);
+            assembler.mov(__qword_ptr[rcx], rdi);
+            assembler.mov(__dword_ptr[rbx + 0x18], 0);
+        }
+        using var stream = new MemoryStream();
+        assembler.Assemble(new StreamCodeWriter(stream), 0x1000);
+        var body = new Iced.Intel.Instruction[28];
+        X86Utils.Iterate(stream.ToArray(), 0x1000, false).CopyTo(body, 17);
+        Assert.That(X64IteratorFactoryProof.TryProveInlinedStores(body, stateBeforeOwner), Is.True);
+        Assert.That(X64IteratorFactoryProof.TryProveInlinedStores(body, !stateBeforeOwner), Is.False);
+
+        var wrongCapture = body.ToArray();
+        wrongCapture[stateBeforeOwner ? 20 : 19].MemoryDisplacement64 += 8;
+        Assert.That(X64IteratorFactoryProof.TryProveInlinedStores(wrongCapture, stateBeforeOwner), Is.False);
+        var wrongOwner = body.ToArray();
+        wrongOwner[stateBeforeOwner ? 20 : 19].Op1Register = Register.RSI;
+        Assert.That(X64IteratorFactoryProof.TryProveInlinedStores(wrongOwner, stateBeforeOwner), Is.False);
+        var nonzeroState = body.ToArray();
+        nonzeroState[stateBeforeOwner ? 18 : 20].Immediate32 = 1;
+        Assert.That(X64IteratorFactoryProof.TryProveInlinedStores(nonzeroState, stateBeforeOwner), Is.False);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public void GeneratedFactoryRejectsChangedCacheAndScheduledStores()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_ITERATOR_GENERATED_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_ITERATOR_GENERATED_FIXTURE_INPUT to the neutral generated iterator player input.");
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(Path.Combine(directory!, "GameAssembly.dll"),
+                Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata", "global-metadata.dat"),
+                UnityVersion.Parse("2021.3.35f1"));
+            var factory = Cpp2IlApi.CurrentAppContext!.GetAssemblyByName("IteratorFactoryFixture")!.Types
+                .Single(type => type.Name == "IteratorOwner").Methods.Single(method => method.Name == "Iterate");
+            factory.EnsureRawBytes();
+            var native = X86Utils.Iterate(factory).ToArray();
+            var proof = X64IteratorFactoryProof.Find(factory, native);
+            Assert.That(proof, Is.Not.Null);
+            foreach (var method in new[] { factory, proof!.Constructor })
+            {
+                var flags = method.Definition!.iflags;
+                method.Definition.iflags = (ushort)(flags | (ushort)MethodImplAttributes.Synchronized);
+                try { Assert.That(X64IteratorFactoryProof.Find(factory, native), Is.Null); }
+                finally { method.Definition.iflags = flags; }
+            }
+            var bytes = factory.RawBytes;
+            var changed = bytes.AsSpan().ToArray();
+            changed[0] ^= 1;
+            factory.RawBytes = new BinarySlice(changed);
+            try { Assert.That(X64IteratorFactoryProof.Find(factory, X86Utils.Iterate(factory).ToArray()), Is.Null); }
+            finally { factory.RawBytes = bytes; }
+            var fabricated = native.ToArray();
+            fabricated[17].MemoryDisplacement64 += 8;
+            Assert.That(X64IteratorFactoryProof.Find(factory, fabricated), Is.Null);
+            Assert.That(X64IteratorFactoryProof.Find(factory, native), Is.Not.Null);
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
     [Test]
     [NonParallelizable]
     public void ExactPlayerBindsFactoryToConstructorFieldsAndHelpers()
