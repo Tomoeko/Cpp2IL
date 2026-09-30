@@ -11,12 +11,14 @@ import subprocess
 import sys
 
 import declaration_comparer_snapshot as comparer_snapshot
+from behavior_oracle import read_report, _same_type_and_value
 
 from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process,
                          write_json, resolved_package_lock_sha256, embedded_reference_lock_sha256,
                          embedded_package_lock_sha256, profile_harness_directory,
                          EMBEDDED_FIXTURE_PACKAGES, verify_external_reference_fixture,
-                         verify_embedded_fixture_dependency)
+                         verify_embedded_fixture_dependency, verify_behavior, owned_snapshot_file,
+                         checked_behavior_report_files)
 
 
 PROFILES = {name: FIXTURE_PROFILES[name] for name in (
@@ -37,6 +39,8 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "guarded-array-tail-invocation",
     "scalar-float-selection",
     "scalar-float-conversion",
+    "scalar-double-accumulator",
+    "native-boolean-toggle-invocation",
     "scalar-float-conversion-composition",
     "native-null-checked-invocation",
     "native-scalar-pair-invocation",
@@ -133,22 +137,6 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def owned_snapshot_file(directory, path):
-    """Require an ordinary file without links at any level inside the snapshot."""
-    try:
-        relative = path.relative_to(directory)
-    except ValueError:
-        return False
-    if directory.is_symlink() or ".." in relative.parts:
-        return False
-    current = directory
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return False
-    return path.is_file()
-
-
 def verify_player_inputs(directory, recorded):
     """Authenticate the complete isolated runtime, including behavior dependencies."""
     if (not isinstance(recorded, list) or not recorded or
@@ -195,6 +183,7 @@ def verify_snapshot_inputs(directory, receipt):
         if snapshot["files"] != receipt["comparisonToolFiles"]:
             raise ValueError("Declaration comparer receipt differs from its authenticated snapshot")
     checked_managed_oracle_snapshots(directory, receipt["scope"], receipt["managedOracles"]["files"])
+    checked_behavior_oracles(directory, receipt["profile"], receipt.get("behaviorOracles"))
 
 
 def managed_oracle(run_directory, assembly):
@@ -242,6 +231,117 @@ def checked_managed_oracle_snapshots(directory, assembly, snapshots):
             raise ValueError("Original " + kind + " managed oracle snapshot changed")
         paths[kind] = path
     return paths
+
+
+def checked_declaration_report(directory, name, stage, oracle, candidate):
+    """Authenticate a retained comparison and the exact assemblies it projected."""
+    path = directory / name / "report.json"
+    if (not isinstance(stage, dict) or stage.get("status") != "passed" or
+            stage.get("differenceCount") != 0 or type(stage.get("differenceCount")) is not int or
+            stage.get("report") != str(path) or not owned_snapshot_file(directory, path)):
+        raise ValueError("Declaration comparison report is missing, linked or outside its canonical path")
+    report_hash = digest(path)
+    if report_hash != stage.get("reportSha256"):
+        raise ValueError("Declaration comparison report changed since its receipt")
+    identities = {"oracle": (oracle, stage.get("oracleSha256")),
+                  "candidate": (candidate, stage.get("candidateSha256"))}
+    for role, (assembly, expected) in identities.items():
+        owner = directory if role == "oracle" else directory.parent
+        if not owned_snapshot_file(owner, assembly) or digest(assembly) != expected:
+            raise ValueError("Declaration comparison " + role + " changed since its receipt")
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(report, dict) or report.get("status") != "passed" or
+            type(report.get("differenceCount")) is not int or report["differenceCount"] != 0 or
+            report.get("diagnostics") != [] or report.get("differences") != []):
+        raise ValueError("Retained declaration comparison did not pass its declared projection")
+    for role, (assembly, expected) in identities.items():
+        record = report.get(role)
+        owner = directory if role == "oracle" else directory.parent
+        if (not isinstance(record, dict) or record.get("path") != str(assembly) or
+                record.get("sha256") != expected or not owned_snapshot_file(owner, assembly) or digest(assembly) != expected):
+            raise ValueError("Retained declaration comparison " + role + " identity differs")
+    counts = report["candidate"].get("counts")
+    if not isinstance(counts, dict) or not _same_type_and_value(counts, stage.get("counts")):
+        raise ValueError("Retained declaration comparison counts differ from its receipt")
+    if not owned_snapshot_file(directory, path) or digest(path) != report_hash:
+        raise ValueError("Declaration comparison report changed during authentication")
+    return report
+
+
+def checked_declaration_stages(directory, receipt, rebuilt_directory=None):
+    """Rebind declaration evidence after all later validation subprocesses."""
+    assembly = receipt["scope"]
+    oracle = checked_managed_oracle_snapshots(directory, assembly, receipt["managedOracles"]["files"])["stripped"]
+    candidates = {"recoveredDeclarations": directory / "recovered/UnityProject/RecoveredManaged" / (assembly + ".dll")}
+    if rebuilt_directory is not None:
+        candidates["rebuiltDeclarations"] = managed_oracle(rebuilt_directory, assembly)
+    for name, candidate in candidates.items():
+        checked_declaration_report(directory, name, receipt["stages"].get(name), oracle, candidate)
+
+
+def checked_original_behavior(directory, profile, receipt):
+    inventory = receipt.get("behaviorReports")
+    checked_behavior_report_files(directory, inventory,
+                                  ("project/Reports/editor-behavior.json", "player-behavior.json"))
+    paths = {}
+    for stage, name, relative in (("editor", "editorBehavior", "project/Reports/editor-behavior.json"),
+                                   ("player", "playerBehavior", "player-behavior.json")):
+        path = directory / relative
+        if verify_behavior(path, stage, profile) != receipt["stages"][name]:
+            raise ValueError("Original " + stage + " behavior changed since its independently verified gate")
+        paths[stage] = path
+    return paths
+
+
+def snapshot_behavior_oracles(baseline, directory, profile, original):
+    """Freeze observed behavior only after player-only recovery and IL checks."""
+    target_root = directory / "validation-oracles/behavior"
+    if (directory.is_symlink() or target_root.parent.is_symlink() or
+            target_root.exists() or target_root.is_symlink()):
+        raise ValueError("Original behavior snapshot directory already exists")
+    snapshots = {}
+    for stage, source in checked_original_behavior(baseline, profile, original).items():
+        source_hash = next(item["sha256"] for item in original["behaviorReports"]
+                           if item["path"] == source.relative_to(baseline).as_posix())
+        target = target_root / (stage + ".json")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        if digest(source) != source_hash or digest(target) != source_hash:
+            raise ValueError("Original " + stage + " behavior changed during snapshot")
+        snapshots[stage] = {"path": target.relative_to(directory).as_posix(),
+                            "sha256": source_hash, "gate": original["stages"][stage + "Behavior"].copy()}
+    checked_behavior_oracles(directory, profile, snapshots)
+    return snapshots
+
+
+def checked_behavior_oracles(directory, profile, snapshots):
+    if not isinstance(snapshots, dict) or set(snapshots) != {"editor", "player"}:
+        raise ValueError("Original editor and player behavior snapshots are required")
+    paths = {}
+    for stage, record in snapshots.items():
+        path = directory / "validation-oracles/behavior" / (stage + ".json")
+        if (not isinstance(record, dict) or record.get("path") != path.relative_to(directory).as_posix() or
+                not owned_snapshot_file(directory, path) or digest(path) != record.get("sha256") or
+                verify_behavior(path, stage, profile) != record.get("gate")):
+            raise ValueError("Original " + stage + " behavior snapshot changed")
+        paths[stage] = path
+    return paths
+
+
+def compare_behavior_oracle(directory, profile, snapshots, stage, recovered):
+    """Require exact typed observations, including bits outside an oracle's projection."""
+    original = checked_behavior_oracles(directory, profile, snapshots)[stage]
+    original_report, recovered_report = read_report(original), read_report(recovered)
+    if not isinstance(original_report, dict) or not isinstance(recovered_report, dict):
+        raise ValueError("Original and recovered behavior reports must be JSON objects")
+    for key in ("unityVersion", "stage", "platform", "profile"):
+        if not _same_type_and_value(original_report.get(key), recovered_report.get(key)):
+            raise ValueError("Original and recovered " + stage + " behavior targets differ")
+    if not _same_type_and_value(original_report["observations"], recovered_report.get("observations")):
+        raise ValueError("Original and recovered " + stage + " behavior observations differ")
+    return {"status": "passed", "observations": len(original_report["observations"]),
+            "comparison": "exact typed observations against original " + stage + " snapshot",
+            "originalSha256": digest(original), "recoveredSha256": digest(recovered)}
 
 
 def current_source_files(directory):
@@ -318,6 +418,7 @@ def checked_baseline(directory, profile, expected_manifest_sha256=None,
             recorded_manifest.get("resolvedLockSha256") != resolved_package_lock_sha256(directory / "project")):
         raise ValueError("Baseline resolved package lock differs from its build receipt")
     verify_player_inputs(directory, receipt.get("playerInputs"))
+    checked_original_behavior(directory, profile, receipt)
     assembly = FIXTURE_PROFILES[profile]["assembly"]
     managed_oracle(directory, assembly)
     if not owned_snapshot_file(directory, directory / "project/Library/ScriptAssemblies" / (assembly + ".dll")):
@@ -629,6 +730,7 @@ def main():
                                                    references + il_references + comparison_references)
         receipt["managedOracles"] = {"provenance": "original-baseline-validation-only",
                                      "files": oracle_snapshots}
+        receipt["behaviorOracles"] = snapshot_behavior_oracles(baseline, directory, args.profile, original)
         # Snapshot the independent comparer too, since other local work may rebuild it.
         if args.comparison_tool_manifest:
             comparer_snapshot.checked_batch(ROOT, directory.parent, args.profile,
@@ -649,6 +751,7 @@ def main():
                                               "provenance": "current-batch-build" if args.comparison_tool_manifest else "fresh-build"}
         def compare_declarations(name, candidate):
             oracles = checked_managed_oracle_snapshots(directory, assembly, oracle_snapshots)
+            candidate_hash = digest(candidate)
             output = directory / name
             command = [args.dotnet, str(comparison_directory / "DeclarationComparer.dll"),
                        "--oracle", str(oracles["stripped"]), "--candidate", str(candidate),
@@ -657,14 +760,17 @@ def main():
                 command += ["--reference-dir", reference]
             run(name, command)
             comparison = json.loads((output / "report.json").read_text(encoding="utf-8"))
-            if comparison["status"] != "passed" or comparison["differenceCount"] != 0 or comparison["diagnostics"]:
+            if (not isinstance(comparison, dict) or comparison.get("status") != "passed" or
+                    comparison.get("differenceCount") != 0 or comparison.get("diagnostics") != []):
                 raise ValueError("Declaration comparison failed; inspect its local report")
             receipt["stages"][name] = {
                 "status": "passed", "scope": "comparer projection against original stripped managed declarations",
                 "differenceCount": 0, "counts": comparison["candidate"]["counts"],
                 "originalStrippingLosses": len(comparison["stripping"]["lostIdentities"]),
                 "report": str(output / "report.json"), "reportSha256": digest(output / "report.json"),
+                "oracleSha256": oracle_snapshots["stripped"]["sha256"], "candidateSha256": candidate_hash,
             }
+            checked_declaration_report(directory, name, receipt["stages"][name], oracles["stripped"], candidate)
 
         compare_declarations("recoveredDeclarations", project / "RecoveredManaged" / (assembly + ".dll"))
 
@@ -673,6 +779,7 @@ def main():
             receipt["artifacts"] = [{"path": str(path.relative_to(directory)), "sha256": digest(path)}
                                     for path in sorted(recovered.rglob("*")) if path.is_file()]
             verify_snapshot_inputs(directory, receipt)
+            checked_declaration_stages(directory, receipt)
             receipt["status"] = "awaiting-unity-batch"
             write_json(directory / "roundtrip.json", receipt)
             print(receipt["status"] + ": " + str(directory / "roundtrip.json"))
@@ -713,6 +820,12 @@ def main():
         if any(original["stages"]["nativeBuild"][key] != rebuilt["stages"]["nativeBuild"][key] for key in settings):
             raise ValueError("Original and recovered native build settings differ")
         receipt["stages"]["recovered"] = rebuilt["stages"]
+        checked_original_behavior(replacement, args.profile, rebuilt)
+        receipt["stages"]["behaviorComparison"] = {
+            stage: compare_behavior_oracle(directory, args.profile, receipt["behaviorOracles"], stage,
+                                          replacement / relative)
+            for stage, relative in (("editor", "project/Reports/editor-behavior.json"),
+                                    ("player", "player-behavior.json"))}
         compare_declarations("rebuiltDeclarations", managed_oracle(replacement, assembly))
         receipt["declarationFidelity"] = "passed_against_stripped_oracle"
         receipt["artifacts"] = [{"path": str(path.relative_to(directory)), "sha256": digest(path)}
@@ -730,6 +843,10 @@ def main():
             verify_external_reference_fixture(replacement / "project", replacement, rebuilt.get("externalDependencies"))
         if baseline_lock_sha256 is not None and resolved_package_lock_sha256(baseline / "project") != baseline_lock_sha256:
             raise ValueError("Baseline resolved package lock changed during validation")
+        checked_original_behavior(replacement, args.profile, rebuilt)
+        if digest(baseline / "receipt.json") != receipt["baselineReceipt"]["sha256"]:
+            raise ValueError("Original baseline receipt changed during validation")
+        checked_declaration_stages(directory, receipt, replacement)
         receipt["status"] = "passed"
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         receipt["status"] = "failed"

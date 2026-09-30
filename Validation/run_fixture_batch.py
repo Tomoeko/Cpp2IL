@@ -239,8 +239,9 @@ def main():
         for item in profiles:
             name, record = item["profile"], receipt["profiles"][item["profile"]]
             record["stages"]["unityCompilation"] = compilation.copy()
-            record["stages"]["editorBehavior"] = fixture.verify_behavior(
-                project / "Reports/batch" / name / "editor-behavior.json", "editor", name)
+            record["stages"]["editorBehavior"], editor_report = fixture.verified_behavior_report(
+                run_dir, project / "Reports/batch" / name / "editor-behavior.json", "editor", name)
+            record["behaviorReports"] = [editor_report]
         receipt["stages"]["editorBehavior"] = {"status": "passed", "profiles": len(profiles)}
         build = json.loads((project / "Reports/build.json").read_text(encoding="utf-8"), object_pairs_hook=unique_object)
         expected = {"unityVersion": fixture.VERSION, "host": "WindowsEditor", "target": "StandaloneWindows64", "backend": "IL2CPP",
@@ -266,7 +267,9 @@ def main():
         for item in profiles:
             name, assembly = item["profile"], item["assembly"]
             record = receipt["profiles"][name]
-            record["stages"]["playerBehavior"] = fixture.verify_behavior(reports / (name + ".json"), "player", name)
+            record["stages"]["playerBehavior"], player_report = fixture.verified_behavior_report(
+                run_dir, reports / (name + ".json"), "player", name)
+            record["behaviorReports"].append(player_report)
             fixture.verify_source_copy(project, item["sourceDirectory"], assembly, record)
             verify_inventory(project / "Assets/BatchHarnesses" / assembly, record["harnessFiles"])
             if name in fixture.EMBEDDED_FIXTURE_PACKAGES:
@@ -276,10 +279,9 @@ def main():
                 dependency["embeddedPackageLockSha256"] = fixture.embedded_package_lock_sha256(
                     project, fixture.EMBEDDED_FIXTURE_PACKAGES[name]["name"])
                 fixture.verify_embedded_fixture_dependency(project, dependency, name)
-            record["behaviorReports"] = [
-                {"path": (project / "Reports/batch" / name / "editor-behavior.json").relative_to(run_dir).as_posix(),
-                 "sha256": digest(project / "Reports/batch" / name / "editor-behavior.json")},
-                {"path": (reports / (name + ".json")).relative_to(run_dir).as_posix(), "sha256": digest(reports / (name + ".json"))}]
+            fixture.checked_behavior_report_files(
+                run_dir, record["behaviorReports"],
+                ("project/Reports/batch/" + name + "/editor-behavior.json", "player-behavior/" + name + ".json"))
         verify_inventory(project / "Assets/Validation", receipt["batchHarnessFiles"])
         if digest(args.fixtures) != receipt["configurationSha256"]:
             raise ValueError("Batch configuration changed during validation")

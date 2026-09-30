@@ -78,6 +78,7 @@ public static partial class IlGenerator
         if (context.ControlFlowGraph is { } graph &&
             (graph.EntryBlock.Instructions.Count != 0 || graph.ExitBlock.Instructions.Count != 0))
             throw new DecompilerException("Synthetic control-flow entry and exit blocks must be empty");
+        ValidateControlFlowEntry(context.ControlFlowGraph!);
 
         ValidateGuardedScalarAccessors(context);
         ValidateClosedGenericStorage(context);
@@ -100,6 +101,9 @@ public static partial class IlGenerator
         if (X64ScalarFloatConversionCompositionProof.HasEvidence(context) &&
             !X64ScalarFloatConversionCompositionProof.IsValidFor(context))
             throw new DecompilerException("Floating conversion composition lost its complete native body, precision, argument, field or selection proof");
+        if (X64ScalarDoubleAccumulatorProof.HasEvidence(context) &&
+            !X64ScalarDoubleAccumulatorProof.IsValidFor(context))
+            throw new DecompilerException("Double accumulator lost its complete native body, field layout, typed data flow or branch proof");
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
         ValidateGuardedArrayOperations(context);
@@ -323,6 +327,25 @@ public static partial class IlGenerator
         {
             throw new DecompilerException("Generated IL has invalid control flow or stack depth", exception);
         }
+    }
+
+    private static void ValidateControlFlowEntry(ISILControlFlowGraph graph)
+    {
+        var first = graph.Blocks.FirstOrDefault(block => block != graph.EntryBlock &&
+            block != graph.ExitBlock && block.Instructions.Count != 0);
+        var target = graph.EntryBlock;
+        var seen = new HashSet<Block>();
+        while (target.Instructions.Count == 0 && target != graph.ExitBlock && seen.Add(target))
+        {
+            if (target.Successors is not [var successor] || !graph.Blocks.Contains(successor))
+                throw new DecompilerException("Control-flow entry must lead to a unique emitted block");
+            target = successor;
+        }
+        // Block bridges preserve later CFG edges, but method execution begins at
+        // the first emitted block. An unreachable or reordered prefix can bypass
+        // guards and definitions even when every branch and stack type is valid.
+        if (first == null || target.Instructions.Count == 0 || !ReferenceEquals(first, target))
+            throw new DecompilerException("The first emitted block differs from the control-flow entry");
     }
 
     private static Block? TryResolveJumpTargetBlock(Instruction jumpInstruction, ISILControlFlowGraph cfg)
@@ -599,6 +622,11 @@ public static partial class IlGenerator
 
             case OpCode.FloatDivide:
                 EmitFloatingDivision(instruction, method, locals);
+                break;
+
+            case OpCode.FloatAdd:
+            case OpCode.FloatSubtract:
+                EmitFloatingAddSubtract(instruction, method, locals);
                 break;
 
             case OpCode.FloatNegateNegative:

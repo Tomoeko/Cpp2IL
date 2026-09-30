@@ -459,6 +459,10 @@ public static class LocalVariables
                 for (var index = 0; index < 3; index++)
                     SetTypeIfUnknown((LocalVariable)instruction.Operands[index],
                         division.ResultType(method.AppContext.SystemTypes));
+            if (FloatAddSubtract.TryGet(instruction, out var arithmetic))
+                for (var index = 0; index < 3; index++)
+                    SetTypeIfUnknown((LocalVariable)instruction.Operands[index],
+                        arithmetic.ResultType(method.AppContext.SystemTypes));
             if (FloatNegativeSelection.TryGet(instruction, out var selection))
                 for (var index = 0; index < 2; index++)
                     SetTypeIfUnknown((LocalVariable)instruction.Operands[index],

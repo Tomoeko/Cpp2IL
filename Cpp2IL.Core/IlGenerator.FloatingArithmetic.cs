@@ -13,18 +13,33 @@ public static partial class IlGenerator
     {
         if (!FloatDivision.TryGet(instruction, out var division))
             throw new DecompilerException("Floating division requires scalar locals and explicit 32/64-bit precision");
+        EmitFloatingBinaryArithmetic(instruction, method, locals, division.Width, CilOpCodes.Div);
+    }
+
+    private static void EmitFloatingAddSubtract(Instruction instruction, MethodDefinition method, EmissionLocals locals)
+    {
+        if (!FloatAddSubtract.TryGet(instruction, out var arithmetic))
+            throw new DecompilerException("Floating addition/subtraction requires scalar locals and explicit 32/64-bit precision");
+        EmitFloatingBinaryArithmetic(instruction, method, locals, arithmetic.Width,
+            arithmetic.Subtract ? CilOpCodes.Sub : CilOpCodes.Add);
+    }
+
+    private static void EmitFloatingBinaryArithmetic(Instruction instruction, MethodDefinition method,
+        EmissionLocals locals, int width, CilOpCode operation)
+    {
         var destination = (LocalVariable)instruction.Operands[0];
         var left = (LocalVariable)instruction.Operands[1];
         var right = (LocalVariable)instruction.Operands[2];
-        ValidateFloatingArithmeticTypes([destination, left, right], division.ResultType(locals.Context.AppContext.SystemTypes), locals);
+        var expected = width == 32 ? locals.Context.AppContext.SystemTypes.SystemSingleType : locals.Context.AppContext.SystemTypes.SystemDoubleType;
+        ValidateFloatingArithmeticTypes([destination, left, right], expected, locals);
         var code = method.CilMethodBody!.Instructions;
-        var precision = division.Width == 32 ? CilOpCodes.Conv_R4 : CilOpCodes.Conv_R8;
+        var precision = width == 32 ? CilOpCodes.Conv_R4 : CilOpCodes.Conv_R8;
         LoadLocal(left, method, locals);
         code.Add(precision);
         LoadLocal(right, method, locals);
         code.Add(precision);
-        code.Add(CilOpCodes.Div);
-        // Native DIVSS/DIVSD round at this operation, before any comparison,
+        code.Add(operation);
+        // Native scalar arithmetic rounds at each operation, before a comparison,
         // subsequent arithmetic or return can observe an extended temporary.
         code.Add(precision);
         StoreToOperand(destination, method, locals);

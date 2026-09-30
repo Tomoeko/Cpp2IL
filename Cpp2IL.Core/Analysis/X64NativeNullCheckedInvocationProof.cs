@@ -30,7 +30,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
     private sealed record Origin(int Entry, TypeAnalysisContext Type, Instruction? Definition = null,
         MethodAnalysisContext? Producer = null, FieldAnalysisContext? Field = null, int SourceEntry = -2,
         int Offset = 0, bool ReferenceWidened = false);
-    private readonly record struct Argument(int? Entry, long? Literal, ScalarFieldArgument? Field = null);
+    private readonly record struct Argument(int? Entry, long? Literal, ScalarFieldArgument? Field = null,
+        BooleanToggleArgument? Toggle = null);
     private sealed record ValueKey(string Kind, object? Value, ValueKey[] Children);
     private sealed record OrderedEffect(Instruction Operation, ulong Address, bool Before, bool After,
         CallSemantics Semantics, ValueKey Value);
@@ -142,6 +143,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
     }
 
     private static IOperand CanonicalArgument(MethodAnalysisContext caller, Argument argument) =>
+        argument.Toggle is { } toggle ? toggle.Comparison.Destination! :
         argument.Field is { } field ? field.Definition.Destination! :
         argument.Literal is { } literal ? new Immediate(literal) : caller.ParameterLocals.Single(local =>
             !local.IsThis && LocalVariables.GetIncomingParameterIndex(caller, local) == argument.Entry);
@@ -177,7 +179,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     return false;
             }
             return BooleanFieldArgumentLoadsRetained(caller, body, values, sites) &&
-                   ScalarFieldArgumentUsesRetained(caller, sites) && ReferenceReceiverUsesRetained(caller, sites);
+                   ScalarFieldArgumentUsesRetained(caller, sites) && ReferenceReceiverUsesRetained(caller, sites) &&
+                   BooleanToggleArgumentUsesRetained(caller, sites);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
@@ -306,6 +309,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     parameter.ParameterType, out var source, out var managed))
                 return false;
             if (managed.Field is { } field && !BindScalarFieldArgument(caller, field, body, values, address, out source) ||
+                managed.Toggle is { } toggle && (target.Parameters.Count != 1 ||
+                    !BindBooleanToggleArgument(caller, toggle, receiver, body, values, address, out source)) ||
                 !values.Matches(address, index == 0 ? NativeRegister.RDX : NativeRegister.R8,
                     parameter.ParameterType.Type == Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN ? 8 : 32, source))
                 return false;
@@ -447,6 +452,11 @@ internal static partial class X64NativeNullCheckedInvocationProof
             else if (TryScalarFieldArgument(method, local, definition, type, out var field))
             {
                 argument = new(null, null, field);
+                return true;
+            }
+            else if (TryBooleanToggleArgument(method, local, definition, type, out var toggle))
+            {
+                argument = new(null, null, Toggle: toggle);
                 return true;
             }
             else if (ReferenceEquals(local.Type, type) && definition is { OpCode: OpCode.Move, IntegerBitWidth: 0,

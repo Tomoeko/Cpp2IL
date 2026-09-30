@@ -102,6 +102,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return scalarFloatConversion; // The complete leaf binds the incoming and returned floating widths.
         if (X64ScalarFloatConversionCompositionProof.TryLift(context, nativeInstructions) is { } scalarFloatComposition)
             return scalarFloatComposition; // Preserve narrowing, per-operation precision and the complete ordered-negative branch.
+        if (X64ScalarDoubleAccumulatorProof.TryLift(context, nativeInstructions) is { } doubleAccumulator)
+            return doubleAccumulator; // Preserve the complete Boolean branch and separately rounded field update.
         if (X64ReferenceFieldStoreProof.TryLift(context, nativeInstructions) is { } referenceStore)
             return referenceStore; // The closed proof includes the null and GC helper paths.
         if (X64ReferenceScalarFieldEffectsProof.TryLift(context, nativeInstructions) is { } referenceScalarEffects)

@@ -166,6 +166,7 @@ import array_call_origins
 import guarded_array_tail_invocation
 import scalar_float_selection
 import scalar_float_conversion
+import scalar_double_accumulator
 import scalar_float_conversion_composition
 import native_null_checked_invocation
 import native_scalar_pair_invocation
@@ -173,6 +174,7 @@ import native_scalar_field_invocation
 import native_scalar_invocation_effects
 import native_subnormal_field_store
 import native_derived_receiver_invocation
+import native_boolean_toggle_invocation
 import call_result_engine_false_tail
 import engine_component_false_tail
 import internal_call_field
@@ -239,6 +241,10 @@ PROFILES = {
                                       "source": VALIDATION / "GuardedArrayTailInvocationFixture", "methods": 10},
     "scalar-float-selection": {"assembly": "ScalarFloatSelectionFixture",
                                "source": VALIDATION / "ScalarFloatSelectionFixture", "methods": 9},
+    "scalar-double-accumulator": {"assembly": "ScalarDoubleAccumulatorFixture",
+                                  "source": VALIDATION / "ScalarDoubleAccumulatorFixture", "methods": 2},
+    "native-boolean-toggle-invocation": {"assembly": "NativeBooleanToggleInvocationFixture",
+                                          "source": VALIDATION / "NativeBooleanToggleInvocationFixture", "methods": 4},
     "scalar-float-conversion": {"assembly": "ScalarFloatConversionFixture",
                                 "source": VALIDATION / "ScalarFloatConversionFixture", "methods": 2},
     "scalar-float-conversion-composition": {"assembly": "ScalarFloatConversionCompositionFixture",
@@ -539,6 +545,47 @@ def int32(value):
     return (value + 2**31) % 2**32 - 2**31
 
 
+def owned_snapshot_file(directory, path):
+    """Require an ordinary file without links at any level inside the snapshot."""
+    try:
+        relative = path.relative_to(directory)
+    except ValueError:
+        return False
+    if directory.is_symlink() or ".." in relative.parts:
+        return False
+    current = directory
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return False
+    return path.is_file()
+
+
+def verified_behavior_report(directory, path, stage, profile):
+    if not owned_snapshot_file(directory, path):
+        raise ValueError("Behavior report is missing or linked")
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    gate = verify_behavior(path, stage, profile)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != before:
+        raise ValueError("Behavior report changed during independent verification")
+    return gate, {"path": path.relative_to(directory).as_posix(), "sha256": before}
+
+
+def checked_behavior_report_files(directory, inventory, expected_paths):
+    """Authenticate the exact retained report set before recording success."""
+    if (not isinstance(inventory, list) or len(inventory) != len(expected_paths) or
+            any(not isinstance(item, dict) or not isinstance(item.get("path"), str) or
+                not isinstance(item.get("sha256"), str) for item in inventory)):
+        raise ValueError("Behavior report inventory is missing or malformed")
+    if {item["path"] for item in inventory} != set(expected_paths):
+        raise ValueError("Behavior report inventory is incomplete or duplicated")
+    for item in inventory:
+        path = directory / item["path"]
+        if (not owned_snapshot_file(directory, path) or
+                hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]):
+            raise ValueError("Behavior report changed since its independently verified gate")
+
+
 def verify_behavior(path, stage, profile="arithmetic"):
     report = read_report(path)
     if not isinstance(report, dict):
@@ -593,6 +640,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return guarded_array_tail_invocation.verify(path, stage, VERSION)
     if profile == "scalar-float-selection":
         return scalar_float_selection.verify(path, stage, VERSION)
+    if profile == "scalar-double-accumulator":
+        return scalar_double_accumulator.verify(path, stage, VERSION)
+    if profile == "native-boolean-toggle-invocation":
+        return native_boolean_toggle_invocation.verify(path, stage, VERSION)
     if profile == "scalar-float-conversion":
         return scalar_float_conversion.verify(path, stage, VERSION)
     if profile == "scalar-float-conversion-composition":
@@ -1744,7 +1795,8 @@ def main():
 
         def behavior_stage(path, label, stage):
             try:
-                receipt["stages"][label] = verify_behavior(path, stage, args.profile)
+                receipt["stages"][label], report = verified_behavior_report(run_dir, path, stage, args.profile)
+                receipt.setdefault("behaviorReports", []).append(report)
             except ValueError as error:
                 receipt["stages"][label] = {"status": "failed", "reason": str(error)}
                 raise
@@ -1797,6 +1849,10 @@ def main():
             dependencies["embeddedPackageLockSha256"] = embedded_package_lock_sha256(
                 project, config["name"])
             verify_embedded_fixture_dependency(project, dependencies, args.profile)
+        expected_reports = ["project/Reports/editor-behavior.json"]
+        if args.stage == "run":
+            expected_reports.append("player-behavior.json")
+        checked_behavior_report_files(run_dir, receipt["behaviorReports"], expected_reports)
         verify_source_copy(project, args.source_dir, profile["assembly"], receipt)
         receipt["status"] = "passed"
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyError) as error:

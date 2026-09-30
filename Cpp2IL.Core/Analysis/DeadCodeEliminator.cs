@@ -89,6 +89,7 @@ public static class DeadCodeEliminator
             OpCode.FloatProject => FloatProjection.TryGet(instruction, out _),
             OpCode.FloatConvert => FloatConversion.TryGet(instruction, out _),
             OpCode.FloatDivide => FloatDivision.TryGet(instruction, out _),
+            OpCode.FloatAdd or OpCode.FloatSubtract => FloatAddSubtract.TryGet(instruction, out _),
             OpCode.FloatNegateNegative => FloatNegativeSelection.TryGet(instruction, out _),
             _ => false
         };

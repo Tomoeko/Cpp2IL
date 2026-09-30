@@ -47,7 +47,7 @@ class HarnessBoundaries(unittest.TestCase):
             path = self.root / relative / (assembly + ".dll")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"synthetic managed declaration oracle")
-        return {
+        receipt = {
             "status": "passed", "sourceKind": "synthetic-baseline", "profile": profile,
             "stages": {"unityCompilation": {"status": "passed", "version": run_fixture.VERSION},
                        "editorBehavior": {"status": "passed"},
@@ -63,6 +63,27 @@ class HarnessBoundaries(unittest.TestCase):
             "harnessFiles": [{"path": relative, "sha256": run_roundtrip.digest(self.harness / relative)}
                              for relative in ("Editor/ValidationEntry.cs", "Runtime/ReportJson.cs")],
         }
+        if profile == "arithmetic":
+            observations = []
+            for left in run_fixture.VALUES:
+                for right in run_fixture.VALUES:
+                    total = run_fixture.int32(left + right)
+                    observations.append({"left": left, "right": right, "add": total,
+                                         "select": run_fixture.int32(right - left if left < right else left + right),
+                                         "accumulated": total, "stored": total})
+        else:
+            observations = run_fixture.reference_store.observations()
+        receipt["behaviorReports"] = []
+        for stage, relative in (("editor", "project/Reports/editor-behavior.json"),
+                                ("player", "player-behavior.json")):
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"unityVersion": run_fixture.VERSION, "stage": stage,
+                                        "platform": "WindowsEditor" if stage == "editor" else "WindowsPlayer",
+                                        "profile": profile, "observations": observations}), encoding="utf-8")
+            receipt["stages"][stage + "Behavior"] = run_fixture.verify_behavior(path, stage, profile)
+            receipt["behaviorReports"].append({"path": relative, "sha256": run_roundtrip.digest(path)})
+        return receipt
 
     def write_baseline_receipt(self, receipt):
         (self.root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")

@@ -12,10 +12,12 @@ import time
 import declaration_comparer_snapshot as comparer_snapshot
 
 from run_fixture import (ROOT, VERSION, EMBEDDED_FIXTURE_PACKAGES, run_process, write_json,
-                         verify_behavior, verify_embedded_fixture_dependency, verify_source_copy)
+                         verify_behavior, verify_embedded_fixture_dependency, verify_source_copy,
+                         checked_behavior_report_files)
 from run_roundtrip import (PROFILES, checked_baseline, current_source_files, digest,
                           checked_managed_oracle_snapshots, managed_oracle, verify_snapshot_inputs,
-                          owned_snapshot_file, verify_player_inputs)
+                          owned_snapshot_file, verify_player_inputs, compare_behavior_oracle,
+                          checked_declaration_report, checked_declaration_stages)
 
 
 BUILD_SETTINGS = ("unityVersion", "host", "target", "backend", "compilerConfiguration",
@@ -62,6 +64,9 @@ def checked_batch_profile(directory, prepared, batch_directory, batch):
         raise ValueError("Original and batched rebuilt native settings differ")
     if stages["unityCompilation"].get("version") != VERSION:
         raise ValueError("Batch source compilation used an unexpected Unity version")
+    checked_behavior_report_files(batch_directory, record.get("behaviorReports"),
+                                  ("project/Reports/batch/" + profile + "/editor-behavior.json",
+                                   "player-behavior/" + profile + ".json"))
     for name, platform in (("editorBehavior", "WindowsEditor"), ("playerBehavior", "WindowsPlayer")):
         stage = stages[name]
         if (stage.get("profile") != profile or stage.get("platform") != platform or
@@ -77,6 +82,8 @@ def checked_batch_profile(directory, prepared, batch_directory, batch):
             raise ValueError("Retained batch behavior report changed since its receipt")
         if verify_behavior(report, "editor" if name == "editorBehavior" else "player", profile) != stage:
             raise ValueError("Retained batch behavior differs from the reported gate")
+        compare_behavior_oracle(directory, profile, prepared.get("behaviorOracles"),
+                                "editor" if name == "editorBehavior" else "player", report)
     if profile in EMBEDDED_FIXTURE_PACKAGES:
         dependency = record["auxiliaryDependencies"]
         original_dependency = prepared["batchOriginalDependencies"]
@@ -86,6 +93,122 @@ def checked_batch_profile(directory, prepared, batch_directory, batch):
         verify_embedded_fixture_dependency(batch_directory / "project", dependency, profile)
     verify_snapshot_inputs(directory, prepared)
     return stages
+
+
+def checked_final_profile(directory, prepared, batch_directory, batch, baseline):
+    """Reauthenticate reports and original receipts after all comparison subprocesses."""
+    checked_batch_profile(directory, prepared, batch_directory, batch)
+    if digest(baseline / "receipt.json") != prepared["baselineReceipt"]["sha256"]:
+        raise ValueError("Original baseline receipt changed during final batch validation")
+    checked_declaration_stages(directory, prepared, batch_directory)
+
+
+def complete_batch_profiles(directory, baselines, receipt, comparison_manifest, comparison_hash,
+                            dotnet, run, remaining):
+    """Isolate profile failures without publishing success before shared authentication."""
+    batch_directory = directory / "rebuilt-batch"
+    batch_path = batch_directory / "receipt.json"
+    batch = json.loads(batch_path.read_text(encoding="utf-8"))
+    if not isinstance(batch, dict) or batch.get("status") != "passed":
+        raise ValueError("A successful shared Unity batch receipt is required")
+    if set(batch["profiles"]) != set(baselines):
+        raise ValueError("Rebuilt batch profile set differs")
+    verify_batch_player(batch_directory, batch)
+    batch_hash = digest(batch_path)
+    rebuilt_oracles = {}
+    finalized = {}
+    rejected = {}
+    for name, baseline in baselines.items():
+        target = directory / name
+        path = target / "roundtrip.json"
+        prepared = {"profile": name, "status": "awaiting-unity-batch"}
+        phase = "strictBatchValidation"
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, dict) or loaded.get("profile") != name:
+                raise ValueError("Prepared recovery profile differs from its batch identity")
+            prepared = loaded
+            stages = checked_batch_profile(target, prepared, batch_directory, batch)
+            prepared["stages"]["strictBatchValidation"] = {"status": "passed"}
+            phase = "rebuiltDeclarations"
+            baseline_path = baseline / "receipt.json"
+            if digest(baseline_path) != prepared["baselineReceipt"]["sha256"]:
+                raise ValueError("Original baseline receipt changed during batch validation")
+            assembly = PROFILES[name]["assembly"]
+            oracles = checked_managed_oracle_snapshots(target, assembly, prepared["managedOracles"]["files"])
+            comparison = target / "rebuiltDeclarations"
+            candidate = managed_oracle(batch_directory, assembly)
+            candidate_hash = digest(candidate)
+            rebuilt_oracles[assembly] = candidate_hash
+            command = [dotnet, str(target / "declaration-comparer/DeclarationComparer.dll"),
+                       "--oracle", str(oracles["stripped"]), "--unstripped", str(oracles["unstripped"]),
+                       "--candidate", str(candidate), "--output", str(comparison)]
+            for reference in prepared["referenceConfiguration"]["declarations"]:
+                command += ["--reference-dir", reference]
+            run("compare-" + name, command)
+            report_path = comparison / "report.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            if not isinstance(report, dict) or report.get("status") != "passed" or \
+                    report.get("differenceCount") != 0 or report.get("diagnostics"):
+                raise ValueError("Batched rebuilt declarations differ from the original fixture")
+            prepared["stages"]["recovered"] = stages
+            prepared["stages"]["behaviorComparison"] = {
+                "status": "passed", "comparison": "exact typed observations per matching editor/player stage",
+                "originalReportSha256": {stage: item["sha256"]
+                                         for stage, item in prepared["behaviorOracles"].items()},
+                "recoveredReports": batch["profiles"][name]["behaviorReports"],
+            }
+            prepared["stages"]["rebuiltDeclarations"] = {
+                "status": "passed", "scope": "comparer projection against original stripped managed declarations",
+                "differenceCount": 0, "counts": report["candidate"]["counts"],
+                "originalStrippingLosses": len(report["stripping"]["lostIdentities"]),
+                "report": str(report_path), "reportSha256": digest(report_path),
+                "oracleSha256": prepared["managedOracles"]["files"]["stripped"]["sha256"],
+                "candidateSha256": candidate_hash}
+            checked_declaration_report(target, "rebuiltDeclarations", prepared["stages"]["rebuiltDeclarations"],
+                                       oracles["stripped"], candidate)
+            verify_snapshot_inputs(target, prepared)
+            prepared["batchValidation"] = {"receipt": str(batch_path), "receiptSha256": batch_hash,
+                                           "scope": list(baselines), "separateFixtureAssemblies": True,
+                                           "packageGraph": "combined explicit synthetic fixture dependencies"}
+            prepared["declarationFidelity"] = "passed_against_stripped_oracle"
+            phase = "finalAuthentication"
+            finalized[name] = prepared
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+            prepared["status"] = "failed"
+            prepared["error"] = str(error)
+            prepared["batchFailure"] = {"stage": phase, "reason": str(error)}
+            prepared["batchValidation"] = {
+                "receipt": str(batch_path), "receiptSha256": batch_hash,
+                "scope": list(baselines), "separateFixtureAssemblies": True}
+            rejected[name] = prepared
+            # Failed evidence can be retained immediately. Successful profiles
+            # remain pending until the shared and final gates below complete.
+            write_json(path, prepared)
+            receipt["profiles"][name].update(status="failed", error=str(error))
+
+    if digest(batch_path) != batch_hash:
+        raise ValueError("Unity batch receipt changed during declaration comparison")
+    verify_batch_player(batch_directory, batch)
+    for assembly, expected in rebuilt_oracles.items():
+        if digest(managed_oracle(batch_directory, assembly)) != expected:
+            raise ValueError("Rebuilt managed declaration oracle changed during comparison")
+    remaining()
+    comparer_snapshot.checked(ROOT, comparison_manifest, comparison_hash)
+    for name, prepared in finalized.items():
+        checked_final_profile(directory / name, prepared, batch_directory, batch, baselines[name])
+    remaining()
+    # All shared evidence is now authenticated. A rejected profile does not erase
+    # another assembly's exact pass, and cannot turn the whole batch into a pass.
+    for name, prepared in finalized.items():
+        prepared["status"] = "passed"
+        write_json(directory / name / "roundtrip.json", prepared)
+        receipt["profiles"][name]["status"] = "passed"
+    receipt["batchReceipt"] = {"path": str(batch_path), "sha256": batch_hash}
+    receipt["status"] = "failed" if rejected else "passed"
+    if rejected:
+        receipt["error"] = "One or more recovered profiles failed strict batch validation"
+    return finalized, rejected
 
 
 def main(argv=None):
@@ -201,67 +324,8 @@ def main(argv=None):
         # The child owns the editor deadline and process-group cleanup. Allow its
         # termination grace to finish so a timed-out build cannot orphan Unity.
         run("rebuilt-batch", command, cleanup_grace=15)
-        batch_path = batch_directory / "receipt.json"
-        batch = json.loads(batch_path.read_text(encoding="utf-8"))
-        if set(batch["profiles"]) != set(baselines):
-            raise ValueError("Rebuilt batch profile set differs")
-        verify_batch_player(batch_directory, batch)
-        batch_hash = digest(batch_path)
-        rebuilt_oracles = {}
-        finalized = {}
-        for name in baselines:
-            target = directory / name
-            path = target / "roundtrip.json"
-            prepared = json.loads(path.read_text(encoding="utf-8"))
-            stages = checked_batch_profile(target, prepared, batch_directory, batch)
-            baseline_path = baselines[name] / "receipt.json"
-            if digest(baseline_path) != prepared["baselineReceipt"]["sha256"]:
-                raise ValueError("Original baseline receipt changed during batch validation")
-            assembly = PROFILES[name]["assembly"]
-            oracles = checked_managed_oracle_snapshots(target, assembly, prepared["managedOracles"]["files"])
-            comparison = target / "rebuiltDeclarations"
-            candidate = managed_oracle(batch_directory, assembly)
-            candidate_hash = digest(candidate)
-            rebuilt_oracles[assembly] = candidate_hash
-            command = [args.dotnet, str(target / "declaration-comparer/DeclarationComparer.dll"),
-                       "--oracle", str(oracles["stripped"]), "--unstripped", str(oracles["unstripped"]),
-                       "--candidate", str(candidate), "--output", str(comparison)]
-            for reference in prepared["referenceConfiguration"]["declarations"]:
-                command += ["--reference-dir", reference]
-            run("compare-" + name, command)
-            report_path = comparison / "report.json"
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-            if report.get("status") != "passed" or report.get("differenceCount") != 0 or report.get("diagnostics"):
-                raise ValueError("Batched rebuilt declarations differ from the original fixture")
-            prepared["stages"]["recovered"] = stages
-            prepared["stages"]["rebuiltDeclarations"] = {
-                "status": "passed", "scope": "comparer projection against original stripped managed declarations",
-                "differenceCount": 0, "counts": report["candidate"]["counts"],
-                "originalStrippingLosses": len(report["stripping"]["lostIdentities"]),
-                "report": str(report_path), "reportSha256": digest(report_path),
-                "candidateSha256": candidate_hash}
-            verify_snapshot_inputs(target, prepared)
-            prepared["batchValidation"] = {"receipt": str(batch_path), "receiptSha256": batch_hash,
-                                           "scope": list(baselines), "separateFixtureAssemblies": True,
-                                           "packageGraph": "combined explicit synthetic fixture dependencies"}
-            prepared["declarationFidelity"] = "passed_against_stripped_oracle"
-            prepared["status"] = "passed"
-            finalized[name] = prepared
-        if digest(batch_path) != batch_hash:
-            raise ValueError("Unity batch receipt changed during declaration comparison")
-        verify_batch_player(batch_directory, batch)
-        for assembly, expected in rebuilt_oracles.items():
-            if digest(managed_oracle(batch_directory, assembly)) != expected:
-                raise ValueError("Rebuilt managed declaration oracle changed during comparison")
-        remaining()
-        comparer_snapshot.checked(ROOT, comparison_manifest, comparison_hash)
-        # Publish individual successes only after all shared evidence and the
-        # execution budget have been checked. A late failure leaves them pending.
-        for name, prepared in finalized.items():
-            write_json(directory / name / "roundtrip.json", prepared)
-            receipt["profiles"][name]["status"] = "passed"
-        receipt["batchReceipt"] = {"path": str(batch_path), "sha256": batch_hash}
-        receipt["status"] = "passed"
+        complete_batch_profiles(directory, baselines, receipt, comparison_manifest, comparison_hash,
+                                args.dotnet, run, remaining)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         receipt["status"] = "failed"
         receipt["error"] = str(error)

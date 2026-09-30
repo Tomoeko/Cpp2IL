@@ -201,4 +201,12 @@ public enum OpCode
     /// Preserves negative zero and unordered NaNs under masked exceptions; no floating status/control claim.
     /// </summary>
     FloatNegateNegative,
+
+    /// <summary>
+    /// Scalar IEEE addition/subtraction: destination, left, right, width (32/64).
+    /// Each operation rounds at that width under default rounding and masked exceptions;
+    /// no floating control/status or original commutative source-order claim.
+    /// </summary>
+    FloatAdd,
+    FloatSubtract,
 }
