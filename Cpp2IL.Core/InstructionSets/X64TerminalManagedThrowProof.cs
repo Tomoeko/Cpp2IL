@@ -44,7 +44,8 @@ internal static class X64TerminalManagedThrowProof
     internal static Evidence? Find(MethodAnalysisContext method,
         IReadOnlyList<NativeInstruction> decoded)
     {
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
             app.Binary is not PE pe || X64UnwindProof.ForApplication(app) is not { } unwind ||
@@ -145,6 +146,7 @@ internal static class X64TerminalManagedThrowProof
             owner.Attributes != owner.DefaultAttributes || owner.GenericParameters.Count != 0 ||
             owner.IsGenericInstance || !ReferenceEquals(owner.BaseType, owner.DefaultBaseType) ||
             method.Definition is not { GenericContainer: null } definition ||
+            definition.IsUnmanagedCallersOnly ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
             method.Name is ".ctor" or ".cctor" || method.Name != method.DefaultName ||
             method.GenericParameters.Count != 0 ||
@@ -218,6 +220,7 @@ internal static class X64TerminalManagedThrowProof
             constructor.Definition is not { GenericContainer: null, parameterCount: 0,
                 RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
                     NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
+            definition.IsUnmanagedCallersOnly ||
             !ReferenceEquals(definition.DeclaringType, exceptionType.Definition) ||
             (definition.InternalParameterData?.Length ?? 0) != 0 ||
             constructor.Name != ".ctor" || constructor.Name != constructor.DefaultName ||
@@ -226,6 +229,7 @@ internal static class X64TerminalManagedThrowProof
             constructor.Visibility != MethodAttributes.Public ||
             constructor.Attributes != constructor.DefaultAttributes ||
             constructor.ImplAttributes != constructor.DefaultImplAttributes ||
+            (constructor.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
             (constructor.Attributes & (MethodAttributes.SpecialName | MethodAttributes.RTSpecialName)) !=
             (MethodAttributes.SpecialName | MethodAttributes.RTSpecialName) ||
             (constructor.ImplAttributes & (MethodImplAttributes.CodeTypeMask |

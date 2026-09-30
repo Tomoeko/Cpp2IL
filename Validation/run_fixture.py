@@ -31,6 +31,7 @@ import float_forward_store
 import nested_single_getter
 import fixed_reference_array
 import folded_reference_array
+import folded_boolean_array_store
 import owner_indexed_enum_array
 import nested_array_call
 import array_element_scalar_field
@@ -63,6 +64,7 @@ import parameter_boolean_array_store
 import scalar_field_comparison
 import integer_literal_store
 import aggregate_scalar_compare
+import ancestor_cctor_interface_getter
 import boolean_getter_metadata
 import byte_threshold
 import composed_array
@@ -102,6 +104,7 @@ import object_reference_store
 import string_reference_store
 import runtime_cast_concat
 import static_literal_concat
+import conditional_managed_throw
 import throw_only
 import scalar_truncation
 import scalar_zero_return
@@ -151,6 +154,9 @@ import boolean_tail_field_call
 import call_result_boolean_store
 import call_result_tail_guard
 import call_result_false_tail
+import call_result_engine_false_tail
+import engine_component_false_tail
+import internal_call_field
 import dual_result_tail_guard
 import triple_literal_guard
 import ordered_call_tail_guard
@@ -194,6 +200,8 @@ PROFILES = {
                                   "source": VALIDATION / "FixedBooleanConjunctionFixture", "methods": 2},
     "range-array-read": {"assembly": "RangeArrayReadFixture", "source": VALIDATION / "RangeArrayReadFixture", "methods": 4},
     "constructed-base-boolean-array": {"assembly": "ConstructedBaseBooleanArrayFixture", "source": VALIDATION / "ConstructedBaseBooleanArrayFixture", "methods": 6},
+    "folded-boolean-array-store": {"assembly": "FoldedBooleanArrayStoreFixture",
+                                   "source": VALIDATION / "FoldedBooleanArrayStoreFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
     "nested-boolean-store": {"assembly": "NestedBooleanStoreFixture", "source": VALIDATION / "NestedBooleanStoreFixture", "methods": 6},
     "nested-boolean-getter": {"assembly": "NestedBooleanGetterFixture", "source": VALIDATION / "NestedBooleanGetterFixture", "methods": 4},
@@ -243,6 +251,11 @@ PROFILES = {
         "source": VALIDATION / "FinalInterfaceBooleanGetterFixture", "methods": 11,
         "noManagedBody": (("FinalInterfaceBooleanGetterFixture.IFlag", "get_Value"),
                           ("FinalInterfaceBooleanGetterFixture.IFlag", "Read")),
+    },
+    "ancestor-cctor-interface-getter": {
+        "assembly": "AncestorCctorInterfaceGetterFixture",
+        "source": VALIDATION / "AncestorCctorInterfaceGetterFixture", "methods": 3,
+        "noManagedBody": (("AncestorCctorInterfaceGetterFixture.IFlagReader", "Read"),),
     },
     "integer-truncation": {"assembly": "IntegerTruncationFixture",
                            "source": VALIDATION / "IntegerTruncationFixture", "methods": 7},
@@ -315,6 +328,8 @@ PROFILES = {
                                               ("RuntimeCastConcatFixture.INodeOwner", "set_Current")}},
     "static-literal-concat": {"assembly": "StaticLiteralConcatFixture", "source": VALIDATION / "StaticLiteralConcatFixture", "methods": 1},
     "throw-only": {"assembly": "ThrowOnlyFixture", "source": VALIDATION / "ThrowOnlyFixture", "methods": 6},
+    "conditional-managed-throw": {"assembly": "ConditionalManagedThrowFixture",
+                                  "source": VALIDATION / "ConditionalManagedThrowFixture", "methods": 1},
     "virtual-tail-dispatch": {"assembly": "VirtualTailDispatchFixture",
                               "source": VALIDATION / "VirtualTailDispatchFixture", "methods": 5},
     "layered-virtual-tail-dispatch": {
@@ -387,6 +402,15 @@ PROFILES = {
                                "source": VALIDATION / "CallResultTailGuardFixture", "methods": 5},
     "call-result-false-tail": {"assembly": "CallResultFalseTailFixture",
                                "source": VALIDATION / "CallResultFalseTailFixture", "methods": 7},
+    "call-result-engine-false-tail": {
+        "assembly": "CallResultEngineFalseTailFixture",
+        "source": VALIDATION / "CallResultEngineFalseTailFixture", "methods": 2},
+    "engine-component-false-tail": {
+        "assembly": "EngineComponentFalseTailFixture",
+        "source": VALIDATION / "EngineComponentFalseTailFixture", "methods": 1},
+    "internal-call-field": {
+        "assembly": "InternalCallFieldFixture",
+        "source": VALIDATION / "InternalCallFieldFixture", "methods": 3},
     "dual-result-tail-guard": {"assembly": "DualResultTailGuardFixture",
                                "source": VALIDATION / "DualResultTailGuardFixture", "methods": 12},
     "triple-literal-guard": {"assembly": "TripleLiteralGuardFixture",
@@ -485,6 +509,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return field_parameter_boolean_array_store.verify(path, stage, VERSION)
     if profile == "constructed-base-boolean-array":
         return constructed_base_boolean_array.verify(path, stage, VERSION)
+    if profile == "folded-boolean-array-store":
+        return folded_boolean_array_store.verify(path, stage, VERSION)
     if profile == "narrow-array":
         return narrow_array.verify(path, stage, VERSION)
     if profile == "nested-boolean-store":
@@ -631,6 +657,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return static_literal_concat.verify(path, stage, VERSION)
     if profile == "throw-only":
         return throw_only.verify(path, stage, VERSION)
+    if profile == "conditional-managed-throw":
+        return conditional_managed_throw.verify(path, stage, VERSION)
     if profile == "virtual-tail-dispatch":
         return virtual_tail_dispatch.verify(path, stage, VERSION)
     if profile == "layered-virtual-tail-dispatch":
@@ -675,6 +703,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return narrow_scalar_getter.verify(path, stage, VERSION)
     if profile == "final-interface-boolean-getter":
         return final_interface_boolean_getter.verify(path, stage, VERSION)
+    if profile == "ancestor-cctor-interface-getter":
+        return ancestor_cctor_interface_getter.verify(path, stage, VERSION)
     if profile == "integer-truncation":
         return integer_truncation.verify(path, stage, VERSION)
     if profile == "small-aggregate-getter":
@@ -731,6 +761,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return call_result_tail_guard.verify(path, stage, VERSION)
     if profile == "call-result-false-tail":
         return call_result_false_tail.verify(path, stage, VERSION)
+    if profile == "call-result-engine-false-tail":
+        return call_result_engine_false_tail.verify(path, stage, VERSION)
+    if profile == "engine-component-false-tail":
+        return engine_component_false_tail.verify(path, stage, VERSION)
+    if profile == "internal-call-field":
+        return internal_call_field.verify(path, stage, VERSION)
     if profile == "dual-result-tail-guard":
         return dual_result_tail_guard.verify(path, stage, VERSION)
     if profile == "triple-literal-guard":

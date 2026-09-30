@@ -6,7 +6,10 @@ using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
+using Cpp2IL.Core.OutputFormats;
 using Iced.Intel;
+using MethodDefinition = AsmResolver.DotNet.MethodDefinition;
+using MethodImplAttributes = System.Reflection.MethodImplAttributes;
 using NativeRegister = Iced.Intel.Register;
 
 namespace Cpp2IL.Core.Tests.Isil;
@@ -149,6 +152,97 @@ public class CallResultFalseTailNullGuardProofTests
                     "A duplicate caller identity is not a safe folded alias group.");
             }
             finally { bindings.RemoveAt(bindings.Count - 1); }
+
+            // Project only the callees to runtime-provided declarations. The
+            // exact native fixture already establishes two distinct managed
+            // caller identities folded onto this complete false-tail body.
+            var producerImplementation = producer.Definition!.iflags;
+            var targetImplementation = target.Definition!.iflags;
+            try
+            {
+                producer.Definition.iflags = (ushort)MethodImplAttributes.InternalCall;
+                target.Definition.iflags = (ushort)MethodImplAttributes.InternalCall;
+                _ = new AsmResolverDllOutputFormatEmpty().BuildAssemblies(app);
+
+                foreach (var caller in new[] { ordinary, virtualCaller })
+                {
+                    caller.ReleaseAnalysisData();
+                    caller.Analyze();
+                    var calls = caller.ControlFlowGraph!.Instructions
+                        .Where(instruction => instruction.IsCall).ToArray();
+                    var origin = calls.Single(instruction =>
+                        ReferenceEquals(instruction.Operands[0], producer));
+                    var guarded = calls.Single(instruction =>
+                        ReferenceEquals(instruction.Operands[0], target));
+                    Assert.That(CallResultNullGuardProof.HasBoundTarget(caller,
+                        (LocalVariable)origin.Destination!, origin, guarded, target), Is.True,
+                        "A runtime declaration preserves the uniquely bound callee ABI for each folded caller.");
+                    Assert.That(guarded.CallSemantics,
+                        Is.EqualTo(CallSemantics.NullCheckedInstance));
+                    Assert.That(caller.ControlFlowGraph.Instructions.Any(instruction =>
+                        instruction.OpCode == OpCode.RuntimeNullThrow), Is.False);
+                    var generated = caller.GetExtraData<MethodDefinition>("AsmResolverMethod")!;
+                    Assert.DoesNotThrow(() => IlGenerator.GenerateIl(caller, generated));
+                    Assert.That(generated.CilMethodBody!.Instructions.Count(instruction =>
+                        instruction.OpCode == AsmResolver.PE.DotNet.Cil.CilOpCodes.Call), Is.EqualTo(1));
+                    Assert.That(generated.CilMethodBody.Instructions.Count(instruction =>
+                        instruction.OpCode == AsmResolver.PE.DotNet.Cil.CilOpCodes.Callvirt), Is.EqualTo(1),
+                        "The producer remains direct, while the tail retains the result's null failure.");
+                }
+
+                RejectReanalysis(
+                    () => virtualCaller.OverrideReturnType = app.SystemTypes.SystemInt32Type,
+                    () => virtualCaller.OverrideReturnType = null,
+                    "A changed second caller signature invalidates the folded alias group.");
+
+                foreach (var changed in new[] { ordinary, virtualCaller, producer, target })
+                {
+                    var original = changed.Definition!.iflags;
+                    RejectReanalysis(
+                        () => changed.Definition.iflags |= 0xF000,
+                        () => changed.Definition.iflags = original,
+                        "A complete extension marker does not establish an ordinary managed call ABI.");
+                }
+
+                var runtimeCallerImplementation = virtualCaller.Definition!.iflags;
+                RejectReanalysis(
+                    () => virtualCaller.Definition.iflags = (ushort)MethodImplAttributes.InternalCall,
+                    () => virtualCaller.Definition.iflags = runtimeCallerImplementation,
+                    "The runtime-declaration allowance applies to callees, not the recovered caller group.");
+
+                foreach (var changed in new[] { producer, target })
+                {
+                    var calleeBindings = app.MethodsByAddress[changed.UnderlyingPointer];
+                    RejectReanalysis(
+                        () => calleeBindings.Add(changed),
+                        () => calleeBindings.RemoveAt(calleeBindings.Count - 1),
+                        "A runtime-provided callee must retain a unique native binding.");
+                }
+
+                ordinary.ReleaseAnalysisData();
+                ordinary.Analyze();
+                Assert.That(ordinary.ControlFlowGraph!.Instructions.Any(instruction =>
+                    instruction.OpCode == OpCode.RuntimeNullThrow), Is.False,
+                    "Restoring the original signatures restores the supported folded invocation.");
+            }
+            finally
+            {
+                producer.Definition.iflags = producerImplementation;
+                target.Definition.iflags = targetImplementation;
+            }
+
+            void RejectReanalysis(Action change, Action restore, string reason)
+            {
+                try
+                {
+                    change();
+                    ordinary.ReleaseAnalysisData();
+                    ordinary.Analyze();
+                    Assert.Throws<DecompilerException>(() => IlGenerator.GenerateIl(ordinary,
+                        ordinary.GetExtraData<MethodDefinition>("AsmResolverMethod")!), reason);
+                }
+                finally { restore(); }
+            }
         }
         finally { Cpp2IlApi.ResetInternalState(); }
     }

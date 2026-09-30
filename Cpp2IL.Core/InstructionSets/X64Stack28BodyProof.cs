@@ -23,13 +23,16 @@ internal static class X64Stack28BodyProof
             method.UnderlyingPointer is 0 or ulong.MaxValue)
             return null;
 
-        method.EnsureRawBytes();
+        if (method.RawBytes.Length == 0)
+            method.EnsureRawBytes();
         var start = method.UnderlyingPointer;
         var region = unwind.ClassifySpan(start, start + 1);
         if (region.Kind != X64UnwindProof.SpanKind.HandlerFree ||
             region.Start != start || region.RootStart != start ||
             region.End <= start || region.End - start > (ulong)maximumBytes ||
             !unwind.MatchesUnwind(start, region.End, 4, 0, [4, 0x42]) ||
+            !unwind.IsUnaffectedByBaseRelocation(start,
+                checked((uint)(region.End - start))) ||
             method.AppContext.MethodsByAddress.Keys.Any(address =>
                 address > start && address < region.End))
             return null;

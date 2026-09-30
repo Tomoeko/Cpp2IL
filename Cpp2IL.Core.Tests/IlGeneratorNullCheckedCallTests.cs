@@ -16,6 +16,31 @@ namespace Cpp2IL.Core.Tests;
 
 public partial class IlGeneratorParameterTests
 {
+    [TestCase(MethodImplAttributes.Native)]
+    [TestCase(MethodImplAttributes.OPTIL)]
+    [TestCase(MethodImplAttributes.Runtime)]
+    [TestCase(MethodImplAttributes.Unmanaged)]
+    [TestCase(MethodImplAttributes.InternalCall)]
+    [TestCase(MethodImplAttributes.InternalCall | MethodImplAttributes.Native)]
+    [TestCase(MethodImplAttributes.InternalCall | MethodImplAttributes.Unmanaged)]
+    public void ForbiddenOrUnboundImplementationCannotCoalesceOrEmitCheckedCall(
+        MethodImplAttributes implementation)
+    {
+        var fixture = CreateNullGuard(false, false);
+        var target = new InjectedMethodAnalysisContext(_typeContext, "ExternalTouch",
+            _app.SystemTypes.SystemInt32Type, MethodAttributes.Public,
+            [_app.SystemTypes.SystemInt32Type], defaultImplAttributes: implementation);
+        fixture.Call.SetOperand(0, target);
+        Assert.That(target.ImplAttributes, Is.EqualTo(target.DefaultImplAttributes));
+        Assert.That(RuntimeNullGuardCoalescer.Run(fixture.Context, SyntheticNullThrow), Is.Zero);
+        Assert.That(fixture.Context.ControlFlowGraph!.Instructions, Does.Contain(fixture.NullThrow));
+
+        fixture.Call.CallSemantics = CallSemantics.NullCheckedInstance;
+        fixture.Context.ControlFlowGraph = new([fixture.Call, new(20, OpCode.Return, fixture.Call.Operands[1])]);
+        Assert.That(() => IlGenerator.GenerateIl(fixture.Context, fixture.Definition),
+            Throws.TypeOf<DecompilerException>().With.Message.Contains("Null-checked invocation"));
+    }
+
     [TestCase(false, false)]
     [TestCase(true, false)]
     [TestCase(false, true)]

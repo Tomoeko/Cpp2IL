@@ -58,6 +58,20 @@ public class X64TerminalManagedThrowProofTests
                 Is.EqualTo(new[] { ISIL.OpCode.Newobj, ISIL.OpCode.CallVoid,
                     ISIL.OpCode.Throw }));
 
+            var definition = method.Definition!;
+            var originalImplementation = definition.iflags;
+            try
+            {
+                definition.iflags |= 0xF000;
+                Assert.That(definition.IsUnmanagedCallersOnly, Is.True);
+                Assert.That(method.ImplAttributes, Is.EqualTo(method.DefaultImplAttributes));
+                Assert.That(X64TerminalManagedThrowProof.Find(method, native), Is.Null,
+                    "the static byref signature exception cannot admit an unmanaged-callers-only ABI");
+                Assert.That(X64TerminalManagedThrowProof.TryLift(method, native), Is.Null);
+            }
+            finally { definition.iflags = originalImplementation; }
+            Assert.That(X64TerminalManagedThrowProof.Find(method, native), Is.Not.Null);
+
             try
             {
                 method.Parameters[0].ParameterType = app.SystemTypes.SystemInt32Type;

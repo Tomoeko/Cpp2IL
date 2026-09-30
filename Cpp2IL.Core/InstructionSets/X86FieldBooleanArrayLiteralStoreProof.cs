@@ -44,6 +44,31 @@ internal static class X86FieldBooleanArrayLiteralStoreProof
     internal static Evidence? Find(MethodAnalysisContext method,
         IReadOnlyList<NativeInstruction> native)
     {
+        var evidence = FindBoundMethod(method, native);
+        if (evidence == null ||
+            !method.AppContext.MethodsByAddress.TryGetValue(method.UnderlyingPointer,
+                out var aliases) ||
+            aliases.Count(candidate => ReferenceEquals(candidate, method)) != 1)
+            return null;
+        if (aliases.Count == 1)
+            return evidence;
+
+        // Identical code folding may bind two distinct managed owners to the
+        // same native body. Require both owner-specific field layouts and both
+        // signatures to prove this exact Boolean store independently.
+        if (aliases is not [var first, var second] ||
+            ReferenceEquals(first, second))
+            return null;
+        var other = ReferenceEquals(first, method) ? second : first;
+        return other.UnderlyingPointer == method.UnderlyingPointer &&
+               !ReferenceEquals(other.DeclaringType, method.DeclaringType) &&
+               FindBoundMethod(other, native) != null
+            ? evidence : null;
+    }
+
+    private static Evidence? FindBoundMethod(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> native)
+    {
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) || app.Binary is not PE pe ||
             method.DeclaringType is not { Definition: { GenericContainer: null,
@@ -73,7 +98,8 @@ internal static class X86FieldBooleanArrayLiteralStoreProof
             !ReferenceEquals(index.ParameterType, app.SystemTypes.SystemInt32Type) ||
             rawParameter.RawType is not { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4,
                 NumMods: 0, Byref: 0, Pinned: 0 } ||
-            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method) ||
+            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,
+                requireUniqueBinding: false) ||
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
             TryProveShape(native, pe) is not { } shape ||
             native[0].IP != method.UnderlyingPointer)
@@ -84,6 +110,9 @@ internal static class X86FieldBooleanArrayLiteralStoreProof
         if (candidates is not [{ } matched] || matched.Name != matched.DefaultName ||
             matched.BackingData?.Field.RawFieldType is not
                 { Type: Il2CppTypeEnum.IL2CPP_TYPE_SZARRAY,
+                    NumMods: 0, Byref: 0, Pinned: 0 } rawArray ||
+            rawArray.GetEncapsulatedType() is not
+                { Type: Il2CppTypeEnum.IL2CPP_TYPE_BOOLEAN,
                     NumMods: 0, Byref: 0, Pinned: 0 } ||
             matched.FieldType is not SzArrayTypeAnalysisContext { ElementType: var element } ||
             !ReferenceEquals(element, app.SystemTypes.SystemBooleanType) ||

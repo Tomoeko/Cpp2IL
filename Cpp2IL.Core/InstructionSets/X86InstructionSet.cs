@@ -82,6 +82,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return iteratorFactory; // Allocation, constructor, captures, and helper exits are independently bound.
         if (X64TerminalManagedThrowProof.TryLift(context, nativeInstructions) is { } terminalThrow)
             return terminalThrow; // Allocation, constructor, metadata, and the nonreturning raise target are bound together.
+        if (X64ConditionalManagedThrowProof.TryLift(context, nativeInstructions) is { } conditionalThrow)
+            return conditionalThrow; // Both the Int32 return and the allocation-to-raise exceptional arm are proved.
         if (X64IteratorMoveNextProof.TryLift(context, nativeInstructions) is { } iteratorMoveNext)
             return iteratorMoveNext; // The complete generated state machine includes the pre-null state write.
         if (X64LiteralConcatProof.TryLift(context, nativeInstructions) is { } literalConcat)

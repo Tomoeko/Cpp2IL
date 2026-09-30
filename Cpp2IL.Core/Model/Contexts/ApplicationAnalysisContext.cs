@@ -213,8 +213,8 @@ public class ApplicationAnalysisContext : ContextWithDataStorage
 
         foreach (var method in allMethods)
         {
-            // Il2CppMethodDefinition.MethodImplAttributes masks this bit out, check directly against iflags
-            if (method.Definition is not { } definition || (definition.iflags & (ushort)MethodImplAttributes.InternalCall) == 0)
+            if (method.Definition is not { } definition ||
+                (definition.MethodImplAttributes & MethodImplAttributes.InternalCall) == 0)
                 continue;
 
             var target = InstructionSet.GetInternalCallTarget(method);

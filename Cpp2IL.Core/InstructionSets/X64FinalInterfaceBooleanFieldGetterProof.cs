@@ -123,7 +123,11 @@ internal static class X64FinalInterfaceBooleanFieldGetterProof
         var reachedObject = false;
         for (var type = owner; type != null; type = type.BaseType)
         {
-            if (!hierarchy.Add(type) || !OrdinaryType(type, false))
+            // An ancestor's class initializer is a separate managed body. Its
+            // presence does not change this getter's field offset or interface
+            // slot, but its declaration must still match the player metadata.
+            if (!hierarchy.Add(type) || !OrdinaryType(type, false,
+                    allowAncestorClassConstructor: !ReferenceEquals(type, owner)))
                 return null;
             CaptureType(type, values);
             reachedObject |= ReferenceEquals(type, method.AppContext.SystemTypes.SystemObjectType);
@@ -143,6 +147,7 @@ internal static class X64FinalInterfaceBooleanFieldGetterProof
         foreach (var declaration in contract.Methods)
         {
             if (declaration.Definition is not { GenericContainer: null } original ||
+                original.IsUnmanagedCallersOnly ||
                 !declaration.IsAbstract || !declaration.IsVirtual || declaration.IsStatic || declaration.IsFinal ||
                 declaration.Attributes != declaration.DefaultAttributes ||
                 declaration.ImplAttributes != declaration.DefaultImplAttributes ||
@@ -181,8 +186,9 @@ internal static class X64FinalInterfaceBooleanFieldGetterProof
         return new DispatchState(values);
     }
 
-    private static bool OrdinaryType(TypeAnalysisContext type, bool contract) =>
-        type.Definition is { GenericContainer: null, HasCctor: false, PackingSizeIsDefault: true,
+    private static bool OrdinaryType(TypeAnalysisContext type, bool contract,
+        bool allowAncestorClassConstructor = false) =>
+        type.Definition is { GenericContainer: null, PackingSizeIsDefault: true,
             ClassSizeIsDefault: true, RawType: { NumMods: 0, Byref: 0, Pinned: 0 } raw } &&
         (raw.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS ||
          raw.Type == Il2CppTypeEnum.IL2CPP_TYPE_OBJECT &&
@@ -191,11 +197,42 @@ internal static class X64FinalInterfaceBooleanFieldGetterProof
         type.GenericParameters.Count == 0 && type.Attributes == type.DefaultAttributes &&
         (type.Attributes & TypeAttributes.LayoutMask) != TypeAttributes.ExplicitLayout &&
         type.Name == type.DefaultName && type.OverrideNamespace == null &&
-        ReferenceEquals(type.BaseType, type.DefaultBaseType) && !type.Methods.Any(candidate => candidate.Name == ".cctor") &&
+        ReferenceEquals(type.BaseType, type.DefaultBaseType) &&
+        HasUnchangedClassConstructor(type, allowAncestorClassConstructor) &&
         type.Fields.Count == type.Definition.FieldCount && type.Fields.All(field => field.BackingData?.Field.RawFieldType != null &&
             field.Name == field.DefaultName && field.Attributes == field.DefaultAttributes &&
             field.Offset == field.DefaultOffset && field.OverrideFieldType == null) &&
         type.Methods.Count == type.Definition.MethodCount && type.Methods.All(method => method.Definition != null);
+
+    private static bool HasUnchangedClassConstructor(TypeAnalysisContext type,
+        bool allowAncestorClassConstructor)
+    {
+        var constructors = type.Methods.Where(method => method.Name == ".cctor").ToArray();
+        if (!type.Definition!.HasCctor)
+            return constructors.Length == 0;
+        if (!allowAncestorClassConstructor || constructors is not [{ } constructor] ||
+            constructor.Definition is not { GenericContainer: null, parameterCount: 0,
+                RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
+                    NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
+            definition.IsUnmanagedCallersOnly ||
+            !ReferenceEquals(definition.DeclaringType, type.Definition) ||
+            (definition.InternalParameterData?.Length ?? 0) != 0 ||
+            constructor.Name != constructor.DefaultName || !constructor.IsStatic ||
+            constructor.IsVirtual || constructor.IsAbstract ||
+            constructor.Parameters.Count != 0 || constructor.GenericParameters.Count != 0 ||
+            constructor.OverrideReturnType != null ||
+            !ReferenceEquals(constructor.ReturnType, type.AppContext.SystemTypes.SystemVoidType) ||
+            constructor.Attributes != constructor.DefaultAttributes ||
+            constructor.ImplAttributes != constructor.DefaultImplAttributes ||
+            (constructor.Attributes & MethodAttributes.PinvokeImpl) != 0 ||
+            (constructor.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
+                MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) != 0 ||
+            definition.slot != ushort.MaxValue ||
+            (constructor.Attributes & (MethodAttributes.SpecialName | MethodAttributes.RTSpecialName)) !=
+            (MethodAttributes.SpecialName | MethodAttributes.RTSpecialName))
+            return false;
+        return true;
+    }
 
     private static void CaptureType(TypeAnalysisContext type, List<object> values)
     {
@@ -249,6 +286,7 @@ internal static class X64FinalInterfaceBooleanFieldGetterProof
         values.Add(method.Name);
         values.Add(method.Attributes);
         values.Add(method.ImplAttributes);
+        values.Add(method.Definition!.iflags);
         values.Add(method.ReturnType.FullName);
         values.Add(method.ReturnType.Type);
         values.Add(method.Definition!.slot);

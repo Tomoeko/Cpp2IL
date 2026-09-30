@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
 using LibCpp2IL.BinaryStructures;
 
@@ -17,7 +18,7 @@ internal static class NullCheckedCall
             candidate.Name is ".ctor" or ".cctor" || candidate.Name != candidate.DefaultName ||
             candidate.Attributes != candidate.DefaultAttributes || candidate.ImplAttributes != candidate.DefaultImplAttributes ||
             (candidate.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
-            (candidate.ImplAttributes & (MethodImplAttributes.CodeTypeMask | MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) != 0 ||
+            !HasEligibleImplementation(candidate) ||
             candidate.GenericParameters.Count != 0 || candidate.Definition?.GenericContainer != null ||
             candidate.DeclaringType is not { } owner || !IsReferenceClass(owner) ||
             candidate.OverrideReturnType != null ||
@@ -53,6 +54,20 @@ internal static class NullCheckedCall
         target = candidate;
         receiver = value;
         return true;
+    }
+
+    internal static bool HasEligibleImplementation(MethodAnalysisContext method)
+    {
+        var implementation = method.ImplAttributes;
+        if (method.Definition?.IsUnmanagedCallersOnly == true ||
+            (implementation & (MethodImplAttributes.CodeTypeMask | MethodImplAttributes.ManagedMask)) != 0)
+            return false;
+
+        // A runtime-provided declaration may still have an ordinary managed-call
+        // wrapper. Bind that exact target without recovering its implementation.
+        return (implementation & MethodImplAttributes.InternalCall) == 0 ||
+               implementation == MethodImplAttributes.InternalCall &&
+               RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method);
     }
 
     public static bool IsReferenceClass(TypeAnalysisContext type) =>

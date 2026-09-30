@@ -43,7 +43,7 @@ internal static class CallResultFalseTailNullGuardProof
                 !thisLocal.IsThis || !ReferenceEquals(thisLocal.Type, owner) ||
                 !ReferenceEquals(producerReceiver, thisLocal) ||
                 !SameAssemblyFoldedCallers(caller) ||
-                !OrdinaryMethod(producer, app, requireUniqueBinding: false) ||
+                !OrdinaryMethod(producer, app, requireUniqueBinding: false, allowInternalCall: true) ||
                 producer.IsStatic || producer.IsVirtual ||
                 producer.Parameters.Count != 0 ||
                 producer.Definition?.RawReturnType is not
@@ -52,7 +52,7 @@ internal static class CallResultFalseTailNullGuardProof
                 producer.DeclaringType is not { } producerOwner ||
                 !NullCheckedCall.HasUnchangedReferenceBase(owner,
                     producerOwner) ||
-                !OrdinaryMethod(target, app, requireUniqueBinding: false) ||
+                !OrdinaryMethod(target, app, requireUniqueBinding: false, allowInternalCall: true) ||
                 target.IsStatic || target.IsVirtual || !target.IsVoid ||
                 target.Definition?.RawReturnType is not
                     { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID } ||
@@ -112,7 +112,7 @@ internal static class CallResultFalseTailNullGuardProof
     }
 
     private static bool OrdinaryMethod(MethodAnalysisContext method,
-        ApplicationAnalysisContext app, bool requireUniqueBinding) =>
+        ApplicationAnalysisContext app, bool requireUniqueBinding, bool allowInternalCall = false) =>
         ReferenceEquals(method.AppContext, app) &&
         method.Name is not (".ctor" or ".cctor") &&
         method.Name == method.DefaultName &&
@@ -120,9 +120,11 @@ internal static class CallResultFalseTailNullGuardProof
         method.ImplAttributes == method.DefaultImplAttributes &&
         (method.Attributes & (MethodAttributes.Abstract |
                               MethodAttributes.PinvokeImpl)) == 0 &&
-        (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
-                                  MethodImplAttributes.ManagedMask |
-                                  MethodImplAttributes.InternalCall)) == 0 &&
+        (allowInternalCall
+            ? NullCheckedCall.HasEligibleImplementation(method)
+            : (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
+                                       MethodImplAttributes.ManagedMask |
+                                       MethodImplAttributes.InternalCall)) == 0) &&
         method.OverrideReturnType == null &&
         method.GenericParameters.Count == 0 &&
         RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,

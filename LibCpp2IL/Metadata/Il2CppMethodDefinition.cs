@@ -174,9 +174,12 @@ public class Il2CppMethodDefinition : ReadableClass
 
     public Il2CppGenericContainer? GenericContainer => genericContainerIndex.IsNull ? null : OwningContext.Metadata.GetGenericContainerFromIndex(genericContainerIndex);
     
-    public bool IsUnmanagedCallersOnly => (iflags & 0xF000) != 0;
-    
-    public MethodImplAttributes MethodImplAttributes => (MethodImplAttributes)(iflags & ~0xF000);
+    private const ushort UnmanagedCallersOnlyMarker = 0xF000;
+
+    // Require the complete extension marker: InternalCall alone occupies 0x1000.
+    public bool IsUnmanagedCallersOnly => (iflags & UnmanagedCallersOnlyMarker) == UnmanagedCallersOnlyMarker;
+
+    public MethodImplAttributes MethodImplAttributes => (MethodImplAttributes)(IsUnmanagedCallersOnly ? iflags & ~UnmanagedCallersOnlyMarker : iflags);
 
     public override string? ToString()
     {

@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.ISIL;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
 using Iced.Intel;
-using LibCpp2IL.PE;
+using LibCpp2IL.BinaryStructures;
 using NativeInstruction = Iced.Intel.Instruction;
 using NativeRegister = Iced.Intel.Register;
 using ManagedInstruction = Cpp2IL.Core.ISIL.Instruction;
@@ -31,8 +32,12 @@ internal static partial class X64GuardedFieldCallProof
 
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) || method.IsStatic ||
+            method.Name is ".ctor" or ".cctor" ||
+            method.Name != method.DefaultName || method.OverrideReturnType != null ||
             method.Parameters.Count != 0 || method.GenericParameters.Count != 0 ||
-            method.DeclaringType is not { Definition: { GenericContainer: null } } owner ||
+            method.DeclaringType is not { Definition: { GenericContainer: null,
+                RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
+                    NumMods: 0, Byref: 0, Pinned: 0 } } } owner ||
             !NullCheckedCall.IsReferenceClass(owner) ||
             method.Definition is not { GenericContainer: null, parameterCount: 0,
                 RawReturnType: { NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
@@ -40,46 +45,23 @@ internal static partial class X64GuardedFieldCallProof
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
             method.Attributes != method.DefaultAttributes ||
             method.ImplAttributes != method.DefaultImplAttributes ||
-            app.Binary is not PE pe || X64UnwindProof.ForApplication(app) is not { } index ||
-            method.UnderlyingPointer == 0)
-            return null;
-
-        var region = index.ClassifySpan(method.UnderlyingPointer, method.UnderlyingPointer + 1);
-        if (region.Kind != X64UnwindProof.SpanKind.HandlerFree ||
-            region.Start != method.UnderlyingPointer || region.End <= region.Start ||
-            region.End - region.Start is < 30 or > 64)
-            return null;
-        method.EnsureRawBytes();
-        var native = X86Utils.Iterate(method)
-            .TakeWhile(instruction => instruction.IP < region.End).ToArray();
-        var rawStart = pe.MapVirtualAddressToRaw(region.Start, false);
-        var rawEnd = pe.MapVirtualAddressToRaw(region.End - 1, false);
-        if (native.Length is < 10 or > 27 ||
-            rawStart < 0 || rawEnd < rawStart ||
-            (ulong)(rawEnd - rawStart) != region.End - region.Start - 1 ||
-            rawEnd >= pe.GetRawBinaryContent().Length ||
-            native[0].IP != region.Start ||
-            native[^1].NextIP > region.End ||
-            native.Any(instruction => instruction.IsInvalid || instruction.CodeSize != CodeSize.Code64 ||
-                instruction.HasLockPrefix || instruction.HasRepPrefix ||
-                instruction.HasRepnePrefix || instruction.SegmentPrefix != NativeRegister.None) ||
-            native.Where((instruction, position) => position > 0 &&
-                instruction.IP != native[position - 1].NextIP).Any() ||
-            !Stack(native[0], Mnemonic.Sub) ||
-            !FieldLoad(native[1], NativeRegister.RAX, NativeRegister.RCX, 8,
-                out var receiverOffset) ||
-            !Test(native[2], NativeRegister.RAX) ||
-            native[3].Mnemonic != Mnemonic.Je || native[3].Op0Kind != OpKind.NearBranch64 ||
-            !UniqueField(owner, receiverOffset, null, out var receiverField) ||
-            !NullCheckedCall.IsReferenceClass(receiverField.FieldType))
+            (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
+            (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
+                MethodImplAttributes.ManagedMask | MethodImplAttributes.InternalCall)) != 0 ||
+            !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method, requireUniqueBinding: false) ||
+            RuntimeNullGuardCoalescer.HasOutputOptions(method))
             return null;
 
         for (var count = 1; count <= 2; count++)
         {
             var callIndex = 8 + count;
-            if (native.Length < callIndex + 1 ||
-                native.Skip(callIndex + 1).Any(instruction => instruction.Code != Code.Int3) ||
-                !X64NativePaddingProof.HasInt3Padding(pe, native[callIndex].NextIP, region.End) ||
+            if (X64Stack28BodyProof.Read(method, callIndex + 1, 64) is not { } native ||
+                !FieldLoad(native[1], NativeRegister.RAX, NativeRegister.RCX, 8,
+                    out var receiverOffset) || receiverOffset > 0x1000 - 8 ||
+                !Test(native[2], NativeRegister.RAX) ||
+                native[3].Mnemonic != Mnemonic.Je || native[3].Op0Kind != OpKind.NearBranch64 ||
+                !UniqueField(owner, receiverOffset, null, out var receiverField) ||
+                !NullCheckedCall.IsReferenceClass(receiverField.FieldType) ||
                 native[3].NearBranchTarget != native[callIndex].IP ||
                 !Stack(native[6 + count], Mnemonic.Add) ||
                 !Move(native[5 + count], NativeRegister.RCX, NativeRegister.RAX) ||
@@ -90,11 +72,19 @@ internal static partial class X64GuardedFieldCallProof
                 X86RuntimeNullThrowProof.TryIdentify(app, native[callIndex].NearBranchTarget) == null ||
                 !app.MethodsByAddress.TryGetValue(native[7 + count].NearBranchTarget,
                     out var bindings) || bindings is not [var target] ||
+                target.UnderlyingPointer != native[7 + count].NearBranchTarget ||
                 target.Parameters.Count != count || target.GenericParameters.Count != 0 ||
-                !ReferenceEquals(target.DeclaringType, receiverField.FieldType) ||
+                target.DeclaringType is not { } targetOwner ||
+                !HasUnchangedReceiverBase(receiverField.FieldType, targetOwner) ||
+                !X64GuardedEnumParameterCallProof.AccessibleTarget(owner, target) ||
+                !X64ClassCastLookupProof.SameOrDirectlyReferencedAssembly(
+                    owner.DeclaringAssembly, targetOwner.DeclaringAssembly) ||
                 !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(target) ||
+                RuntimeNullGuardCoalescer.HasOutputOptions(target) ||
                 method.IsVoid != target.IsVoid ||
-                !NullCheckedCall.SameOrdinaryType(method.ReturnType, target.ReturnType))
+                !NullCheckedCall.SameOrdinaryType(method.ReturnType, target.ReturnType) ||
+                X86CallerExceptionRegionProof.Check(method, native,
+                    new HashSet<ulong> { native[callIndex].IP }) != null)
                 continue;
 
             var argumentFields = new FieldAnalysisContext[count];
@@ -125,6 +115,26 @@ internal static partial class X64GuardedFieldCallProof
             return new Evidence(target, receiverField, argumentFields);
         }
         return null;
+    }
+
+    private static bool HasUnchangedReceiverBase(TypeAnalysisContext receiver,
+        TypeAnalysisContext owner)
+    {
+        // A base member uses the same reference receiver and its evidenced null
+        // guard. Authenticate every original class descriptor on the path.
+        var visited = new HashSet<TypeAnalysisContext>();
+        for (var type = receiver; type != null && visited.Add(type); type = type.BaseType)
+        {
+            if (!NullCheckedCall.IsReferenceClass(type) ||
+                type.Name != type.DefaultName || type.Namespace != type.DefaultNamespace ||
+                type.Definition is not { RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS or
+                    Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or Il2CppTypeEnum.IL2CPP_TYPE_STRING,
+                    NumMods: 0, Byref: 0, Pinned: 0 } })
+                return false;
+            if (ReferenceEquals(type, owner))
+                return true;
+        }
+        return false;
     }
 
     private static bool CallEligible(MethodAnalysisContext target, FieldAnalysisContext receiver,

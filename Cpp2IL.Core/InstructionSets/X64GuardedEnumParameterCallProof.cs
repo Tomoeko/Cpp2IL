@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Cpp2IL.Core.Analysis;
@@ -85,6 +86,11 @@ internal static class X64GuardedEnumParameterCallProof
             return true;
         var sameAssembly = ReferenceEquals(caller.DeclaringAssembly, type.DeclaringAssembly);
         var methodAccess = target.Attributes & MethodAttributes.MemberAccessMask;
+        if (sameAssembly && methodAccess == MethodAttributes.Private &&
+            target.Name == target.DefaultName && target.Attributes == target.DefaultAttributes &&
+            target.ImplAttributes == target.DefaultImplAttributes &&
+            IsWithinOriginalTypeBody(caller, type))
+            return true;
         if (methodAccess != MethodAttributes.Public &&
             !(sameAssembly && (methodAccess is MethodAttributes.Assembly or MethodAttributes.FamORAssem)))
             return false;
@@ -103,6 +109,35 @@ internal static class X64GuardedEnumParameterCallProof
                 return false;
         }
         return true;
+    }
+
+    private static bool IsWithinOriginalTypeBody(TypeAnalysisContext caller, TypeAnalysisContext owner)
+    {
+        // C# private access covers the declaring type's body, including types
+        // nested within it. Sharing an outer type does not establish this path.
+        var visited = new HashSet<TypeAnalysisContext>();
+        var withinOwner = false;
+        try
+        {
+            for (var current = caller; current != null; current = current.DeclaringType)
+            {
+                var parent = current.DeclaringType;
+                if (!visited.Add(current) || current.Definition is not { } definition ||
+                    !ReferenceEquals(current.DeclaringAssembly, owner.DeclaringAssembly) ||
+                    current.Name != current.DefaultName || current.Namespace != current.DefaultNamespace ||
+                    current.Attributes != current.DefaultAttributes ||
+                    !ReferenceEquals(definition.DeclaringType, parent?.Definition) ||
+                    parent != null && parent.NestedTypes.Count(type => ReferenceEquals(type, current)) != 1)
+                    return false;
+                withinOwner |= ReferenceEquals(current, owner);
+            }
+            return withinOwner;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
+                                          IndexOutOfRangeException or OverflowException)
+        {
+            return false;
+        }
     }
 
     private static bool UnchangedEnumParameter(MethodAnalysisContext method,

@@ -761,6 +761,7 @@ internal static class RuntimeNullGuardCoalescer
     internal static bool HasUnchangedNativeSignature(MethodAnalysisContext target, bool requireUniqueBinding)
     {
         if (target.Definition is not { GenericContainer: null } definition ||
+            definition.IsUnmanagedCallersOnly ||
             target.DeclaringType?.Definition is not { GenericContainer: null } owner ||
             !ReferenceEquals(definition.DeclaringType, owner) ||
             definition.parameterCount != target.Parameters.Count ||
