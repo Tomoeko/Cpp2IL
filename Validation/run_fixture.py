@@ -47,7 +47,7 @@ import inherited_field_guard
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import signal
 import subprocess
@@ -162,6 +162,9 @@ import call_result_boolean_tail
 import conditional_call_result_tail
 import lookup_guard_managed_throw
 import guarded_array_operations
+import array_call_origins
+import scalar_float_selection
+import native_null_checked_invocation
 import call_result_engine_false_tail
 import engine_component_false_tail
 import internal_call_field
@@ -219,9 +222,15 @@ PROFILES = {
     "conditional-call-result-tail": {"assembly": "ConditionalCallResultTailFixture",
                                      "source": VALIDATION / "ConditionalCallResultTailFixture", "methods": 12},
     "lookup-guard-managed-throw": {"assembly": "LookupGuardManagedThrowFixture",
-                                  "source": VALIDATION / "LookupGuardManagedThrowFixture", "methods": 3},
+                                  "source": VALIDATION / "LookupGuardManagedThrowFixture", "methods": 4},
     "guarded-array-operations": {"assembly": "GuardedArrayOperationsFixture",
                                  "source": VALIDATION / "GuardedArrayOperationsFixture", "methods": 9},
+    "array-call-origins": {"assembly": "ArrayCallOriginsFixture",
+                           "source": VALIDATION / "ArrayCallOriginsFixture", "methods": 9},
+    "scalar-float-selection": {"assembly": "ScalarFloatSelectionFixture",
+                               "source": VALIDATION / "ScalarFloatSelectionFixture", "methods": 9},
+    "native-null-checked-invocation": {"assembly": "NativeNullCheckedInvocationFixture",
+                                      "source": VALIDATION / "NativeNullCheckedInvocationFixture", "methods": 18},
     "scalar-positive-zero-leaf": {"assembly": "ScalarPositiveZeroLeafFixture",
                                   "source": VALIDATION / "ScalarPositiveZeroLeafFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
@@ -554,6 +563,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return lookup_guard_managed_throw.verify(path, stage, VERSION)
     if profile == "guarded-array-operations":
         return guarded_array_operations.verify(path, stage, VERSION)
+    if profile == "array-call-origins":
+        return array_call_origins.verify(path, stage, VERSION)
+    if profile == "scalar-float-selection":
+        return scalar_float_selection.verify(path, stage, VERSION)
+    if profile == "native-null-checked-invocation":
+        return native_null_checked_invocation.verify(path, stage, VERSION)
     if profile == "scalar-positive-zero-leaf":
         return scalar_positive_zero_leaf.verify(path, stage, VERSION)
     if profile == "narrow-array":
@@ -1107,6 +1122,78 @@ def verify_component_behavior(path, stage):
             "scope": "fresh runtime instances and reflected fields; no serialized asset, GUID or scene restoration"}
 
 
+def _portable_file_name(value):
+    if (not isinstance(value, str) or not value or value.endswith((".", " ")) or
+            any(character in '\\/:*?"<>|' or ord(character) < 32 for character in value)):
+        return False
+    stem = value.partition(".")[0].upper()
+    return stem not in {"CON", "PRN", "AUX", "NUL", *("COM" + str(i) for i in range(1, 10)),
+                        *("LPT" + str(i) for i in range(1, 10))}
+
+
+def source_destination(source, assembly):
+    """Retain authenticated exported Assets paths; standalone fixtures keep their layout."""
+    source = Path(source).expanduser()
+    if ".." in source.parts or not _portable_file_name(assembly):
+        raise ValueError("Fixture source path or assembly identity is unsafe")
+    source = source.absolute()
+    if not source.is_dir():
+        raise ValueError("Source directory does not exist")
+    for path in (source, *source.parents):
+        if path.is_symlink():
+            raise ValueError("Fixture source path may not contain symbolic links")
+    for root in (source, *source.parents):
+        settings, packages = root / "ProjectSettings", root / "Packages"
+        if not settings.exists() and not packages.exists():
+            continue
+        version, manifest = settings / "ProjectVersion.txt", packages / "manifest.json"
+        if (any(path.is_symlink() for path in (settings, packages, version, manifest)) or
+                not version.is_file() or not manifest.is_file()):
+            raise ValueError("Exported Unity project controls are missing or linked")
+        versions = [line.partition(":")[2].strip() for line in version.read_text(encoding="utf-8").splitlines()
+                    if line.partition(":")[0].strip() == "m_EditorVersion"]
+        if versions != [VERSION]:
+            raise ValueError("Exported Unity project does not identify the exact required version")
+        configuration = read_report(manifest)
+        if (not isinstance(configuration, dict) or not isinstance(configuration.get("dependencies"), dict) or
+                any(not isinstance(key, str) or not isinstance(value, str)
+                    for key, value in configuration["dependencies"].items())):
+            raise ValueError("Exported Unity project package manifest is invalid")
+        assets = root / "Assets"
+        if assets.is_symlink() or source == assets or not source.is_relative_to(assets):
+            raise ValueError("Exported fixture source must be a child directory of Assets")
+        relative = source.relative_to(root)
+        if not all(_portable_file_name(part) for part in relative.parts):
+            raise ValueError("Exported fixture Assets path is unsafe for the Windows target")
+        firstpass = (assembly == "Assembly-CSharp-firstpass" and
+                     relative == Path("Assets/Plugins/Recovered") / assembly)
+        if (relative.parts[1].casefold() in {"validation", "batchharnesses"} or
+                (relative.parts[1].casefold() == "plugins" and not firstpass)):
+            raise ValueError("Exported fixture source overlaps validation infrastructure")
+        return relative
+    return Path("Assets") / assembly
+
+
+def verify_source_copy(project, source, assembly, record):
+    relative = source_destination(source, assembly)
+    if record.get("sourceDestination") != relative.as_posix():
+        raise ValueError("Recorded source destination differs from its original layout")
+    destination = project / relative
+    for path in (destination, *destination.parents):
+        if path.is_symlink():
+            raise ValueError("Compiled source path may not contain symbolic links")
+    files = []
+    for path in sorted(destination.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("Compiled source may not contain symbolic links")
+        if path.is_file() and path.suffix != ".meta":
+            files.append({"path": path.relative_to(destination).as_posix(),
+                          "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    if files != record.get("sourceFiles"):
+        raise ValueError("Compiled source inventory changed during validation")
+    return destination
+
+
 def copy_sources(source, destination):
     if not source.is_dir():
         raise ValueError("Source directory does not exist")
@@ -1143,6 +1230,76 @@ def copy_harness(profile, destination):
     shutil.copyfile(serializer, destination / "Runtime" / "ReportJson.cs")
     copied.append({"path": "Runtime/ReportJson.cs", "sha256": hashlib.sha256(serializer.read_bytes()).hexdigest()})
     return sorted(copied, key=lambda item: item["path"])
+
+
+def _mapped_wine_path(path, prefix_value):
+    if not isinstance(prefix_value, str) or not prefix_value:
+        return None
+    prefix = Path(prefix_value)
+    devices = prefix / "dosdevices"
+    if (not prefix.is_absolute() or not prefix.is_dir() or prefix.is_symlink() or
+            not devices.is_dir() or devices.is_symlink()):
+        return None
+    candidates = []
+    for letter in "abcdefghijklmnopqrstuvwxyz":
+        mapping = devices / (letter + ":")
+        if not mapping.is_symlink():
+            if mapping.exists():
+                return None
+            continue
+        try:
+            root = mapping.resolve(strict=True)
+        except (OSError, RuntimeError):
+            # Wine's drive discovery also skips a target that cannot be stat'ed.
+            continue
+        if root.is_dir() and path.is_relative_to(root):
+            candidates.append((len(root.parts), letter.upper(), root))
+    if not candidates:
+        return None
+    longest = max(candidate[0] for candidate in candidates)
+    matches = [candidate for candidate in candidates if candidate[0] == longest]
+    if len(matches) != 1:
+        return None
+    _, drive, root = matches[0]
+    return drive + ":\\" + "\\".join(path.relative_to(root).parts)
+
+
+def translate_target_path(path, wine, environment, timeout=30):
+    """Read existing drive mappings before launching Wine; never change the prefix."""
+    if not wine:
+        return str(Path(path).resolve())
+    if timeout <= 0:
+        raise ValueError("Wine path translation timeout must be positive")
+    deadline = time.monotonic() + timeout
+    path = Path(path).resolve()
+    command = [wine, "winepath", "-w", str(path)]
+
+    def remaining():
+        seconds = deadline - time.monotonic()
+        if seconds <= 0:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return seconds
+
+    if not all(_portable_file_name(part) for part in path.parts[1:]):
+        raise ValueError("Host path cannot be represented safely as a Windows path")
+    translated = (_mapped_wine_path(path, environment.get("WINEPREFIX"))
+                  if path.exists() or path.parent.is_dir() else None)
+    fallback_timeout = remaining()
+    if translated is not None:
+        return translated
+    result = subprocess.run(command, env=environment, capture_output=True, text=True,
+                            timeout=fallback_timeout, check=True)
+    value = result.stdout.strip()
+    windows = PureWindowsPath(value)
+    drive = windows.drive
+    ordinary_drive = len(drive) == 2 and drive[0] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" and drive[1] == ":"
+    unc = drive.startswith("\\\\") and len(drive[2:].split("\\")) == 2 and all(
+        _portable_file_name(part) for part in drive[2:].split("\\"))
+    if (not windows.is_absolute() or not (ordinary_drive or unc) or
+            not all(_portable_file_name(part) for part in windows.parts[1:])):
+        raise ValueError("winepath returned an invalid absolute Windows path")
+    remaining()
+    return value
 
 
 def run_process(command, environment, log, timeout, cwd=None):
@@ -1468,12 +1625,7 @@ def main():
         environment["WINEDEBUG"] = "-all"
 
     def target_path(path):
-        path = path.resolve()
-        if not args.wine:
-            return str(path)
-        result = subprocess.run([args.wine, "winepath", "-w", str(path)], env=environment,
-                                capture_output=True, text=True, timeout=30, check=True)
-        return result.stdout.strip()
+        return translate_target_path(path, args.wine, environment)
 
     run_dir.mkdir(parents=True)
     receipt = {"unityVersionRequired": VERSION, "requestedStage": args.stage,
@@ -1532,7 +1684,9 @@ def main():
             install_external_reference_fixture(project, run_dir, receipt, args.timeout)
         if args.profile in EMBEDDED_FIXTURE_PACKAGES:
             install_embedded_fixture_dependency(project, receipt, args.profile)
-        receipt["sourceFiles"] = copy_sources(args.source_dir.resolve(), project / "Assets" / profile["assembly"])
+        source_relative = source_destination(args.source_dir, profile["assembly"])
+        receipt["sourceDestination"] = source_relative.as_posix()
+        receipt["sourceFiles"] = copy_sources(args.source_dir, project / source_relative)
         receipt["harnessFiles"] = copy_harness(args.profile, project / "Assets" / "Validation")
         prefix_command = [args.wine, str(editor)] if args.wine else [str(editor)]
         common = prefix_command + ["-batchmode", "-nographics", "-quit", "-projectPath", target_path(project)]
@@ -1567,7 +1721,7 @@ def main():
             raise RuntimeError(label + " editor process failed")
         if args.stage != "compile":
             build = json.loads((project / "Reports" / "build.json").read_text(encoding="utf-8"))
-            expected = {"unityVersion": VERSION, "target": "StandaloneWindows64", "backend": "IL2CPP",
+            expected = {"unityVersion": VERSION, "host": "WindowsEditor", "target": "StandaloneWindows64", "backend": "IL2CPP",
                         "compilerConfiguration": "Release", "codeGeneration": args.code_generation,
                         "development": False, "result": "Succeeded", "errors": 0}
             if any(build.get(key) != value for key, value in expected.items()):
@@ -1603,6 +1757,7 @@ def main():
             dependencies["embeddedPackageLockSha256"] = embedded_package_lock_sha256(
                 project, config["name"])
             verify_embedded_fixture_dependency(project, dependencies, args.profile)
+        verify_source_copy(project, args.source_dir, profile["assembly"], receipt)
         receipt["status"] = "passed"
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyError) as error:
         receipt["status"] = "failed"

@@ -20,7 +20,11 @@ internal static class X64LookupGuardManagedThrowRecovery
             VerifyLabelsOnBuild = true
         };
         definition.CilMethodBody = body;
-        var record = new CilLocalVariable(proof.Lookup.ReturnType.ToTypeSignature());
+        // An inherited getter must keep its original base declaration even when
+        // the returned class hides that property. The proved hierarchy makes this
+        // receiver projection an ordinary implicit reference conversion.
+        var record = new CilLocalVariable((proof.StringGetter?.DeclaringType ??
+            proof.Lookup.ReturnType).ToTypeSignature());
         var formattedKey = new CilLocalVariable(method.AppContext.SystemTypes.SystemStringType.ToTypeSignature());
         body.LocalVariables.Add(record);
         body.LocalVariables.Add(formattedKey);

@@ -217,7 +217,8 @@ public static class UnitySourceProjectEmitter
                     File.WriteAllText(sourcePath,
                         "// Generated from recovered IL. Compilation and behavioral equivalence require independent validation.\n" + source.Text, new UTF8Encoding(false));
                 }
-                File.WriteAllText(Path.Combine(sourceDirectory, "csc.rsp"), "-langversion:9.0\n-unsafe\n-checked-\n", new UTF8Encoding(false));
+                var compilerReferenceAliases = UnityCompilerReferenceAliases.Write(module, file, resolver,
+                    relativeDirectory, sourceDirectory, report.Diagnostics);
 
                 if (!IsPredefinedAssembly(name))
                 {
@@ -242,6 +243,7 @@ public static class UnitySourceProjectEmitter
                     SourceReferences = sourceReferences,
                     ExternalReferences = externalReferences,
                     ExternalReferenceKinds = referenceKinds,
+                    CompilerReferenceAliases = compilerReferenceAliases,
                 });
             }
 

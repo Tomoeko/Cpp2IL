@@ -175,4 +175,12 @@ public enum OpCode
     /// implicit managed receiver check; any surviving instruction is a strict emission failure.
     /// </summary>
     RuntimeNullThrow,
+    /// <summary>
+    /// Scalar SSE minimum/maximum: destination, left, right, width (32/64), maximum (0/1).
+    /// Selects the second input for equal or unordered inputs, preserving its result bits.
+    /// Models result bits under masked floating exceptions, not MXCSR status/control effects.
+    /// </summary>
+    FloatSelect,
+    /// <summary>Proved scalar vector copy/positive zero: destination, typed source, width (32/64).</summary>
+    FloatProject,
 }

@@ -16,14 +16,17 @@ class CheckedBatchProfileTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        root = Path(self.temporary.name)
+        root = Path(self.temporary.name).resolve()
         self.directory = root / "prepared"
         self.batch_directory = root / "batch"
         self.profile = "static-scalar-setter"
         self.assembly = "StaticScalarSetterFixture"
         self.source = (self.directory / "recovered/UnityProject/Assets/Recovered" /
                        self.assembly)
-        self.compiled_source = self.batch_directory / "project/Assets" / self.assembly
+        self.compiled_source = self.batch_directory / "project/Assets/Recovered" / self.assembly
+        export = self.directory / "recovered/UnityProject"
+        self.write(export / "ProjectSettings/ProjectVersion.txt", ("m_EditorVersion: " + VERSION + "\n").encode())
+        self.write(export / "Packages/manifest.json", b'{"dependencies":{}}')
         source_files = {
             "Values.cs": b"public static class Values { public static int Value; }\n",
             self.assembly + ".asmdef": json.dumps({"name": self.assembly}).encode(),
@@ -62,6 +65,7 @@ class CheckedBatchProfileTests(unittest.TestCase):
         }
         self.batch = {"status": "passed", "profiles": {self.profile: {
             "assembly": self.assembly,
+            "sourceDestination": "Assets/Recovered/" + self.assembly,
             "sourceFiles": [{"path": name, "sha256": sha256}
                             for name, sha256 in current_source_files(self.source).items()],
             "behaviorReports": [{"path": path.relative_to(self.batch_directory).as_posix(),
@@ -125,6 +129,21 @@ class CheckedBatchProfileTests(unittest.TestCase):
         prepared["batchSourceDirectory"] = str(self.compiled_source)
         with self.assertRaises(ValueError):
             self.check(prepared)
+        prepared["batchSourceDirectory"] = str(self.source / ".." / self.assembly)
+        with self.assertRaises(ValueError):
+            self.check(prepared)
+
+    def test_rejects_relocated_export_even_with_an_unchanged_source_inventory(self):
+        record = self.batch["profiles"][self.profile]
+        for destination in ("Assets/" + self.assembly, "../outside", "/Assets/Recovered/" + self.assembly):
+            with self.subTest(destination=destination):
+                record["sourceDestination"] = destination
+                with self.assertRaisesRegex(ValueError, "original layout"):
+                    self.check()
+        record["sourceDestination"] = "Assets/Recovered/" + self.assembly
+        del record["sourceDestination"]
+        with self.assertRaisesRegex(ValueError, "original layout"):
+            self.check()
 
     def test_rejects_duplicate_source_inventory(self):
         batch = copy.deepcopy(self.batch)

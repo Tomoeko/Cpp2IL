@@ -83,6 +83,32 @@ public class X64GuardedArrayOperationFixtureTests
             method.Analyze();
             IlGenerator.ValidateGuardedArrayOperations(method);
             var graph = method.ControlFlowGraph!;
+            foreach (var effect in graph.Instructions.Where(instruction => instruction.IsCall &&
+                         instruction.Operands[0] is MethodAnalysisContext { Name: "SetValue" }))
+            {
+                var original = effect.Operands[2];
+                try
+                {
+                    effect.SetOperand(2, new Immediate(123));
+                    Assert.Throws<DecompilerException>(() => IlGenerator.ValidateGuardedArrayOperations(method),
+                        "An array-element receiver does not authenticate the scalar argument.");
+                }
+                finally { effect.SetOperand(2, original); }
+            }
+            foreach (var check in evidence.NullCheckedCalls)
+            {
+                var call = graph.Instructions.Single(instruction => instruction.IsCall &&
+                    instruction.NativeAddress == check.Ip);
+                var receiverIndex = call.OpCode == OpCode.Call ? 2 : 1;
+                var originalReceiver = call.Operands[receiverIndex];
+                try
+                {
+                    call.SetOperand(receiverIndex, new LocalVariable("changed-receiver",
+                        new ISIL.Register(null, "other"), ((LocalVariable)originalReceiver).Type!));
+                    Assert.Throws<DecompilerException>(() => IlGenerator.ValidateGuardedArrayOperations(method));
+                }
+                finally { call.SetOperand(receiverIndex, originalReceiver); }
+            }
             var access = graph.Instructions.Single(instruction =>
                 instruction.NativeAddress == evidence.Sites[0].OperationIp &&
                 instruction.Operands.Any(operand => operand is ArrayAccess));

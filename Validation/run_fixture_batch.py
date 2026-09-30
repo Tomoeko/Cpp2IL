@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -34,7 +33,7 @@ def load_profiles(path):
     if not isinstance(configuration, dict) or set(configuration) != {"profiles"} or \
             not isinstance(configuration["profiles"], list) or not configuration["profiles"]:
         raise ValueError("Batch configuration requires a nonempty profiles list")
-    profiles, names, assemblies = [], set(), set()
+    profiles, names, assemblies, destinations = [], set(), set(), []
     for item in configuration["profiles"]:
         if not isinstance(item, dict) or set(item) != {"profile", "sourceDirectory"}:
             raise ValueError("Each batch profile requires profile and sourceDirectory")
@@ -44,14 +43,18 @@ def load_profiles(path):
         if name == "external-references":
             raise ValueError("The external plug-in fixture needs its individual validation runner")
         assembly = fixture.PROFILES[name]["assembly"]
-        if assembly in assemblies or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", assembly):
-            raise ValueError("Batch fixture assembly names must be unique ordinary identifiers")
+        if assembly in assemblies:
+            raise ValueError("Batch fixture assembly names must be unique")
         source_value = item["sourceDirectory"]
         if not isinstance(source_value, str) or not Path(source_value).is_absolute():
             raise ValueError("Batch sourceDirectory must name an absolute directory")
-        source = Path(source_value).expanduser().resolve()
+        source = Path(source_value).expanduser()
         if not source.is_dir():
             raise ValueError("Batch source directory does not exist")
+        destination = fixture.source_destination(source, assembly)
+        destination_key = Path(destination.as_posix().casefold())
+        if any(destination_key.is_relative_to(other) or other.is_relative_to(destination_key) for other in destinations):
+            raise ValueError("Batch source destinations may not overlap")
         # A shared project must retain the selected fixture's assembly boundary.
         definitions = list(source.rglob("*.asmdef"))
         if len(definitions) != 1 or list(source.rglob("*.asmref")):
@@ -62,6 +65,7 @@ def load_profiles(path):
         profiles.append({"profile": name, "assembly": assembly, "sourceDirectory": source})
         names.add(name)
         assemblies.add(assembly)
+        destinations.append(destination_key)
     return profiles
 
 
@@ -91,7 +95,9 @@ def prepare_project(project, profiles, receipt):
     for item in profiles:
         name, assembly, source = item["profile"], item["assembly"], item["sourceDirectory"]
         record = receipt["profiles"][name]
-        record["sourceFiles"] = fixture.copy_sources(source, project / "Assets" / assembly)
+        destination = fixture.source_destination(source, assembly)
+        record["sourceDestination"] = destination.as_posix()
+        record["sourceFiles"] = fixture.copy_sources(source, project / destination)
         record["sourceKind"] = ("synthetic-baseline" if source == fixture.PROFILES[name]["source"].resolve()
                                 else "replacement-source")
         harness_source = fixture.profile_harness_directory(name)
@@ -178,12 +184,7 @@ def main():
         environment.update(WINEPREFIX=str(prefix), WINEDEBUG="-all")
 
     def target_path(path):
-        path = path.resolve()
-        if not args.wine:
-            return str(path)
-        result = subprocess.run([args.wine, "winepath", "-w", str(path)], env=environment,
-                                capture_output=True, text=True, timeout=min(30, remaining()), check=True)
-        return result.stdout.strip()
+        return fixture.translate_target_path(path, args.wine, environment, timeout=min(30, remaining()))
 
     run_dir.mkdir(parents=True)
     unverified = lambda: {name: {"status": "unverified"} for name in
@@ -242,7 +243,7 @@ def main():
                 project / "Reports/batch" / name / "editor-behavior.json", "editor", name)
         receipt["stages"]["editorBehavior"] = {"status": "passed", "profiles": len(profiles)}
         build = json.loads((project / "Reports/build.json").read_text(encoding="utf-8"), object_pairs_hook=unique_object)
-        expected = {"unityVersion": fixture.VERSION, "target": "StandaloneWindows64", "backend": "IL2CPP",
+        expected = {"unityVersion": fixture.VERSION, "host": "WindowsEditor", "target": "StandaloneWindows64", "backend": "IL2CPP",
                     "compilerConfiguration": "Release", "codeGeneration": args.code_generation,
                     "development": False, "result": "Succeeded", "errors": 0}
         if any(build.get(key) != value for key, value in expected.items()):
@@ -266,7 +267,7 @@ def main():
             name, assembly = item["profile"], item["assembly"]
             record = receipt["profiles"][name]
             record["stages"]["playerBehavior"] = fixture.verify_behavior(reports / (name + ".json"), "player", name)
-            verify_inventory(project / "Assets" / assembly, record["sourceFiles"])
+            fixture.verify_source_copy(project, item["sourceDirectory"], assembly, record)
             verify_inventory(project / "Assets/BatchHarnesses" / assembly, record["harnessFiles"])
             if name in fixture.EMBEDDED_FIXTURE_PACKAGES:
                 dependency = record["auxiliaryDependencies"]

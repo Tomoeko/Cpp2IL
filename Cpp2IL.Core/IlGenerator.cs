@@ -79,6 +79,12 @@ public static partial class IlGenerator
         ValidateOpenGenericPrefixFields(context);
         ValidateScalarVirtualDispatch(context);
         ValidateCallSemantics(context);
+        if (X64NativeNullCheckedInvocationProof.HasEvidence(context) &&
+            !X64NativeNullCheckedInvocationProof.IsValidFor(context))
+            throw new DecompilerException("Native null-checked invocation lost its receiver, argument, target or effect-order proof");
+        if (X64ScalarFloatingFieldStoreProof.HasEvidence(context) &&
+            !X64ScalarFloatingFieldStoreProof.IsValidFor(context))
+            throw new DecompilerException("Floating field store lost its native width, receiver, value or control-flow proof");
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
         ValidateGuardedArrayOperations(context);
@@ -562,6 +568,14 @@ public static partial class IlGenerator
 
             case OpCode.FloatTruncateSigned:
                 EmitFloatingTruncation(instruction, method, locals);
+                break;
+
+            case OpCode.FloatSelect:
+                EmitFloatingSelection(instruction, method, locals);
+                break;
+
+            case OpCode.FloatProject:
+                EmitFloatingProjection(instruction, method, locals);
                 break;
 
             case OpCode.IntegerExtend:

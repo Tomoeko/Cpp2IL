@@ -21,7 +21,10 @@ class LookupGuardManagedThrowOracleTests(unittest.TestCase):
                                         (7, "exception", "System.Exception"),
                                         (14, "message", "Missing key: -17"),
                                         (10, "lookupCalls", 1),
-                                        (4, "sameString", False)]:
+                                        (4, "sameString", False),
+                                        (21, "result", "hidden"),
+                                        (21, "hiddenGetterCalls", 1),
+                                        (29, "hiddenGetterCalls", 0)]:
                 changed = [dict(row) for row in expected]
                 changed[index][field] = value
                 report["observations"] = changed

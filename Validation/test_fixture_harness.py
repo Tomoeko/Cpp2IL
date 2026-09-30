@@ -34,16 +34,24 @@ class HarnessBoundaries(unittest.TestCase):
         profile_patch.start()
         self.addCleanup(profile_patch.stop)
 
-    def baseline_receipt(self):
+    def baseline_receipt(self, profile="arithmetic"):
         player_inputs = []
-        for relative in run_roundtrip.PLAYER_FILES:
+        for relative in (*run_roundtrip.PLAYER_FILES, "RecoveryFixture.exe", "UnityPlayer.dll"):
             path = self.root / "player-input" / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"synthetic player input")
             player_inputs.append({"path": relative, "sha256": run_roundtrip.digest(path)})
+        assembly = run_roundtrip.FIXTURE_PROFILES[profile]["assembly"]
+        for relative in ("player/RecoveryFixture_BackUpThisFolder_ButDontShipItWithYourGame/Managed",
+                         "project/Library/ScriptAssemblies"):
+            path = self.root / relative / (assembly + ".dll")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"synthetic managed declaration oracle")
         return {
-            "status": "passed", "sourceKind": "synthetic-baseline", "profile": "arithmetic",
-            "stages": {"nativeBuild": {"unityVersion": run_fixture.VERSION,
+            "status": "passed", "sourceKind": "synthetic-baseline", "profile": profile,
+            "stages": {"unityCompilation": {"status": "passed", "version": run_fixture.VERSION},
+                       "editorBehavior": {"status": "passed"},
+                       "nativeBuild": {"status": "passed", "unityVersion": run_fixture.VERSION, "host": "WindowsEditor",
                                        "target": "StandaloneWindows64", "backend": "IL2CPP",
                                        "compilerConfiguration": "Release", "codeGeneration": "OptimizeSpeed",
                                        "development": False,
@@ -58,6 +66,129 @@ class HarnessBoundaries(unittest.TestCase):
 
     def write_baseline_receipt(self, receipt):
         (self.root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+
+    def exported_source(self, name="exported project"):
+        project = self.root / name
+        (project / "ProjectSettings").mkdir(parents=True)
+        (project / "Packages").mkdir()
+        (project / "ProjectSettings/ProjectVersion.txt").write_text(
+            "m_EditorVersion: " + run_fixture.VERSION + "\n", encoding="utf-8")
+        (project / "Packages/manifest.json").write_text('{"dependencies":{}}', encoding="utf-8")
+        source = project / "Assets/Recovered/Source With Spaces"
+        source.mkdir(parents=True)
+        (source / "Values.cs").write_text("public class Values {}\n", encoding="utf-8")
+        return project, source
+
+    def test_exported_source_preserves_nested_response_paths_and_bytes(self):
+        project, source = self.exported_source()
+        nested = source / "Compiler Inputs/assembly refs.rsp"
+        nested.parent.mkdir()
+        nested.write_text('-reference:original="Exact References/Dependency.dll"\n', encoding="utf-8")
+        response = source / "csc.rsp"
+        response.write_text('@"Assets/Recovered/Source With Spaces/Compiler Inputs/assembly refs.rsp"\n',
+                            encoding="utf-8")
+        (source / "oracle.dll").write_bytes(b"validation-only managed oracle")
+        destination = run_fixture.source_destination(source, "RecoveryFixture")
+        self.assertEqual(destination, Path("Assets/Recovered/Source With Spaces"))
+        compiled = self.root / "compiled project"
+        record = {"sourceDestination": destination.as_posix(),
+                  "sourceFiles": run_fixture.copy_sources(source, compiled / destination)}
+        self.assertEqual(run_fixture.verify_source_copy(compiled, source, "RecoveryFixture", record),
+                         compiled / destination)
+        for relative in ("csc.rsp", "Compiler Inputs/assembly refs.rsp"):
+            self.assertEqual((compiled / destination / relative).read_bytes(), (source / relative).read_bytes())
+        self.assertFalse((compiled / destination / "oracle.dll").exists())
+        self.assertEqual(run_fixture.source_destination(self.fixture, "RecoveryFixture"),
+                         Path("Assets/RecoveryFixture"))
+        record["sourceDestination"] = "Assets/RecoveryFixture"
+        with self.assertRaisesRegex(ValueError, "original layout"):
+            run_fixture.verify_source_copy(compiled, source, "RecoveryFixture", record)
+
+    def test_exported_layout_requires_exact_version_and_valid_manifest(self):
+        project, source = self.exported_source()
+        version = project / "ProjectSettings/ProjectVersion.txt"
+        for text in ("m_EditorVersion: 2021.3.34f1\n", "m_EditorVersion\n",
+                     ("m_EditorVersion: " + run_fixture.VERSION + "\n") * 2):
+            version.write_text(text, encoding="utf-8")
+            with self.subTest(version=text), self.assertRaisesRegex(ValueError, "exact required version"):
+                run_fixture.source_destination(source, "RecoveryFixture")
+        version.write_text("m_EditorVersion: " + run_fixture.VERSION + "\n", encoding="utf-8")
+        manifest = project / "Packages/manifest.json"
+        for text in ('[]', '{"dependencies":[]}', '{"dependencies":{"example":1}}',
+                     '{"dependencies":{},"dependencies":{}}'):
+            manifest.write_text(text, encoding="utf-8")
+            with self.subTest(manifest=text), self.assertRaises(ValueError):
+                run_fixture.source_destination(source, "RecoveryFixture")
+        manifest.unlink()
+        with self.assertRaisesRegex(ValueError, "controls are missing"):
+            run_fixture.source_destination(source, "RecoveryFixture")
+
+    def test_general_assembly_names_and_intentional_firstpass_layout_are_preserved(self):
+        project, source = self.exported_source()
+        for assembly in ("Synthetic Application", "Assembly-CSharp", "Assembly-CSharp-firstpass"):
+            with self.subTest(assembly=assembly):
+                self.assertEqual(run_fixture.source_destination(source, assembly),
+                                 Path("Assets/Recovered/Source With Spaces"))
+                self.assertEqual(run_fixture.source_destination(self.fixture, assembly), Path("Assets") / assembly)
+        firstpass = project / "Assets/Plugins/Recovered/Assembly-CSharp-firstpass"
+        firstpass.mkdir(parents=True)
+        (firstpass / "Control.cs").write_text("public class Control {}\n", encoding="utf-8")
+        (firstpass / "csc.rsp").write_text(
+            '@"Assets/Plugins/Recovered/Assembly-CSharp-firstpass/references.rsp"\n', encoding="utf-8")
+        (firstpass / "references.rsp").write_text('-reference:original="Exact References/Dependency.dll"\n',
+                                                encoding="utf-8")
+        relative = Path("Assets/Plugins/Recovered/Assembly-CSharp-firstpass")
+        self.assertEqual(run_fixture.source_destination(firstpass, "Assembly-CSharp-firstpass"), relative)
+        compiled = self.root / "compiled firstpass"
+        record = {"sourceDestination": relative.as_posix(),
+                  "sourceFiles": run_fixture.copy_sources(firstpass, compiled / relative)}
+        run_fixture.verify_source_copy(compiled, firstpass, "Assembly-CSharp-firstpass", record)
+        for path in record["sourceFiles"]:
+            self.assertEqual((compiled / relative / path["path"]).read_bytes(),
+                             (firstpass / path["path"]).read_bytes())
+        for assembly in ("RecoveryFixture", "Assembly-CSharp"):
+            with self.subTest(assembly=assembly), self.assertRaisesRegex(ValueError, "infrastructure"):
+                run_fixture.source_destination(firstpass, assembly)
+        other = project / "Assets/Plugins/Recovered/Other"
+        other.mkdir()
+        with self.assertRaisesRegex(ValueError, "infrastructure"):
+            run_fixture.source_destination(other, "Assembly-CSharp-firstpass")
+
+    def test_exported_source_refuses_unsafe_roots_and_traversal(self):
+        project, source = self.exported_source()
+        validation = project / "Assets/Validation"
+        validation.mkdir()
+        for path in (project, project / "Assets", validation, source / ".." / source.name):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                run_fixture.source_destination(path, "RecoveryFixture")
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            run_fixture.source_destination(source, "../OtherAssembly")
+        for name in ("drive:path", "back\\slash", "trailing.", "vALIDATION"):
+            path = project / "Assets" / name
+            path.mkdir(exist_ok=True)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                run_fixture.source_destination(path, "RecoveryFixture")
+
+    @unittest.skipIf(os.name == "nt", "Symlink creation requires host privileges on Windows")
+    def test_exported_source_refuses_linked_source_root_and_controls(self):
+        project, source = self.exported_source()
+        linked = self.root / "linked export"
+        linked.symlink_to(project, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "symbolic links"):
+            run_fixture.source_destination(linked / source.relative_to(project), "RecoveryFixture")
+        for relative in (source.relative_to(project), Path("Assets"), Path("ProjectSettings"),
+                         Path("Packages"), Path("ProjectSettings/ProjectVersion.txt"),
+                         Path("Packages/manifest.json")):
+            path = project / relative
+            retained = path.with_name(path.name + ".retained")
+            path.rename(retained)
+            try:
+                path.symlink_to(retained, target_is_directory=retained.is_dir())
+                with self.subTest(link=relative), self.assertRaises(ValueError):
+                    run_fixture.source_destination(source, "RecoveryFixture")
+            finally:
+                path.unlink()
+                retained.rename(path)
 
     def test_source_copy_excludes_managed_oracles(self):
         source = self.root / "source"
@@ -161,6 +292,66 @@ class HarnessBoundaries(unittest.TestCase):
         self.write_baseline_receipt(receipt)
         self.assertEqual(run_roundtrip.checked_baseline(self.root, "arithmetic"), receipt)
 
+    def test_baseline_requires_every_original_gate(self):
+        receipt = self.baseline_receipt()
+        for name in ("unityCompilation", "editorBehavior", "nativeBuild", "playerBehavior"):
+            stage = receipt["stages"][name]
+            for status in ("unverified", "not-requested", "failed"):
+                with self.subTest(stage=name, status=status):
+                    stage["status"] = status
+                    self.write_baseline_receipt(receipt)
+                    with self.assertRaisesRegex(ValueError, "every original exact-target gate"):
+                        run_roundtrip.checked_baseline(self.root, "arithmetic")
+            stage["status"] = "passed"
+        receipt["stages"]["unityCompilation"]["version"] = "2021.3.34f1"
+        self.write_baseline_receipt(receipt)
+        with self.assertRaisesRegex(ValueError, "every original exact-target gate"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic")
+
+    def test_baseline_rejects_pruned_original_oracles_before_recovery(self):
+        receipt = self.baseline_receipt()
+        self.write_baseline_receipt(receipt)
+        assembly = run_roundtrip.FIXTURE_PROFILES["arithmetic"]["assembly"]
+        for relative in ("player/RecoveryFixture_BackUpThisFolder_ButDontShipItWithYourGame/Managed",
+                         "project/Library/ScriptAssemblies"):
+            path = self.root / relative / (assembly + ".dll")
+            original = path.read_bytes()
+            path.unlink()
+            with self.subTest(oracle=relative), self.assertRaisesRegex(ValueError, "oracle"):
+                run_roundtrip.checked_baseline(self.root, "arithmetic")
+            path.write_bytes(original)
+
+    def test_baseline_reauthenticates_runtime_inputs_and_inventory(self):
+        receipt = self.baseline_receipt()
+        for relative in ("RecoveryFixture.exe", "UnityPlayer.dll"):
+            path = self.root / "player-input" / relative
+            original = path.read_bytes()
+            path.write_bytes(b"changed runtime input")
+            self.write_baseline_receipt(receipt)
+            with self.subTest(input=relative), self.assertRaisesRegex(ValueError, "changed since"):
+                run_roundtrip.checked_baseline(self.root, "arithmetic")
+            path.write_bytes(original)
+        for records in (receipt["playerInputs"][:-1], receipt["playerInputs"] + [receipt["playerInputs"][0]]):
+            changed = {**receipt, "playerInputs": records}
+            self.write_baseline_receipt(changed)
+            with self.subTest(inventory=len(records)), self.assertRaisesRegex(ValueError, "incomplete or duplicated"):
+                run_roundtrip.checked_baseline(self.root, "arithmetic")
+        self.write_baseline_receipt(receipt)
+        (self.root / "player-input/Unexpected.dll").write_bytes(b"unrecorded runtime dependency")
+        with self.assertRaisesRegex(ValueError, "path set differs"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic")
+
+    @unittest.skipIf(os.name == "nt", "Symlink creation requires host privileges on Windows")
+    def test_baseline_rejects_linked_original_oracle_parent(self):
+        receipt = self.baseline_receipt()
+        self.write_baseline_receipt(receipt)
+        original = self.root / "project/Library"
+        retained = self.root / "retained-library"
+        original.rename(retained)
+        original.symlink_to(retained, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "oracle is missing or linked"):
+            run_roundtrip.checked_baseline(self.root, "arithmetic")
+
     def test_baseline_requires_requested_code_generation(self):
         receipt = self.baseline_receipt()
         self.write_baseline_receipt(receipt)
@@ -171,6 +362,15 @@ class HarnessBoundaries(unittest.TestCase):
         self.write_baseline_receipt(receipt)
         self.assertEqual(run_roundtrip.checked_baseline(
             self.root, "arithmetic", expected_code_generation="OptimizeSize"), receipt)
+
+    def test_baseline_requires_supplied_windows_editor_host(self):
+        receipt = self.baseline_receipt()
+        for host in ("OSXEditor", None):
+            with self.subTest(host=host):
+                receipt["stages"]["nativeBuild"]["host"] = host
+                self.write_baseline_receipt(receipt)
+                with self.assertRaisesRegex(ValueError, "required profile"):
+                    run_roundtrip.checked_baseline(self.root, "arithmetic")
 
     def test_baseline_rejects_changed_or_added_fixture_source(self):
         receipt = self.baseline_receipt()
@@ -210,8 +410,7 @@ class HarnessBoundaries(unittest.TestCase):
         (harness / "BehaviorProbe.cs").write_text("public class BehaviorProbe {}\n", encoding="utf-8")
         profile = {**run_roundtrip.FIXTURE_PROFILES["reference-store"], "source": fixture}
         with mock.patch.dict(run_roundtrip.FIXTURE_PROFILES, {"reference-store": profile}):
-            receipt = self.baseline_receipt()
-            receipt["profile"] = "reference-store"
+            receipt = self.baseline_receipt("reference-store")
             receipt["sourceFiles"] = [{"path": "Store.cs", "sha256": run_roundtrip.digest(fixture / "Store.cs")}]
             receipt["harnessFiles"] = [
                 {"path": "Runtime/BehaviorProbe.cs", "sha256": run_roundtrip.digest(harness / "BehaviorProbe.cs")},

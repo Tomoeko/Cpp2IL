@@ -85,6 +85,8 @@ public static class DeadCodeEliminator
                 Operands: [_, LocalVariable, LocalVariable, Immediate { Value: 32 or 64 }, Immediate { Value: >= 0 and <= 15 }]
             },
             OpCode.IntegerExtend => IntegerExtension.IsPureAndValid(instruction),
+            OpCode.FloatSelect => FloatSelection.TryGet(instruction, out _),
+            OpCode.FloatProject => FloatProjection.TryGet(instruction, out _),
             _ => false
         };
         if (!pureOperation)

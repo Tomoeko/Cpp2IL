@@ -22,6 +22,8 @@ public static partial class IlGenerator
         if (current == null || !current.Body.SequenceEqual(evidence.Body) ||
             !current.Sites.SequenceEqual(evidence.Sites) ||
             !current.RemovedAddresses.SetEquals(evidence.RemovedAddresses) ||
+            !current.NullCheckedCalls.SequenceEqual(evidence.NullCheckedCalls) ||
+            !current.InvocationArguments.SequenceEqual(evidence.InvocationArguments) ||
             !current.EffectAddresses.SequenceEqual(evidence.EffectAddresses) ||
             LinearInstructions(method.ControlFlowGraph!) is not { } instructions)
             throw ArrayOperationFailure("the native evidence or successful linear path changed");
@@ -71,11 +73,28 @@ public static partial class IlGenerator
         {
             var native = evidence.Body.Single(instruction => instruction.IP == effect.NativeAddress);
             var target = effect.Operands.OfType<MethodAnalysisContext>().SingleOrDefault();
+            var check = evidence.NullCheckedCalls.SingleOrDefault(call => call.Ip == native.IP);
             if (native.Code != Code.Call_rel32_64 || target == null ||
                 target.UnderlyingPointer != native.NearBranchTarget ||
                 !ReferenceEquals(target.AppContext, method.AppContext) ||
-                !X64GuardedArrayOperationProof.HasEligibleEffectCall(target))
+                !X64GuardedArrayOperationProof.HasEligibleEffectCall(target) ||
+                check == null && effect.CallSemantics != CallSemantics.Direct ||
+                check != null &&
+                (effect.CallSemantics != CallSemantics.NullCheckedInstance ||
+                 !NullCheckedCall.TryGet(effect, out var checkedTarget, out var receiver) ||
+                 !ReferenceEquals(checkedTarget, target) ||
+                 !ValidCheckedReceiver(method, instructions, receiver,
+                     instructions.IndexOf(effect), check.Receiver, operations)))
                 throw ArrayOperationFailure("an intervening call lost its unique original native target");
+            var start = effect.OpCode == OpCode.Call ? 2 : 1;
+            var arguments = evidence.InvocationArguments.Where(argument => argument.CallIp == native.IP).ToArray();
+            var end = start + arguments.Length;
+            if (effect.IntegerBitWidth != 0 || effect.Operands.Count != end &&
+                !(effect.Operands.Count == end + 1 && effect.Operands[end] is Immediate { Value: 0 }) ||
+                arguments.Where((argument, index) => !ReferenceEquals(argument.Target, target) ||
+                    !ValidInvocationArgument(method, instructions, effect.Operands[start + index],
+                        instructions.IndexOf(effect), argument, operations)).Any())
+                throw ArrayOperationFailure("an intervening call lost its original typed argument value");
         }
         if (instructions.Any(instruction => instruction.Destination is FieldReference field &&
                 (field.Field.Attributes & System.Reflection.FieldAttributes.InitOnly) != 0))
@@ -115,7 +134,7 @@ public static partial class IlGenerator
                    ReferenceEquals(parameter.ParameterType, site.ElementType) &&
                    ReachesArrayEntry(method, instructions, local, before, origin.EntryRegister, parameter);
         var definition = UniqueAt(instructions, ip, instruction => instruction.Destination is LocalVariable);
-        return definition != null && ReachesDefinition(instructions, local, before, definition) &&
+        return definition != null && ReachesDefinition(instructions, local, before, definition, site.ElementType) &&
                (operations.Contains(definition) && definition.Operands is [LocalVariable, ArrayAccess] ||
                 definition is { OpCode: OpCode.Move, IntegerBitWidth: 0 or 32,
                     Operands: [LocalVariable, FieldReference field] } &&
@@ -129,6 +148,28 @@ public static partial class IlGenerator
         List<Instruction> instructions, LocalVariable array, int before,
         X64GuardedArrayOperationProof.Origin origin)
     {
+        if (origin.Call is { } returned)
+        {
+            var call = UniqueAt(instructions, returned.Ip, instruction => instruction is
+                { OpCode: OpCode.Call, IntegerBitWidth: 0, Destination: LocalVariable });
+            return origin.EntryRegister == Iced.Intel.Register.None && origin.FieldReadIp == null &&
+                   origin.Field == null && origin.Parameter == null && call != null &&
+                   call.Operands[0] is MethodAnalysisContext target && ReferenceEquals(target, returned.Target) &&
+                   call.Destination is LocalVariable result &&
+                   NullCheckedCall.SameOrdinaryType(result.Type, target.ReturnType) &&
+                   NullCheckedCall.SameOrdinaryType(array.Type, target.ReturnType) &&
+                   ReachesDefinition(instructions, array, before, call) &&
+                   (returned.ReceiverEntry is { } entry
+                       ? !target.IsStatic && NullCheckedCall.TryGet(call, out var originalTarget, out var receiver) &&
+                         ReferenceEquals(originalTarget, target) &&
+                         ReachesArrayEntry(method, instructions, receiver, instructions.IndexOf(call), entry,
+                             X64GuardedArrayOperationProof.EntryParameter(method, entry))
+                       : target.IsStatic) &&
+                   (call.CallSemantics == CallSemantics.Direct ||
+                    call.CallSemantics == CallSemantics.NullCheckedInstance &&
+                    NullCheckedCall.TryGet(call, out var guardedTarget, out _) &&
+                    ReferenceEquals(guardedTarget, target));
+        }
         if (origin.FieldReadIp is not { } fieldIp)
             return origin.Field == null && origin.Parameter is { } parameter &&
                    ReachesArrayEntry(method, instructions, array, before, origin.EntryRegister, parameter);
@@ -148,25 +189,100 @@ public static partial class IlGenerator
                    origin.EntryRegister, null);
     }
 
+    private static bool ValidCheckedReceiver(MethodAnalysisContext method, List<Instruction> instructions,
+        LocalVariable receiver, int before, X64GuardedArrayOperationProof.ValueOrigin origin,
+        HashSet<Instruction> operations)
+    {
+        if (origin.DefinitionIp is not { } ip)
+            return ReachesArrayEntry(method, instructions, receiver, before, origin.EntryRegister,
+                X64GuardedArrayOperationProof.EntryParameter(method, origin.EntryRegister));
+        var definition = UniqueAt(instructions, ip, instruction => instruction.Destination is LocalVariable);
+        return definition != null && ReachesDefinition(instructions, receiver, before, definition) &&
+               (operations.Contains(definition) && definition.Operands is [LocalVariable, ArrayAccess] ||
+                definition is { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                    Operands: [LocalVariable, FieldReference field] } &&
+                NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(field) ||
+                definition.IsCall && definition.Operands.OfType<MethodAnalysisContext>().SingleOrDefault() is { } target &&
+                X64GuardedArrayOperationProof.HasEligibleEffectCall(target));
+    }
+
+    private static bool ValidInvocationArgument(MethodAnalysisContext method, List<Instruction> instructions,
+        IOperand value, int before, X64GuardedArrayOperationProof.InvocationArgument argument,
+        HashSet<Instruction> operations)
+    {
+        var type = argument.ParameterIndex < 0 ? argument.Target.DeclaringType! :
+            argument.Target.Parameters[argument.ParameterIndex].ParameterType;
+        if (X64GuardedArrayOperationProof.ArgumentBits(type) != argument.Bits) return false;
+        if (argument.Literal is { } literal)
+            return argument.Origin == null && TryInvocationLiteral(instructions, value, before, type, out var actual) &&
+                   X64GuardedArrayOperationProof.TryArgumentLiteral(type, unchecked((ulong)actual), out var normalized) &&
+                   normalized == literal && (actual == normalized ||
+                       type.Type == LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_U4 &&
+                       actual is >= int.MinValue and <= uint.MaxValue && unchecked((uint)actual) == (uint)normalized);
+        if (value is not LocalVariable local || !NullCheckedCall.SameOrdinaryType(local.Type, type) ||
+            argument.Origin is not { } origin) return false;
+        if (origin.DefinitionIp is not { } ip)
+            return ReachesArrayEntry(method, instructions, local, before, origin.EntryRegister,
+                X64GuardedArrayOperationProof.EntryParameter(method, origin.EntryRegister));
+        var definition = UniqueAt(instructions, ip, instruction => instruction.Destination is LocalVariable);
+        if (definition?.Destination is not LocalVariable captured ||
+            !NullCheckedCall.SameOrdinaryType(captured.Type, type) ||
+            !ReachesDefinition(instructions, local, before, definition, type)) return false;
+        if (argument.ArrayRead)
+            return operations.Contains(definition) && definition.Operands is [LocalVariable, ArrayAccess];
+        if (argument.Producer is { } producer)
+            return definition is { OpCode: OpCode.Call, IntegerBitWidth: 0, Operands: [var target, ..] } &&
+                   ReferenceEquals(target, producer) && NullCheckedCall.SameOrdinaryType(producer.ReturnType, type);
+        return argument.Field is { } field && definition is { OpCode: OpCode.Move, IntegerBitWidth: 0 or 32,
+                   CallSemantics: CallSemantics.Direct, Operands: [LocalVariable, FieldReference access] } &&
+               ReferenceEquals(access.Field, field) && access.Offset == field.Offset &&
+               NullCheckedCall.SameOrdinaryType(field.FieldType, type) &&
+               (type.IsValueType ? NarrowFieldEqualityProof.HasUnchangedFieldLayout(access, argument.Bits) :
+                   NarrowFieldEqualityProof.HasUnchangedReferenceFieldLayout(access)) &&
+               ReachesArrayEntry(method, instructions, access.Local, instructions.IndexOf(definition), argument.FieldOwner,
+                   X64GuardedArrayOperationProof.EntryParameter(method, argument.FieldOwner));
+    }
+
+    private static bool TryInvocationLiteral(List<Instruction> instructions, IOperand value, int before,
+        TypeAnalysisContext type, out long literal)
+    {
+        literal = 0;
+        while (value is LocalVariable local)
+        {
+            if (!NullCheckedCall.SameOrdinaryType(local.Type, type)) return false;
+            var definition = instructions.Take(before).LastOrDefault(instruction => ReferenceEquals(instruction.Destination, local));
+            if (definition is not { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                    CallSemantics: CallSemantics.Direct, Operands: [LocalVariable, var copied] }) return false;
+            before = instructions.IndexOf(definition);
+            value = copied;
+        }
+        if (value is not Immediate immediate) return false;
+        literal = immediate.Value;
+        return true;
+    }
+
     private static bool ReachesArrayEntry(MethodAnalysisContext method, List<Instruction> instructions,
         LocalVariable value, int before, Iced.Intel.Register entryRegister,
         ParameterAnalysisContext? expectedParameter)
     {
         var parameter = X64GuardedArrayOperationProof.EntryParameter(method, entryRegister);
+        var entryType = X64GuardedArrayOperationProof.EntryType(method, entryRegister);
+        if (entryType == null) return false;
         if (expectedParameter != null && !ReferenceEquals(parameter, expectedParameter))
             return false;
-        var seen = new HashSet<LocalVariable>();
-        while (seen.Add(value))
+        var seen = new HashSet<(LocalVariable, int)>();
+        while (seen.Add((value, before)))
         {
-            if (method.ParameterLocals.Contains(value))
+            if (!NullCheckedCall.SameOrdinaryType(value.Type, entryType)) return false;
+            var definition = instructions.Take(before).LastOrDefault(instruction =>
+                ReferenceEquals(instruction.Destination, value));
+            if (definition == null && method.ParameterLocals.Contains(value))
                 return value.IsThis
                     ? !method.IsStatic && entryRegister == Iced.Intel.Register.RCX &&
                       ReferenceEquals(value.Type, method.DeclaringType)
                     : LocalVariables.GetIncomingParameterIndex(method, value) is { } index &&
                       ReferenceEquals(method.Parameters[index], parameter) &&
                       NullCheckedCall.SameOrdinaryType(value.Type, parameter!.ParameterType);
-            var definition = instructions.Take(before).LastOrDefault(instruction =>
-                ReferenceEquals(instruction.Destination, value));
             if (definition is not { OpCode: OpCode.Move, IntegerBitWidth: 0,
                     CallSemantics: CallSemantics.Direct, Operands: [LocalVariable, LocalVariable source] })
                 return false;
@@ -186,7 +302,7 @@ public static partial class IlGenerator
         var definition = UniqueAt(instructions, ip, instruction => instruction.Destination is LocalVariable);
         if (definition?.Destination is not LocalVariable value ||
             !ReferenceEquals(value.Type, method.AppContext.SystemTypes.SystemInt32Type) ||
-            !ReachesDefinition(instructions, index, before, definition))
+            !ReachesDefinition(instructions, index, before, definition, method.AppContext.SystemTypes.SystemInt32Type))
             return false;
         if (definition.IsCall)
             return definition.Operands.OfType<MethodAnalysisContext>().SingleOrDefault() is { } target &&

@@ -31,6 +31,9 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "conditional-call-result-tail",
     "lookup-guard-managed-throw",
     "guarded-array-operations",
+    "array-call-origins",
+    "scalar-float-selection",
+    "native-null-checked-invocation",
     "scalar-positive-zero-leaf",
     "fixed-boolean-conjunction",
     "boolean-literal-store",
@@ -136,6 +139,32 @@ def owned_snapshot_file(directory, path):
     return path.is_file()
 
 
+def verify_player_inputs(directory, recorded):
+    """Authenticate the complete isolated runtime, including behavior dependencies."""
+    if (not isinstance(recorded, list) or not recorded or
+            any(not isinstance(item, dict) or not isinstance(item.get("path"), str) or
+                not isinstance(item.get("sha256"), str) for item in recorded)):
+        raise ValueError("Native player input inventory is missing or malformed")
+    files = {item["path"]: item["sha256"] for item in recorded}
+    if len(files) != len(recorded) or not set((*PLAYER_FILES, "RecoveryFixture.exe", "UnityPlayer.dll")) <= files.keys():
+        raise ValueError("Native player input inventory is incomplete or duplicated")
+    root = directory / "player-input"
+    actual = set()
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError("Native player input may not contain symbolic links")
+        if path.is_file():
+            actual.add(path.relative_to(root).as_posix())
+    if actual != files.keys():
+        raise ValueError("Native player input path set differs from its build receipt")
+    for relative, expected in files.items():
+        path = root / relative
+        if (Path(relative).is_absolute() or ".." in Path(relative).parts or
+                not path.resolve().is_relative_to(root.resolve()) or
+                not owned_snapshot_file(directory, path) or digest(path) != expected):
+            raise ValueError("Native player input changed since its build receipt")
+
+
 def verify_snapshot_inputs(directory, receipt):
     """Authenticate the isolated player, tools, oracles and recovered artifacts."""
     for key, root in (("inputFiles", "recovery-input"), ("toolFiles", "tool"),
@@ -173,7 +202,7 @@ def snapshot_managed_oracles(baseline, directory, assembly, reference_directorie
     }
     snapshots = {}
     for kind, source in sources.items():
-        if not source.is_file() or source.is_symlink():
+        if not owned_snapshot_file(baseline, source):
             raise ValueError("Original " + kind + " managed oracle is missing or linked")
         source_hash = digest(source)
         target = oracle_root / kind / (assembly + ".dll")
@@ -243,15 +272,18 @@ def checked_baseline(directory, profile, expected_manifest_sha256=None,
         raise ValueError("Baseline must be a successful original synthetic fixture run")
     if receipt.get("profile", "arithmetic") != profile:
         raise ValueError("Baseline fixture profile does not match the requested round trip")
+    stages = receipt.get("stages", {})
+    if (any(not isinstance(stages.get(name), dict) or stages[name].get("status") != "passed"
+            for name in ("unityCompilation", "editorBehavior", "nativeBuild", "playerBehavior")) or
+            stages["unityCompilation"].get("version") != VERSION):
+        raise ValueError("Baseline must have passed every original exact-target gate")
     build = receipt["stages"]["nativeBuild"]
-    expected = {"unityVersion": VERSION, "target": "StandaloneWindows64", "backend": "IL2CPP",
+    expected = {"unityVersion": VERSION, "host": "WindowsEditor", "target": "StandaloneWindows64", "backend": "IL2CPP",
                 "compilerConfiguration": "Release", "codeGeneration": expected_code_generation,
                 "development": False, "errors": 0,
                 "result": "Succeeded"}
     if any(build.get(key) != value for key, value in expected.items()):
         raise ValueError("Baseline native build does not match the required profile")
-    if receipt["stages"]["playerBehavior"].get("status") != "passed":
-        raise ValueError("Baseline must have passed its native behavior checks")
     sources, harness = current_baseline_files(profile)
     verify_recorded_files(receipt.get("sourceFiles"), sources, "fixture source")
     verify_recorded_files(receipt.get("harnessFiles"), harness, "harness source")
@@ -267,10 +299,11 @@ def checked_baseline(directory, profile, expected_manifest_sha256=None,
     if expected_manifest_sha256 is not None and (
             recorded_manifest.get("resolvedLockSha256") != resolved_package_lock_sha256(directory / "project")):
         raise ValueError("Baseline resolved package lock differs from its build receipt")
-    files = {item["path"]: item for item in receipt["playerInputs"]}
-    for relative in PLAYER_FILES:
-        if digest(directory / "player-input" / relative) != files[relative]["sha256"]:
-            raise ValueError("Baseline player input changed since its build receipt")
+    verify_player_inputs(directory, receipt.get("playerInputs"))
+    assembly = FIXTURE_PROFILES[profile]["assembly"]
+    managed_oracle(directory, assembly)
+    if not owned_snapshot_file(directory, directory / "project/Library/ScriptAssemblies" / (assembly + ".dll")):
+        raise ValueError("Baseline original managed oracle is missing or linked; rebuild a pruned original")
     if profile == "external-references":
         verify_external_reference_fixture(directory / "project", directory, receipt.get("externalDependencies"))
     if profile in EMBEDDED_FIXTURE_PACKAGES:

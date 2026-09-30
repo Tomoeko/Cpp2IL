@@ -10,10 +10,10 @@ import sys
 import time
 
 from run_fixture import (ROOT, VERSION, EMBEDDED_FIXTURE_PACKAGES, run_process, write_json,
-                         verify_behavior, verify_embedded_fixture_dependency)
+                         verify_behavior, verify_embedded_fixture_dependency, verify_source_copy)
 from run_roundtrip import (PROFILES, checked_baseline, current_source_files, digest,
                           checked_managed_oracle_snapshots, managed_oracle, verify_snapshot_inputs,
-                          owned_snapshot_file, PLAYER_FILES)
+                          owned_snapshot_file, verify_player_inputs)
 
 
 BUILD_SETTINGS = ("unityVersion", "host", "target", "backend", "compilerConfiguration",
@@ -22,19 +22,7 @@ BUILD_SETTINGS = ("unityVersion", "host", "target", "backend", "compilerConfigur
 
 
 def verify_batch_player(batch_directory, batch):
-    files = batch["playerInputs"]
-    if not isinstance(files, list) or not files:
-        raise ValueError("Batch player input inventory is missing")
-    recorded = {item["path"]: item["sha256"] for item in files}
-    if len(recorded) != len(files) or not set((*PLAYER_FILES, "RecoveryFixture.exe", "UnityPlayer.dll")) <= recorded.keys():
-        raise ValueError("Batch player input inventory is incomplete or duplicated")
-    root = batch_directory / "player-input"
-    for relative, expected in recorded.items():
-        path = root / relative
-        if (Path(relative).is_absolute() or ".." in Path(relative).parts or
-                not path.resolve().is_relative_to(root.resolve()) or
-                not owned_snapshot_file(batch_directory, path) or digest(path) != expected):
-            raise ValueError("Rebuilt player input changed during validation")
+    verify_player_inputs(batch_directory, batch.get("playerInputs"))
 
 
 def checked_batch_profile(directory, prepared, batch_directory, batch):
@@ -47,7 +35,7 @@ def checked_batch_profile(directory, prepared, batch_directory, batch):
     if prepared["scope"] != assembly or record["assembly"] != assembly:
         raise ValueError("Batch changed the fixture assembly boundary")
     source = directory / "recovered/UnityProject/Assets/Recovered" / assembly
-    if Path(prepared["batchSourceDirectory"]).resolve() != source.resolve():
+    if Path(prepared["batchSourceDirectory"]).absolute() != source.absolute():
         raise ValueError("Prepared source directory differs from the recovered assembly")
     expected = current_source_files(source)
     recorded = record["sourceFiles"]
@@ -56,7 +44,8 @@ def checked_batch_profile(directory, prepared, batch_directory, batch):
     actual = {item["path"]: item["sha256"] for item in recorded}
     if len(actual) != len(recorded) or actual != expected:
         raise ValueError("Batch did not compile the byte-identical recovered source")
-    if current_source_files(batch_directory / "project/Assets" / assembly) != expected:
+    compiled_source = verify_source_copy(batch_directory / "project", source, assembly, record)
+    if current_source_files(compiled_source) != expected:
         raise ValueError("Compiled batch source changed after its receipt")
     stages = record["stages"]
     if set(stages) != {"unityCompilation", "editorBehavior", "nativeBuild", "playerBehavior"}:

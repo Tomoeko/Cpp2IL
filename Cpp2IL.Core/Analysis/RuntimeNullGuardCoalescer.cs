@@ -35,6 +35,8 @@ internal static class RuntimeNullGuardCoalescer
     {
         internal bool IsValidFor(MethodAnalysisContext method)
         {
+            if (StoredValue != null && X64ScalarFloatingFieldStoreProof.HasRecord(method, Operation))
+                return X64ScalarFloatingFieldStoreProof.IsValidFor(method, Operation, Access);
             if (method.ControlFlowGraph?.Instructions.Contains(Operation) != true ||
                 Operation is not { OpCode: OpCode.Move, IntegerBitWidth: 0, CallSemantics: CallSemantics.Direct } ||
                 Operation.Operands.Count != 2 ||
@@ -295,7 +297,7 @@ internal static class RuntimeNullGuardCoalescer
             var nullEntry = comparison.OpCode == OpCode.CheckEqual ? taken : other;
             var callEntry = comparison.OpCode == OpCode.CheckEqual ? other : taken;
             if (!NullArmIsExclusive(nullEntry, guard) ||
-                !TryGuardedOperation(callEntry, guard, receiver, out var operation, out var fieldAccess,
+                !TryGuardedOperation(callEntry, guard, receiver, comparison, branch, out var operation, out var fieldAccess,
                     out var storedValue, out var arrayLength))
                 continue;
 
@@ -368,6 +370,7 @@ internal static class RuntimeNullGuardCoalescer
         }
 
         bool TryGuardedOperation(Block entry, Block predecessor, LocalVariable receiver,
+            Instruction comparison, Instruction branch,
             out Instruction operation, out FieldReference? fieldAccess, out IOperand? storedValue,
             out ArrayLengthReadRecovery.Evidence? arrayLength)
         {
@@ -377,6 +380,7 @@ internal static class RuntimeNullGuardCoalescer
             arrayLength = null;
             var seen = new HashSet<Block> { predecessor };
             var pendingTailArgumentSetup = false;
+            var pendingTypedInvocationSetup = false;
             while (true)
             {
                 if (entry == graph.EntryBlock || entry == graph.ExitBlock || !seen.Add(entry) ||
@@ -400,26 +404,39 @@ internal static class RuntimeNullGuardCoalescer
                         continue; // This read stays behind the retained null-branch probe.
                     if (instruction.IsCall)
                     {
-                        if (!NullCheckedCall.TryGet(instruction, out var target, out var calledReceiver))
+                        var ordinaryTypedCall = NullCheckedCall.TryGet(instruction, out var target, out var calledReceiver);
+                        if (!ordinaryTypedCall && (!requireNativeFieldBinding ||
+                                !X64NativeNullCheckedInvocationProof.TryGetCandidate(method, instruction,
+                                    out target, out calledReceiver)))
+                            return false;
+                        if (!ReferenceEquals(target.AppContext, method.AppContext) ||
+                            !ReferenceEquals(calledReceiver, receiver) ||
+                            OperandEffects.ReadLocals(instruction).Any(local => !Available(local, entry, instruction)))
                             return false;
                         var originKind = TraceReceiverOrigin(receiver,
                             local => definitions.TryGetValue(local,
                                 out var definition) ? definition.Instruction : null,
                             local => method.ParameterLocals.Contains(local),
                             out var origin);
-                        if (requireNativeFieldBinding && originKind is
-                            ReceiverOrigin.CopiedCallResult or ReceiverOrigin.InvalidCopyChain)
-                            return false;
-                        var targetBound = requireNativeFieldBinding &&
-                            originKind == ReceiverOrigin.DirectCallResult
+                        // A legacy call signature cannot type a retained write
+                        // through a composed field address. Authenticate and
+                        // normalize that write before admitting this invocation.
+                        var composedStore = requireNativeFieldBinding && graph.Instructions.Any(rawStore =>
+                            rawStore is { OpCode: OpCode.Move, Operands: [MemoryOperand, _] });
+                        var targetBound = composedStore && X64NativeNullCheckedInvocationProof.TryRecord(method,
+                            comparison, branch, receiver, instruction, target);
+                        if (!targetBound && ordinaryTypedCall && !pendingTypedInvocationSetup &&
+                            !(requireNativeFieldBinding && originKind is
+                                ReceiverOrigin.CopiedCallResult or ReceiverOrigin.InvalidCopyChain))
+                            targetBound = requireNativeFieldBinding && originKind == ReceiverOrigin.DirectCallResult
                                 ? CallResultNullGuardProof.HasBoundTarget(method,
                                     receiver, origin!, instruction, target,
                                     requireTail: pendingTailArgumentSetup)
                                 : !pendingTailArgumentSetup && provesNativeTarget(target);
-                        if (!targetBound ||
-                            !ReferenceEquals(target.AppContext, method.AppContext) ||
-                            !ReferenceEquals(calledReceiver, receiver) ||
-                            OperandEffects.ReadLocals(instruction).Any(local => !Available(local, entry, instruction)))
+                        if (!targetBound && requireNativeFieldBinding)
+                            targetBound = X64NativeNullCheckedInvocationProof.TryRecord(method,
+                                comparison, branch, receiver, instruction, target);
+                        if (!targetBound)
                             return false;
                         operation = instruction;
                         return true; // Instructions after this invocation are untouched.
@@ -437,6 +454,17 @@ internal static class RuntimeNullGuardCoalescer
                         operation = instruction;
                         fieldAccess = access;
                         return true; // The first effect is the managed field read and null check.
+                    }
+                    if (instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0,
+                            Operands: [FieldReference floatingAccess, var floatingValue] } &&
+                        requireNativeFieldBinding && ReferenceEquals(floatingAccess.Local, receiver) &&
+                        X64ScalarFloatingFieldStoreProof.TryRecord(method, comparison, branch,
+                            receiver, instruction, floatingAccess, floatingValue))
+                    {
+                        operation = instruction;
+                        fieldAccess = floatingAccess;
+                        storedValue = floatingValue;
+                        return true;
                     }
                     if (instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0,
                             Operands: [FieldReference writeAccess, var value] } &&
@@ -469,6 +497,25 @@ internal static class RuntimeNullGuardCoalescer
                     }
                     if (instruction.OpCode == OpCode.Nop && instruction.IntegerBitWidth == 0 && instruction.Operands.Count == 0)
                         continue;
+                    // These operations only form a register argument. The new
+                    // invocation proof must bind the original typed parameter or
+                    // literal and its native bits before this path is admitted.
+                    if (requireNativeFieldBinding && instruction.NativeAddress != null &&
+                        instruction.CallSemantics == CallSemantics.Direct &&
+                        instruction.Destination is LocalVariable scalarSetup &&
+                        !escapedSlots.Contains(scalarSetup.Register.Number) &&
+                        !method.ParameterLocals.Contains(scalarSetup) &&
+                        OperandEffects.ReadLocals(instruction).All(local => Available(local, entry, instruction)) &&
+                        (instruction is { OpCode: OpCode.IntegerExtend, IntegerBitWidth: 0,
+                             Operands: [LocalVariable, LocalVariable, Immediate { Value: 8 },
+                                 Immediate { Value: 32 }, Immediate { Value: 0 }] } ||
+                         instruction is { OpCode: OpCode.Subtract, IntegerBitWidth: 32,
+                             Operands: [LocalVariable, Immediate { Value: 0 },
+                                 Immediate { Value: >= int.MinValue and <= int.MaxValue }] }))
+                    {
+                        pendingTypedInvocationSetup = true;
+                        continue;
+                    }
                     // The exact terminal-tail proof later binds this one lifted LEA
                     // to its native integer argument. An unproved setup cannot
                     // broaden the ordinary direct-call guard path.

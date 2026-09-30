@@ -637,6 +637,19 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Andps:
             case Mnemonic.Orps:
             case Mnemonic.Xorps:
+            case Mnemonic.Xorpd:
+            case Mnemonic.Movapd:
+            case Mnemonic.Movupd:
+                if (instruction.Mnemonic is Mnemonic.Movaps or Mnemonic.Movups or Mnemonic.Movapd or Mnemonic.Movupd or
+                    Mnemonic.Xorps or Mnemonic.Xorpd &&
+                    X64ScalarFloatSelectionProof.CanProject(context, instruction, out var scalarWidth))
+                {
+                    var scalarCopy = instruction.Mnemonic is Mnemonic.Movaps or Mnemonic.Movups or Mnemonic.Movapd or Mnemonic.Movupd;
+                    ISIL.IOperand scalarValue = scalarCopy ? ConvertOperand(instruction, 1) :
+                        scalarWidth == 32 ? new ISIL.FloatLiteral(0f) : new ISIL.DoubleLiteral(0d);
+                    Add(instruction.IP, ISIL.OpCode.FloatProject, ConvertOperand(instruction, 0), scalarValue, Imm(scalarWidth));
+                    break;
+                }
                 // Raw-bit transfers, packed lanes and full-width memory accesses are not
                 // ordinary typed scalar moves/arithmetic. Even self-XOR requires an
                 // independently proved scalar projection before emitting a managed zero.
@@ -1280,8 +1293,18 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 break;
             case Mnemonic.Maxss:
             case Mnemonic.Minss:
-                // These operations have unordered/NaN and signed-zero behavior which integer flags do not model.
-                Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral("Floating comparison semantics are not recovered: " + FormatInstruction(instruction)));
+            case Mnemonic.Maxsd:
+            case Mnemonic.Minsd:
+                if (!X64ScalarFloatSelectionProof.CanLift(context, instruction))
+                {
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(
+                        "Scalar floating selection has no complete register/lane proof: " + FormatInstruction(instruction)));
+                    break;
+                }
+                Add(instruction.IP, ISIL.OpCode.FloatSelect, ConvertOperand(instruction, 0),
+                    ConvertOperand(instruction, 0), ConvertOperand(instruction, 1),
+                    Imm(instruction.Mnemonic is Mnemonic.Minss or Mnemonic.Maxss ? 32 : 64),
+                    Imm(instruction.Mnemonic is Mnemonic.Maxss or Mnemonic.Maxsd ? 1 : 0));
                 break;
 
             case Mnemonic.Cmove:

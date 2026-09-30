@@ -9,6 +9,7 @@ namespace Neutral.LookupGuard
         public static int ProducerCalls;
         public static int LookupCalls;
         public static int LastKey;
+        public static int HiddenGetterCalls;
 
         public static void Reset()
         {
@@ -16,18 +17,40 @@ namespace Neutral.LookupGuard
             ProducerCalls = 0;
             LookupCalls = 0;
             LastKey = 0;
+            HiddenGetterCalls = 0;
         }
     }
 
-    public class TextRecord
+    public class BaseTextRecord
+    {
+        protected string _inheritedText;
+
+        public string InheritedText
+        {
+            get { return _inheritedText; }
+            set { _inheritedText = value; }
+        }
+    }
+
+    public class TextRecord : BaseTextRecord
     {
         public string Text;
+        public string HiddenInheritedText;
         private string _propertyText;
 
         public string PropertyText
         {
             get { return _propertyText; }
             set { _propertyText = value; }
+        }
+
+        public new string InheritedText
+        {
+            get
+            {
+                LookupEffects.HiddenGetterCalls++;
+                return HiddenInheritedText;
+            }
         }
     }
 

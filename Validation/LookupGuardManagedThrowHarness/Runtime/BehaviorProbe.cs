@@ -10,6 +10,8 @@ namespace RecoveryValidation
 {
     public static class BehaviorProbe
     {
+        private enum ReadMode { Field, Property, Inherited, HiddenControl }
+
         public static void Write(string path, string stage)
         {
             var observations = new List<object>();
@@ -40,11 +42,26 @@ namespace RecoveryValidation
                 CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
                 Run(observations, "null-caller", null, 23, "unread");
                 Run(observations, "after-null-caller", reader, 29, "after-null");
-                Run(observations, "property-value", reader, 31, "property", property: true);
-                Run(observations, "property-null-text", reader, 0, null, property: true);
-                Run(observations, "property-absent", reader, 0, null, absent: true, property: true);
+                Run(observations, "property-value", reader, 31, "property", mode: ReadMode.Property);
+                Run(observations, "property-null-text", reader, 0, null, mode: ReadMode.Property);
+                Run(observations, "property-absent", reader, 0, null, absent: true, mode: ReadMode.Property);
                 Run(observations, "property-null-producer", reader, 33, null,
-                    nullProducer: true, property: true);
+                    nullProducer: true, mode: ReadMode.Property);
+                Run(observations, "inherited-value", reader, 41, "base", mode: ReadMode.Inherited);
+                Run(observations, "inherited-null-text", reader, 0, null, mode: ReadMode.Inherited);
+                Run(observations, "inherited-alias", reader, 43, new string(new[] { 'a', 'b' }),
+                    mode: ReadMode.Inherited);
+                Run(observations, "inherited-absent", reader, 0, null, absent: true, mode: ReadMode.Inherited);
+                CultureInfo.CurrentCulture = customCulture;
+                Run(observations, "inherited-custom-culture", reader, -17, null,
+                    absent: true, mode: ReadMode.Inherited);
+                CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+                Run(observations, "inherited-null-producer", reader, 47, null,
+                    nullProducer: true, mode: ReadMode.Inherited);
+                Run(observations, "inherited-lookup-throw", reader, -47, null,
+                    lookupThrows: true, mode: ReadMode.Inherited);
+                Run(observations, "inherited-null-caller", null, 53, "unread", mode: ReadMode.Inherited);
+                Run(observations, "hidden-getter-control", reader, 59, "hidden", mode: ReadMode.HiddenControl);
             }
             finally
             {
@@ -64,19 +81,25 @@ namespace RecoveryValidation
 
         private static void Run(List<object> observations, string kind, RecordReader reader,
             int key, string text, bool absent = false, bool nullProducer = false,
-            bool lookupThrows = false, bool property = false)
+            bool lookupThrows = false, ReadMode mode = ReadMode.Field)
         {
+            var record = absent ? null : new TextRecord
+            {
+                Text = text, PropertyText = text, HiddenInheritedText = "hidden"
+            };
+            if (record != null)
+                ((BaseTextRecord)record).InheritedText = text;
             RecordSource.Current = nullProducer ? null : new LookupService
             {
-                Current = absent ? null : new TextRecord { Text = text, PropertyText = text },
+                Current = record,
                 ThrowOnLookup = lookupThrows
             };
             LookupEffects.Reset();
-            Record(observations, kind, reader, key, text, property);
+            Record(observations, kind, reader, key, text, mode);
         }
 
         private static void Record(List<object> observations, string kind, RecordReader reader,
-            int key, string expectedText, bool property = false)
+            int key, string expectedText, ReadMode mode = ReadMode.Field)
         {
             string result = null;
             string exception = "none";
@@ -85,7 +108,13 @@ namespace RecoveryValidation
             bool? sameString = null;
             try
             {
-                result = property ? reader.ReadProperty(key) : reader.Read(key);
+                switch (mode)
+                {
+                    case ReadMode.Property: result = reader.ReadProperty(key); break;
+                    case ReadMode.Inherited: result = reader.ReadInherited(key); break;
+                    case ReadMode.HiddenControl: result = RecordSource.Current.Current.InheritedText; break;
+                    default: result = reader.Read(key); break;
+                }
                 sameString = ReferenceEquals(result, expectedText);
             }
             catch (Exception error)
@@ -107,7 +136,8 @@ namespace RecoveryValidation
                 { "initializations", LookupEffects.Initializations },
                 { "producerCalls", LookupEffects.ProducerCalls },
                 { "lookupCalls", LookupEffects.LookupCalls },
-                { "lastKey", LookupEffects.LastKey }
+                { "lastKey", LookupEffects.LastKey },
+                { "hiddenGetterCalls", LookupEffects.HiddenGetterCalls }
             });
         }
 

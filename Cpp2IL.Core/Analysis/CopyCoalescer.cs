@@ -9,9 +9,11 @@ namespace Cpp2IL.Core.Analysis;
 // Merge the copies left behind by SSA destruction.
 public static class CopyCoalescer
 {
-    public static void Run(MethodAnalysisContext method) => Run(method.ControlFlowGraph!);
+    public static void Run(MethodAnalysisContext method) => Run(method.ControlFlowGraph!, method.ParameterLocals);
 
-    public static void Run(ISILControlFlowGraph cfg)
+    public static void Run(ISILControlFlowGraph cfg) => Run(cfg, []);
+
+    private static void Run(ISILControlFlowGraph cfg, IEnumerable<LocalVariable> incomingParameters)
     {
         var copies = FindSameSlotCopies(cfg);
         var escapedSlots = FindEscapedSlotGroups(cfg);
@@ -31,7 +33,7 @@ public static class CopyCoalescer
 
         var interference = BuildInterference(cfg, candidates);
         var storageInterference = escapedSlots.Count == 0 ? interference : BuildInterference(cfg, candidates, true);
-        var groups = new DisjointSet(candidates);
+        var groups = new DisjointSet(candidates, incomingParameters);
 
         foreach (var group in escapedSlots)
         {
@@ -46,7 +48,8 @@ public static class CopyCoalescer
                 // SSA creates a new version when a slot's address can mutate it. These versions
                 // must share initialized storage, but an old value still live after a mutation
                 // needs a separate snapshot. Do not silently merge incompatible values.
-                if ((a.Type != null && b.Type != null && !ReferenceEquals(a.Type, b.Type))
+                if (groups.HasDistinctIncomingParameters(a, b)
+                    || (a.Type != null && b.Type != null && !ReferenceEquals(a.Type, b.Type))
                     || Interferes(storageInterference, groups, a, b))
                     throw new DecompilerException("Address-taken storage has incompatible or overlapping value versions.");
 
@@ -63,7 +66,8 @@ public static class CopyCoalescer
             if (a.Type != null && b.Type != null && !ReferenceEquals(a.Type, b.Type))
                 continue;
 
-            if (a == b || groups.Members(a).Any(mutableStorage.Contains) || groups.Members(b).Any(mutableStorage.Contains)
+            if (a == b || groups.HasDistinctIncomingParameters(a, b)
+                || groups.Members(a).Any(mutableStorage.Contains) || groups.Members(b).Any(mutableStorage.Contains)
                 || Interferes(interference, groups, a, b))
                 continue;
 
@@ -329,8 +333,9 @@ public static class CopyCoalescer
         return operand;
     }
 
-    private class DisjointSet(IEnumerable<LocalVariable> locals)
+    private class DisjointSet(IEnumerable<LocalVariable> locals, IEnumerable<LocalVariable> incomingParameters)
     {
+        private readonly HashSet<LocalVariable> _incomingParameters = new(incomingParameters);
         private readonly Dictionary<LocalVariable, LocalVariable> _parent = locals.ToDictionary(l => l, l => l);
         private readonly Dictionary<LocalVariable, List<LocalVariable>> _members = locals.ToDictionary(l => l, l => new List<LocalVariable> { l });
 
@@ -348,10 +353,17 @@ public static class CopyCoalescer
 
         public IEnumerable<LocalVariable> Members(LocalVariable representative) => _members[representative];
 
+        public bool HasDistinctIncomingParameters(LocalVariable a, LocalVariable b) =>
+            !ReferenceEquals(a, b) && _incomingParameters.Contains(a) && _incomingParameters.Contains(b);
+
         public void Union(LocalVariable a, LocalVariable b)
         {
-            // keep whichever already carries a type
-            var (keep, drop) = a.Type != null || b.Type == null ? (a, b) : (b, a);
+            // Entry operands are bound to initialized managed argument storage by
+            // identity. Keeping a later SSA version would turn earlier reads into
+            // reads of an uninitialized local, even when their register slots agree.
+            var (keep, drop) = _incomingParameters.Contains(a) ? (a, b) :
+                _incomingParameters.Contains(b) ? (b, a) :
+                a.Type != null || b.Type == null ? (a, b) : (b, a);
 
             _parent[drop] = keep;
             _members[keep].AddRange(_members[drop]);

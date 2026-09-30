@@ -24,7 +24,7 @@ class FixtureBatchTests(unittest.TestCase):
 
     def test_duplicate_profiles_and_assembly_boundaries_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
+            directory = Path(temporary).resolve()
             path = self.configuration(directory, [self.entry("static-field-getter")] * 2)
             with self.assertRaisesRegex(ValueError, "known and unique"):
                 batch.load_profiles(path)
@@ -46,7 +46,7 @@ class FixtureBatchTests(unittest.TestCase):
     def test_harness_isolation_preserves_fixture_and_behavior_source_bytes(self):
         names = ("static-field-getter", "virtual-string-call", "guarded-sink")
         with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
+            directory = Path(temporary).resolve()
             profiles = batch.load_profiles(self.configuration(directory, [self.entry(name) for name in names]))
             receipt = {"profiles": {name: {} for name in names}}
             project = directory / "project"
@@ -54,6 +54,7 @@ class FixtureBatchTests(unittest.TestCase):
             for item in profiles:
                 name, assembly = item["profile"], item["assembly"]
                 record = receipt["profiles"][name]
+                self.assertEqual(record["sourceDestination"], "Assets/" + assembly)
                 source = project / "Assets" / assembly
                 for copied in record["sourceFiles"]:
                     self.assertEqual((source / copied["path"]).read_bytes(),
@@ -87,12 +88,74 @@ class FixtureBatchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "inventory changed"):
                 batch.verify_inventory(probe.parent.parent, receipt["profiles"][names[0]]["harnessFiles"])
 
+    def test_replacement_export_keeps_its_original_assets_layout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            exported = directory / "exported project"
+            (exported / "ProjectSettings").mkdir(parents=True)
+            (exported / "Packages").mkdir()
+            (exported / "ProjectSettings/ProjectVersion.txt").write_text(
+                "m_EditorVersion: " + fixture.VERSION + "\n", encoding="utf-8")
+            (exported / "Packages/manifest.json").write_text('{"dependencies":{}}', encoding="utf-8")
+            name = "static-field-getter"
+            assembly = fixture.PROFILES[name]["assembly"]
+            source = exported / "Assets/Recovered" / assembly
+            fixture.copy_sources(fixture.PROFILES[name]["source"], source)
+            nested = source / "Compiler Inputs/exact refs.rsp"
+            nested.parent.mkdir()
+            nested.write_text('-reference:original="Reference Directory/Dependency.dll"\n', encoding="utf-8")
+            (source / "csc.rsp").write_text(
+                '@"Assets/Recovered/' + assembly + '/Compiler Inputs/exact refs.rsp"\n', encoding="utf-8")
+            profiles = batch.load_profiles(self.configuration(directory, [
+                {"profile": name, "sourceDirectory": str(source)}]))
+            receipt = {"profiles": {name: {}}}
+            project = directory / "compiled project"
+            batch.prepare_project(project, profiles, receipt)
+            record = receipt["profiles"][name]
+            destination = fixture.verify_source_copy(project, source, assembly, record)
+            self.assertEqual(record["sourceDestination"], "Assets/Recovered/" + assembly)
+            self.assertFalse((project / "Assets" / assembly).exists())
+            for copied in record["sourceFiles"]:
+                self.assertEqual((destination / copied["path"]).read_bytes(),
+                                 (source / copied["path"]).read_bytes())
+            (destination / "Compiler Inputs/exact refs.rsp").write_text("changed\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "inventory changed"):
+                fixture.verify_source_copy(project, source, assembly, record)
+
     def test_duplicate_configuration_keys_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "fixtures.json"
             path.write_text('{"profiles":[],"profiles":[]}', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "Duplicate configuration key"):
                 batch.load_profiles(path)
+
+    def test_exported_destinations_cannot_collide_under_windows_path_rules(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            entries = []
+            for index, name in enumerate(("static-field-getter", "static-scalar-setter")):
+                exported = directory / ("export" + str(index))
+                (exported / "ProjectSettings").mkdir(parents=True)
+                (exported / "Packages").mkdir()
+                (exported / "ProjectSettings/ProjectVersion.txt").write_text(
+                    "m_EditorVersion: " + fixture.VERSION + "\n", encoding="utf-8")
+                (exported / "Packages/manifest.json").write_text('{"dependencies":{}}', encoding="utf-8")
+                source = exported / "Assets/Recovered" / ("Shared" if index == 0 else "shared")
+                fixture.copy_sources(fixture.PROFILES[name]["source"], source)
+                entries.append({"profile": name, "sourceDirectory": str(source)})
+            with self.assertRaisesRegex(ValueError, "destinations may not overlap"):
+                batch.load_profiles(self.configuration(directory, entries))
+
+    @unittest.skipIf(os.name == "nt", "Symlink creation requires host privileges on Windows")
+    def test_batch_loading_does_not_resolve_away_linked_source_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            name = "static-field-getter"
+            source = directory / "linked source"
+            source.symlink_to(fixture.PROFILES[name]["source"], target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "symbolic links"):
+                batch.load_profiles(self.configuration(directory, [
+                    {"profile": name, "sourceDirectory": str(source)}]))
 
     @unittest.skipIf(os.name == "nt", "Wine editor locking is a POSIX host gate")
     def test_editor_queue_deadline_releases_for_a_later_run(self):

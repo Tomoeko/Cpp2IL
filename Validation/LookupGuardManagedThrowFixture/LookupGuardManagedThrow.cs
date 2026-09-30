@@ -25,5 +25,15 @@ namespace LookupGuardManagedThrowFixture
 
             return record.PropertyText;
         }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public string ReadInherited(int key)
+        {
+            var record = RecordSource.GetService().Find(key);
+            if (record == null)
+                throw new ArgumentException("Missing inherited key: " + key.ToString());
+
+            return ((BaseTextRecord)record).InheritedText;
+        }
     }
 }

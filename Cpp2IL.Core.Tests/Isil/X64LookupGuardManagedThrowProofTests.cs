@@ -18,6 +18,7 @@ public class X64LookupGuardManagedThrowProofTests
 {
     [TestCase("Read", false)]
     [TestCase("ReadProperty", true)]
+    [TestCase("ReadInherited", true)]
     public void ExactCallerRequiresBothExitBodiesAndEveryManagedIdentity(string name, bool usesGetter)
     {
         var directory = Environment.GetEnvironmentVariable("CPP2IL_LOOKUP_GUARD_MANAGED_THROW_FIXTURE_INPUT");
@@ -35,7 +36,7 @@ public class X64LookupGuardManagedThrowProofTests
             var app = Cpp2IlApi.CurrentAppContext!;
             var fixtureMethods = app.GetAssemblyByName("LookupGuardManagedThrowFixture")!.Types
                 .SelectMany(type => type.Methods).ToArray();
-            Assert.That(fixtureMethods, Has.Length.EqualTo(3));
+            Assert.That(fixtureMethods, Has.Length.EqualTo(4));
             var method = fixtureMethods.Single(candidate => candidate.Name == name);
             method.EnsureRawBytes();
             var native = X64NativeInstructionReader.ReadRootBody(method)!;
@@ -54,7 +55,8 @@ public class X64LookupGuardManagedThrowProofTests
                 Assert.That(proof.Concat.Name, Is.EqualTo("Concat"));
                 Assert.That(proof.StringGetter != null, Is.EqualTo(usesGetter));
                 Assert.That(proof.StringField.Visibility,
-                    Is.EqualTo(usesGetter ? FieldAttributes.Private : FieldAttributes.Public));
+                    Is.EqualTo(name == "ReadInherited" ? FieldAttributes.Family :
+                        usesGetter ? FieldAttributes.Private : FieldAttributes.Public));
                 Assert.That(X64LookupGuardManagedThrowProof.TryProveShape(body[..56]), Is.Null,
                     "The final nonvolatile restore belongs to the complete native body.");
             });
@@ -232,6 +234,62 @@ public class X64LookupGuardManagedThrowProofTests
                 changedGetter[0] ^= 1;
                 Reject(() => getter.RawBytes = new BinarySlice(changedGetter),
                     () => getter.RawBytes = getterBytes, "The replacement getter requires unchanged native bytes.");
+                var getterBindings = app.MethodsByAddress[getter.UnderlyingPointer];
+                Reject(() => app.MethodsByAddress[getter.UnderlyingPointer] = [proof.Concat],
+                    () => app.MethodsByAddress[getter.UnderlyingPointer] = getterBindings,
+                    "A body at a displaced managed destination cannot authenticate this original getter.");
+
+                if (name == "ReadInherited")
+                {
+                    var receiver = proof.Lookup.ReturnType;
+                    var hiddenProperty = receiver.Properties.Single(candidate => candidate.Name == property.Name);
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(getter.DeclaringType, Is.SameAs(receiver.BaseType));
+                        Assert.That(getter, Is.Not.SameAs(hiddenProperty.Getter));
+                        Assert.That(X64NativeInstructionReader.ReadFramelessLeaf(hiddenProperty.Getter!, 2, 32), Is.Null,
+                            "The hidden getter has an observable effect and cannot explain the inherited storage read.");
+                    });
+                    var definition = receiver.Definition!;
+                    var parent = definition.ParentIndex;
+                    Reject(() => definition.ParentIndex = definition.ByvalTypeIndex,
+                        () => definition.ParentIndex = parent,
+                        "Cyclic original receiver inheritance cannot authorize a base accessor.");
+                    Reject(() => definition.ParentIndex = app.SystemTypes.SystemObjectType.Definition!.ByvalTypeIndex,
+                        () => definition.ParentIndex = parent,
+                        "Removing the original storage ancestor invalidates inherited accessor binding.");
+                    foreach (var type in new[] { receiver, getter.DeclaringType })
+                    {
+                        var rawType = type.Definition!.RawType;
+                        var rawBase = type.Definition.RawBaseType!;
+                        var modifiers = rawType.NumMods;
+                        var baseModifiers = rawBase.NumMods;
+                        var byref = rawBase.Byref;
+                        var pinned = rawBase.Pinned;
+                        Reject(() => rawType.NumMods = 1, () => rawType.NumMods = modifiers,
+                            "Each class descriptor in the accessor hierarchy must retain its original reference ABI.");
+                        Reject(() => rawBase.NumMods = 1, () => rawBase.NumMods = baseModifiers,
+                            "An accessor hierarchy with modified raw base descriptors is unproved.");
+                        Reject(() => rawBase.Byref = 1, () => rawBase.Byref = byref,
+                            "An accessor hierarchy cannot consume a byref base descriptor.");
+                        Reject(() => rawBase.Pinned = 1, () => rawBase.Pinned = pinned,
+                            "An accessor hierarchy cannot consume a pinned base descriptor.");
+                    }
+                    var neighbor = receiver.Fields.First(candidate => !candidate.IsStatic);
+                    var neighborOffset = neighbor.BackingData!.FieldOffset;
+                    Reject(() => neighbor.BackingData.FieldOffset = proof.StringField.Offset + 4,
+                        () => neighbor.BackingData.FieldOffset = neighborOffset,
+                        "Original derived storage must not overlap any byte of the inherited String read.");
+                    var neighborIndex = receiver.Fields.IndexOf(neighbor);
+                    Reject(() => receiver.Fields.RemoveAt(neighborIndex),
+                        () => receiver.Fields.Insert(neighborIndex, neighbor),
+                        "An incomplete derived field collection cannot authenticate the inherited layout.");
+                    var references = method.DeclaringType!.DeclaringAssembly.Definition!;
+                    var referenceCount = references.ReferencedAssemblyCount;
+                    Reject(() => references.ReferencedAssemblyCount = 0,
+                        () => references.ReferencedAssemblyCount = referenceCount,
+                        "The caller must retain an explicit original dependency route to the public base accessor.");
+                }
             }
 
             _ = new AsmResolverDllOutputFormatEmpty().BuildAssemblies(app);
@@ -245,6 +303,15 @@ public class X64LookupGuardManagedThrowProofTests
                     Is.EqualTo(usesGetter ? 0 : 1), "Inaccessible private storage is never emitted as a direct read.");
                 Assert.That(il.Count(instruction => instruction.OpCode == CilOpCodes.Newobj), Is.EqualTo(1));
                 Assert.That(il.Count(instruction => instruction.OpCode == CilOpCodes.Throw), Is.EqualTo(1));
+                if (proof.StringGetter is { } getter)
+                {
+                    Assert.That(output.CilMethodBody.LocalVariables[0].VariableType.FullName,
+                        Is.EqualTo(getter.DeclaringType!.FullName),
+                        "The receiver retains the exact getter owner when a derived member hides that declaration.");
+                    Assert.That(il.Count(instruction => instruction.OpCode == CilOpCodes.Call &&
+                        ReferenceEquals(instruction.Operand, getter.GetExtraData<MethodDefinition>("AsmResolverMethod"))),
+                        Is.EqualTo(1), "The original nonvirtual getter is called directly.");
+                }
                 var format = il.Single(instruction => ReferenceEquals(instruction.Operand,
                     proof.IntegerFormatter.GetExtraData<MethodDefinition>("AsmResolverMethod")));
                 var literal = il.Single(instruction => instruction.OpCode == CilOpCodes.Ldstr);

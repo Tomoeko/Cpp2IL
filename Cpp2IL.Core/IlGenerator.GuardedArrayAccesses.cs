@@ -176,11 +176,13 @@ public static partial class IlGenerator
     }
 
     private static bool ReachesDefinition(List<Instruction> instructions,
-        LocalVariable value, int before, Instruction expected)
+        LocalVariable value, int before, Instruction expected, TypeAnalysisContext? expectedType = null)
     {
         var visited = new HashSet<LocalVariable>();
         while (visited.Add(value))
         {
+            if (expectedType != null && !NullCheckedCall.SameOrdinaryType(value.Type, expectedType))
+                return false;
             var definition = instructions.Take(before).LastOrDefault(instruction =>
                 ReferenceEquals(instruction.Destination, value));
             if (definition == null)
@@ -226,13 +228,15 @@ public static partial class IlGenerator
         if (parameters is not [{ } parameter])
             return false;
 
-        var visited = new HashSet<LocalVariable>();
-        while (visited.Add(index))
+        var visited = new HashSet<(LocalVariable, int)>();
+        while (visited.Add((index, before)))
         {
-            if (ReferenceEquals(index, parameter))
-                return true;
+            if (!ReferenceEquals(index.Type, method.AppContext.SystemTypes.SystemInt32Type))
+                return false;
             var definition = instructions.Take(before).LastOrDefault(instruction =>
                 ReferenceEquals(instruction.Destination, index));
+            if (definition == null && ReferenceEquals(index, parameter))
+                return true;
             if (definition is not
                 {
                     OpCode: OpCode.Move,

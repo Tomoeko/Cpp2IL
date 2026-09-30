@@ -53,7 +53,8 @@ public sealed class UnitySourceEmissionReport
                 ",\"SourceReferences\":" + JsonText.Array(a.SourceReferences) + ",\"ExternalReferences\":" + JsonText.Array(a.ExternalReferences) +
                 ",\"ExternalReferenceKinds\":[" + string.Join(",", a.ExternalReferenceKinds.Select(reference =>
                     "{\"Name\":" + JsonText.Quote(reference.Name) + ",\"Kind\":" + JsonText.Quote(reference.Kind) +
-                    ",\"Provenance\":" + JsonText.Quote(reference.Provenance) + "}")) + "]}")) + "],\n" +
+                    ",\"Provenance\":" + JsonText.Quote(reference.Provenance) + "}")) + "]" +
+                ",\"CompilerReferenceAliases\":" + JsonText.Array(a.CompilerReferenceAliases) + "}")) + "],\n" +
             "  \"ReturnMetadata\":[" + string.Join(",", ReturnMetadata.Select(item =>
                 "{\"Name\":" + JsonText.Quote(item.Name) + ",\"PlayerMethodCount\":" + item.PlayerMethodCount +
                 ",\"UnknownReturnRowCount\":" + item.UnknownReturnRowCount +
@@ -145,6 +146,7 @@ public sealed class UnitySourceAssemblyReport
     public List<string> SourceReferences { get; set; } = [];
     public List<string> ExternalReferences { get; set; } = [];
     public List<UnityExternalReferenceReport> ExternalReferenceKinds { get; set; } = [];
+    public List<string> CompilerReferenceAliases { get; set; } = [];
 }
 
 public sealed class UnityExternalReferenceReport

@@ -30,6 +30,16 @@ internal static class X64NativeInstructionReader
     /// <summary>Authenticates a frameless leaf while preserving any existing cached bytes.</summary>
     internal static Instruction[]? ReadFramelessLeaf(MethodAnalysisContext method, int count, int maxBytes)
     {
+        var body = ReadFramelessBody(method, count, maxBytes);
+        return body != null && body[^1].Code == Iced.Intel.Code.Retnq && body[^1].OpCount == 0 &&
+            body.Take(body.Length - 1).All(instruction => instruction.FlowControl == FlowControl.Next) ? body : null;
+    }
+
+    // Authenticating bytes and an independent NoEntry span does not prove control
+    // flow or leaf-frame semantics. A caller accepting branches must separately
+    // qualify every reachable edge through X86CallerExceptionRegionProof.
+    internal static Instruction[]? ReadFramelessBody(MethodAnalysisContext method, int count, int maxBytes)
+    {
         if (method.AppContext.Binary is not PE pe || method.UnderlyingPointer == 0 ||
             X64UnwindProof.ForApplication(method.AppContext) is not { } index)
             return null;
@@ -42,9 +52,7 @@ internal static class X64NativeInstructionReader
             var body = read.ToArray();
             var start = method.UnderlyingPointer;
             var end = body[^1].NextIP;
-            if (body[^1].Code != Iced.Intel.Code.Retnq || body[^1].OpCount != 0 ||
-                body.Take(body.Length - 1).Any(instruction => instruction.FlowControl != FlowControl.Next) ||
-                index.ClassifySpan(start, end) is not
+            if (index.ClassifySpan(start, end) is not
                     { Kind: X64UnwindProof.SpanKind.NoEntry, Start: var provedStart, End: var provedEnd } ||
                 provedStart != start || provedEnd != end ||
                 HasInteriorManagedEntry(method.AppContext, start, end))

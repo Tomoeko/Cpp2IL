@@ -289,11 +289,13 @@ internal static class X64LookupGuardManagedThrowProof
         getter = null;
         if (X64LiteralConcatProof.ProveInheritedStringField(receiver, (ulong)offset, out field))
             return OrdinaryClass(field.DeclaringType) && Referenced(caller, field.DeclaringType);
-        // An inlined private read is source-accessible only through one independently
+        // An inlined inaccessible read is source-accessible only through one independently
         // proved original getter. A member name alone does not establish its effects.
-        var fields = receiver.Fields.Where(candidate => !candidate.IsStatic &&
+        if (OriginalReferenceHierarchy(receiver) is not { } hierarchy)
+            return false;
+        var fields = hierarchy.SelectMany(type => type.Fields).Where(candidate => !candidate.IsStatic &&
             candidate.Offset == offset).ToArray();
-        if (fields is not [var value] || !OrdinaryClass(receiver) ||
+        if (fields is not [var value] || !Referenced(caller, value.DeclaringType) ||
             value.Name != value.DefaultName || value.BackingData?.Field.RawFieldType is not
                 { Type: Il2CppTypeEnum.IL2CPP_TYPE_STRING, NumMods: 0, Byref: 0, Pinned: 0 } ||
             !ReferenceEquals(value.FieldType, caller.AppContext.SystemTypes.SystemStringType) ||
@@ -301,7 +303,7 @@ internal static class X64LookupGuardManagedThrowProof
                 new LocalVariable("lookup-record", new ISIL.Register(null, "rax"), receiver), offset)))
             return false;
 
-        var candidates = receiver.Properties.Where(property =>
+        var candidates = value.DeclaringType.Properties.Where(property =>
             ProveStringGetter(property, caller, value)).ToArray();
         if (candidates is not [var property])
             return false;
@@ -310,11 +312,28 @@ internal static class X64LookupGuardManagedThrowProof
         return true;
     }
 
+    private static TypeAnalysisContext[]? OriginalReferenceHierarchy(TypeAnalysisContext receiver)
+    {
+        var hierarchy = new List<TypeAnalysisContext>();
+        var seen = new HashSet<TypeAnalysisContext>();
+        for (var current = receiver; current != null && seen.Add(current); current = current.BaseType)
+        {
+            if (ReferenceEquals(current, receiver.AppContext.SystemTypes.SystemObjectType))
+                return hierarchy.ToArray();
+            if (!OrdinaryClass(current) || current.Definition is not { } definition ||
+                current.Fields.Count != definition.FieldCount)
+                return null;
+            hierarchy.Add(current);
+        }
+        return null;
+    }
+
     private static bool ProveStringGetter(PropertyAnalysisContext property,
         MethodAnalysisContext caller, FieldAnalysisContext field)
     {
         var type = field.DeclaringType;
-        if (!ReferenceEquals(property.DeclaringType, type) || property.Definition is not { } definition ||
+        if (!OrdinaryClass(type) || !Referenced(caller, type) ||
+            !ReferenceEquals(property.DeclaringType, type) || property.Definition is not { } definition ||
             !ReferenceEquals(definition.DeclaringType, type.Definition) ||
             property.Name != property.DefaultName || property.Attributes != property.DefaultAttributes ||
             property.OverridePropertyType != null ||

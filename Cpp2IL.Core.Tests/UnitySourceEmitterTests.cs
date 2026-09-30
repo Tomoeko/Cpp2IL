@@ -757,6 +757,87 @@ public class UnitySourceEmitterTests
         Assert.That(Directory.GetFileSystemEntries(_directory), Is.Empty);
     }
 
+    [Test]
+    public void UnusedTargetReferenceUsesCompilerConfigurationWithoutChangingSourceOrOtherAssemblies()
+    {
+        var application = CreateAssembly("Synthetic Application");
+        application.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("UnityEngine.CoreModule", new Version(0, 0, 0, 0)));
+        application.ManifestModule.TokenAllocator.AssignNextAvailableToken(application.ManifestModule.AssemblyReferences.Last());
+        var references = WriteReference("UnityEngine.CoreModule", new Version(0, 0, 0, 0), "references with spaces");
+        // An available file is not evidence that the original application referenced it.
+        WriteReference("UnityEngine.AudioModule", new Version(0, 0, 0, 0), "references with spaces");
+        var targetDirectories = new[] { references, Path.GetDirectoryName(typeof(object).Assembly.Location)! };
+        var project = Path.Combine(_directory, "project");
+        var report = UnitySourceProjectEmitter.Emit([application, CreateAssembly("Synthetic.Other")],
+            ["Synthetic Application", "Synthetic.Other"], targetDirectories, project);
+        var original = UnitySourceProjectEmitter.Emit([CreateAssembly("Synthetic Application")], ["Synthetic Application"],
+            targetDirectories, Path.Combine(_directory, "without-reference"));
+        var entry = report.Assemblies.Single(assembly => assembly.Name == "Synthetic Application");
+        var directory = Path.GetDirectoryName(Path.Combine(project, entry.SourceFile))!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(File.ReadAllText(Path.Combine(project, entry.SourceFile)),
+                Is.EqualTo(File.ReadAllText(Path.Combine(_directory, "without-reference", original.Assemblies.Single().SourceFile))));
+            Assert.That(entry.CompilerReferenceAliases, Is.EqualTo(new[] { "UnityEngine.CoreModule" }));
+            Assert.That(File.ReadAllText(Path.Combine(directory, "csc.rsp")),
+                Does.Contain("-debug:portable\n@\"Assets/Recovered/Synthetic Application/ReferenceAliases.rsp\"\n"));
+            Assert.That(File.ReadAllText(Path.Combine(directory, "ReferenceAliases.rsp")),
+                Is.EqualTo("-reference:Cpp2ILReference0=\"" + Path.Combine(references, "UnityEngine.CoreModule.dll").Replace('\\', '/') + "\"\n"));
+            Assert.That(report.Assemblies.Single(assembly => assembly.Name == "Synthetic.Other").CompilerReferenceAliases, Is.Empty);
+            Assert.That(File.Exists(Path.Combine(project, "Assets/Recovered/Synthetic.Other/ReferenceAliases.rsp")), Is.False);
+            Assert.That(Directory.GetFiles(Path.Combine(project, "Assets"), "*.dll", SearchOption.AllDirectories), Is.Empty);
+            Assert.That(File.ReadAllText(Path.Combine(project, "source-emission-report.json")), Does.Not.Contain(references));
+            Assert.That(report.DeclarationFidelity, Is.EqualTo("unverified"));
+        });
+    }
+
+    [Test]
+    public void CompilerReferenceAliasesAreOrderedByOriginalIdentity()
+    {
+        var application = CreateAssembly("Synthetic.Application");
+        foreach (var name in new[] { "UnityEngine.CoreModule", "UnityEngine.AudioModule" })
+        {
+            application.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference(name, new Version(0, 0, 0, 0)));
+            application.ManifestModule.TokenAllocator.AssignNextAvailableToken(application.ManifestModule.AssemblyReferences.Last());
+            WriteReference(name, new Version(0, 0, 0, 0), "references");
+        }
+        var project = Path.Combine(_directory, "project");
+        var report = UnitySourceProjectEmitter.Emit([application], ["Synthetic.Application"],
+            [Path.Combine(_directory, "references"), Path.GetDirectoryName(typeof(object).Assembly.Location)!], project);
+        var lines = File.ReadAllLines(Path.Combine(project, "Assets/Recovered/Synthetic.Application/ReferenceAliases.rsp"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(report.Assemblies.Single().CompilerReferenceAliases, Is.EqualTo(new[] { "UnityEngine.AudioModule", "UnityEngine.CoreModule" }));
+            Assert.That(lines, Has.Length.EqualTo(2));
+            Assert.That(lines[0], Does.StartWith("-reference:Cpp2ILReference0=").And.EndWith("/UnityEngine.AudioModule.dll\""));
+            Assert.That(lines[1], Does.StartWith("-reference:Cpp2ILReference1=").And.EndWith("/UnityEngine.CoreModule.dll\""));
+        });
+    }
+
+    [Test]
+    public void NondefaultReferenceFlagsCannotClaimCompilerAliasPreservation()
+    {
+        var application = CreateAssembly("Synthetic.Application");
+        application.ManifestModule!.AssemblyReferences.Add(new AsmResolver.DotNet.AssemblyReference("UnityEngine.CoreModule", new Version(0, 0, 0, 0))
+        {
+            Attributes = (AssemblyAttributes)0x100,
+        });
+        application.ManifestModule.TokenAllocator.AssignNextAvailableToken(application.ManifestModule.AssemblyReferences.Last());
+        var references = WriteReference("UnityEngine.CoreModule", new Version(0, 0, 0, 0), "references");
+        var report = UnitySourceProjectEmitter.Emit([application], ["Synthetic.Application"],
+            [references, Path.GetDirectoryName(typeof(object).Assembly.Location)!], Path.Combine(_directory, "project"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(report.SourceGeneration, Is.EqualTo("partial"));
+            Assert.That(report.Diagnostics, Has.Some.StartsWith("SOURCE014:"));
+            Assert.That(report.Assemblies.Single().CompilerReferenceAliases, Is.Empty);
+            Assert.That(File.Exists(Path.Combine(_directory, "project/Assets/Recovered/Synthetic.Application/ReferenceAliases.rsp")), Is.False);
+        });
+    }
+
     private string ReadSource(string relative) => File.ReadAllText(Path.Combine(_directory, "project", relative));
 
     private UnitySourceEmissionReport EmitComponents(AssemblyDefinition assembly)

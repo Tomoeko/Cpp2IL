@@ -19,14 +19,19 @@ namespace Cpp2IL.Core.InstructionSets;
 /// must independently retain the operations, their captured origins, and every
 /// intervening memory effect and call before IL can be emitted.
 /// </summary>
-internal static class X64GuardedArrayOperationProof
+internal static partial class X64GuardedArrayOperationProof
 {
     internal const string EvidenceKey = "X64GuardedArrayOperationProof.Evidence";
     private static readonly NativeRegister[] Arguments =
         [NativeRegister.RCX, NativeRegister.RDX, NativeRegister.R8, NativeRegister.R9];
 
+    internal sealed record CallReturn(ulong Ip, MethodAnalysisContext Target,
+        NativeRegister? ReceiverEntry);
+
+    internal sealed record CheckedCall(ulong Ip, ValueOrigin Receiver);
+
     internal sealed record Origin(NativeRegister EntryRegister, ulong? FieldReadIp,
-        FieldAnalysisContext? Field, ParameterAnalysisContext? Parameter);
+        FieldAnalysisContext? Field, ParameterAnalysisContext? Parameter, CallReturn? Call = null);
 
     internal sealed record IndexExtension(ulong Ip, NativeRegister Destination,
         NativeRegister Source);
@@ -43,7 +48,8 @@ internal static class X64GuardedArrayOperationProof
     internal sealed record Evidence(IReadOnlyList<NativeInstruction> Body,
         IReadOnlyList<Site> Sites, HashSet<ulong> RemovedAddresses,
         IReadOnlyList<IndexExtension> IndexExtensions,
-        HashSet<ulong> NoReturnCallAddresses, IReadOnlyList<ulong> EffectAddresses);
+        HashSet<ulong> NoReturnCallAddresses, IReadOnlyList<ulong> EffectAddresses,
+        IReadOnlyList<CheckedCall> NullCheckedCalls, IReadOnlyList<InvocationArgument> InvocationArguments);
 
     internal sealed record NativeSite(int Operation, int NullTest, int BoundsCompare,
         int Extension, NativeRegister ArrayRegister, NativeRegister IndexRegister,
@@ -136,13 +142,34 @@ internal static class X64GuardedArrayOperationProof
                     instruction.NearBranchTarget == body[native.NullCall].IP &&
                     !removed.Contains(instruction.IP)))
                 removed.UnionWith([body[native.NullCall].IP, body[native.NullCall + 1].IP]);
+            var checkedCalls = new List<CheckedCall>();
+            foreach (var branch in Enumerable.Range(1, native.SuccessEnd - 1).Where(index =>
+                         body[index].FlowControl == FlowControl.ConditionalBranch &&
+                         body[index].NearBranchTarget == body[native.NullCall].IP &&
+                         !removed.Contains(body[index].IP)))
+            {
+                var effect = native.Effects.Where(index => index > branch).DefaultIfEmpty(-1).First();
+                if (effect < 0)
+                    return null;
+                if (body[effect].FlowControl != FlowControl.Call)
+                    continue; // The existing field-null provenance validator retains field probes.
+                var target = method.AppContext.MethodsByAddress[body[effect].NearBranchTarget].Single();
+                var guardedWriter = facts.TraceCopies(branch - 1,
+                    body[branch - 1].Op0Register.GetFullRegister(), out var guardedEntry);
+                var receiverWriter = facts.TraceCopies(effect, NativeRegister.RCX, out var receiverEntry);
+                if (target.IsStatic || guardedWriter != receiverWriter || guardedEntry != receiverEntry)
+                    return null;
+                checkedCalls.Add(new CheckedCall(body[effect].IP,
+                    new ValueOrigin(receiverEntry, receiverWriter < 0 ? null : body[receiverWriter].IP)));
+            }
             var noReturn = new HashSet<ulong>
                 { body[native.NullCall].IP, body[native.BoundsCall].IP };
-            if (X86CallerExceptionRegionProof.Check(method, body, noReturn) != null)
+            if (X86CallerExceptionRegionProof.Check(method, body, noReturn) != null ||
+                !TryInvocationArguments(method, facts, native, sites, noReturn, out var arguments))
                 return null;
             return new Evidence(body, sites, removed,
                 sites.Select(site => site.Index).Distinct().ToArray(), noReturn,
-                native.Effects.Select(index => body[index].IP).ToArray());
+                native.Effects.Select(index => body[index].IP).ToArray(), checkedCalls.Distinct().ToArray(), arguments);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
@@ -234,7 +261,8 @@ internal static class X64GuardedArrayOperationProof
         type.Attributes == type.DefaultAttributes && ReferenceEquals(type.BaseType, type.DefaultBaseType);
 
     internal static SzArrayTypeAnalysisContext? ArrayType(Origin origin) =>
-        (origin.Field?.FieldType ?? origin.Parameter?.ParameterType) as SzArrayTypeAnalysisContext;
+        (origin.Field?.FieldType ?? origin.Parameter?.ParameterType ?? origin.Call?.Target.ReturnType)
+        as SzArrayTypeAnalysisContext;
 
     private static bool AllowedElement(ApplicationAnalysisContext app, TypeAnalysisContext element,
         int width, bool store) => width == 4
@@ -254,6 +282,30 @@ internal static class X64GuardedArrayOperationProof
             return new Origin(entry, null, null, parameter);
         }
         var load = facts.Body[writer];
+        // Calls clobber every volatile register, but only RAX is their ordinary
+        // reference result. Copies into preserved registers retain this exact
+        // call-site identity across subsequent effects and producer invocations.
+        if (load.Code == Code.Call_rel32_64 && entry == NativeRegister.RAX)
+        {
+            if (!method.AppContext.MethodsByAddress.TryGetValue(load.NearBranchTarget, out var targets) ||
+                targets is not [{ } target] || target.UnderlyingPointer != load.NearBranchTarget ||
+                !ReferenceEquals(target.AppContext, method.AppContext) || !HasEligibleEffectCall(target) ||
+                !OrdinaryArray(target.Definition?.RawReturnType, target.ReturnType))
+                return null;
+            NativeRegister? receiverEntry = null;
+            if (!target.IsStatic)
+            {
+                // Initially bind producer receivers only to original incoming
+                // class values. A nested field or another call result needs its
+                // own complete receiver-origin proof before this route expands.
+                if (facts.TraceCopies(writer, NativeRegister.RCX, out var receiver) >= 0 ||
+                    !ReferenceEquals(EntryType(method, receiver), target.DeclaringType))
+                    return null;
+                receiverEntry = receiver;
+            }
+            return new Origin(NativeRegister.None, null, null, null,
+                new CallReturn(load.IP, target, receiverEntry));
+        }
         if (load.Code != Code.Mov_r64_rm64 || load.Op1Kind != OpKind.Memory ||
             load.MemoryIndex != NativeRegister.None || load.MemoryDisplacement64 > int.MaxValue ||
             facts.TraceCopies(writer, load.MemoryBase, out var ownerEntry) >= 0 ||
