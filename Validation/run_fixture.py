@@ -159,6 +159,9 @@ import call_result_boolean_store
 import call_result_tail_guard
 import call_result_false_tail
 import call_result_boolean_tail
+import conditional_call_result_tail
+import lookup_guard_managed_throw
+import guarded_array_operations
 import call_result_engine_false_tail
 import engine_component_false_tail
 import internal_call_field
@@ -213,6 +216,12 @@ PROFILES = {
                                 "source": VALIDATION / "BaseEffectBooleanTailFixture", "methods": 13},
     "call-result-boolean-tail": {"assembly": "CallResultBooleanTailFixture",
                                 "source": VALIDATION / "CallResultBooleanTailFixture", "methods": 10},
+    "conditional-call-result-tail": {"assembly": "ConditionalCallResultTailFixture",
+                                     "source": VALIDATION / "ConditionalCallResultTailFixture", "methods": 12},
+    "lookup-guard-managed-throw": {"assembly": "LookupGuardManagedThrowFixture",
+                                  "source": VALIDATION / "LookupGuardManagedThrowFixture", "methods": 3},
+    "guarded-array-operations": {"assembly": "GuardedArrayOperationsFixture",
+                                 "source": VALIDATION / "GuardedArrayOperationsFixture", "methods": 9},
     "scalar-positive-zero-leaf": {"assembly": "ScalarPositiveZeroLeafFixture",
                                   "source": VALIDATION / "ScalarPositiveZeroLeafFixture", "methods": 5},
     "narrow-array": {"assembly": "NarrowArrayFixture", "source": VALIDATION / "NarrowArrayFixture", "methods": 4},
@@ -463,6 +472,12 @@ PROFILES = {
 }
 
 EMBEDDED_FIXTURE_PACKAGES = {
+    "lookup-guard-managed-throw": {
+        "name": "com.example.lookup-guard",
+        "source": VALIDATION / "LookupGuardManagedThrowDependencies",
+        "files": ("package.json", "Runtime/Neutral.LookupGuard.asmdef", "Runtime/LookupService.cs"),
+        "assembly": "Neutral.LookupGuard.dll",
+    },
     "virtual-string-call": {
         "name": "com.example.cast-hierarchy",
         "source": VALIDATION / "VirtualStringCallDependencies",
@@ -533,6 +548,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return base_effect_boolean_tail.verify(path, stage, VERSION)
     if profile == "call-result-boolean-tail":
         return call_result_boolean_tail.verify(path, stage, VERSION)
+    if profile == "conditional-call-result-tail":
+        return conditional_call_result_tail.verify(path, stage, VERSION)
+    if profile == "lookup-guard-managed-throw":
+        return lookup_guard_managed_throw.verify(path, stage, VERSION)
+    if profile == "guarded-array-operations":
+        return guarded_array_operations.verify(path, stage, VERSION)
     if profile == "scalar-positive-zero-leaf":
         return scalar_positive_zero_leaf.verify(path, stage, VERSION)
     if profile == "narrow-array":

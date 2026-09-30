@@ -81,6 +81,7 @@ public static partial class IlGenerator
         ValidateCallSemantics(context);
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
+        ValidateGuardedArrayOperations(context);
         ValidateArrayLengthReads(context);
         ValidateComposedReferenceFieldStore(context);
         ValidateReferenceFieldAddressStores(context);

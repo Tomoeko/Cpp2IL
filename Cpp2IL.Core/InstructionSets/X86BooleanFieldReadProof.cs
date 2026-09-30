@@ -14,10 +14,10 @@ using IsilRegister = Cpp2IL.Core.ISIL.Register;
 namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
-/// Proves one null-guarded byte load into EAX is an ordinary Boolean field read.
+/// Proves a bounded byte load into EAX is an ordinary Boolean field read.
 /// Unproved MOVZX instructions retain their unsupported disposition.
 /// </summary>
-internal static class X86BooleanFieldReadProof
+internal static partial class X86BooleanFieldReadProof
 {
     internal const string EvidenceKey = "X86BooleanFieldReadProof";
     internal sealed record Proof(FieldAnalysisContext Field, ulong LoadIp,
@@ -27,6 +27,8 @@ internal static class X86BooleanFieldReadProof
 
     internal static Proof? Find(MethodAnalysisContext method, IReadOnlyList<Instruction> body)
     {
+        if (FindIncrementedInstanceRead(method, body) is { } instanceRead)
+            return instanceRead;
         var app = method.AppContext;
         var shape = TryProveShape(body);
         if (shape == null || app.Binary is not PE { PointerSizeBytes: 8 } ||

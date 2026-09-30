@@ -22,18 +22,32 @@ internal static class X64IteratorAllocatorProof
             candidate == 0)
             return false;
 
-        var export = pe.GetVirtualAddressOfExportedFunctionByName("il2cpp_object_new");
-        var wrapper = Read(pe, export, 6);
-        var stub = Read(pe, candidate, 1);
+        return IsAllocator(pe, unwind, candidate);
+    }
+
+    internal static bool IsAllocator(PE pe, X64UnwindProof.Index unwind, ulong candidate)
+    {
+        if (candidate == 0 || candidate > ulong.MaxValue - 16)
+            return false;
+        var export = X64PeExportProof.Find(pe, unwind, "il2cpp_object_new");
+        var wrapper = Read(pe, unwind, export, 6);
+        var stub = Read(pe, unwind, candidate, 1);
         if (wrapper == null || stub == null || !TryProveShape(wrapper, stub) ||
+            wrapper[1].NearBranchTarget is 0 or ulong.MaxValue ||
+            wrapper[1].NearBranchTarget == export || wrapper[1].NearBranchTarget == candidate ||
+            !FileBacked(pe, unwind, wrapper[1].NearBranchTarget, wrapper[1].NearBranchTarget + 1) ||
             unwind.GetHandler(export) is not { Start: var exportStart, End: var exportEnd } ||
             exportStart != export || exportEnd < wrapper[^1].NextIP ||
+            wrapper[1].NearBranchTarget >= exportStart && wrapper[1].NearBranchTarget < exportEnd ||
+            wrapper[1].NearBranchTarget >= candidate && wrapper[1].NearBranchTarget < candidate + 16 ||
+            !FileBacked(pe, unwind, exportStart, exportEnd) ||
             !X64NativePaddingProof.HasInt3Padding(pe, wrapper[^1].NextIP, exportEnd))
             return false;
         var transfer = stub[0];
         if (transfer.NextIP - candidate != 5 ||
-            unwind.ClassifySpan(candidate, transfer.NextIP) is not
+            unwind.ClassifySpan(candidate, candidate + 16) is not
                 { Kind: X64UnwindProof.SpanKind.NoEntry } ||
+            !FileBacked(pe, unwind, candidate, candidate + 16) ||
             !X64NativePaddingProof.HasInt3Padding(pe, transfer.NextIP, candidate + 16))
             return false;
         return true;
@@ -58,7 +72,8 @@ internal static class X64IteratorAllocatorProof
                ret.OpCount == 0 && transfer.NearBranchTarget == call.NearBranchTarget;
     }
 
-    private static IReadOnlyList<NativeInstruction>? Read(PE pe, ulong address, int count)
+    private static IReadOnlyList<NativeInstruction>? Read(PE pe, X64UnwindProof.Index unwind,
+        ulong address, int count)
     {
         var start = pe.GetVirtualAddressOfPrimaryExecutableSection();
         var code = pe.GetEntirePrimaryExecutableSection();
@@ -76,7 +91,7 @@ internal static class X64IteratorAllocatorProof
                 instruction.CodeSize != CodeSize.Code64 || instruction.HasLockPrefix ||
                 instruction.HasRepPrefix || instruction.HasRepnePrefix ||
                 instruction.SegmentPrefix != NativeRegister.None ||
-                !FileBacked(pe, instruction.IP, instruction.NextIP))
+                !FileBacked(pe, unwind, instruction.IP, instruction.NextIP))
                 return null;
             result[index] = instruction;
             next = instruction.NextIP;
@@ -84,14 +99,19 @@ internal static class X64IteratorAllocatorProof
         return result;
     }
 
-    private static bool FileBacked(PE pe, ulong start, ulong end)
+    private static bool FileBacked(PE pe, X64UnwindProof.Index unwind, ulong start, ulong end)
     {
-        if (end <= start || end - start > 15)
+        if (end <= start || end - start > 4096)
             return false;
         var first = pe.MapVirtualAddressToRaw(start, false);
         var last = pe.MapVirtualAddressToRaw(end - 1, false);
-        return first >= 0 && last >= first && last < pe.GetRawBinaryContent().Length &&
-               (ulong)(last - first) == end - start - 1;
+        var image = pe.GetRawBinaryContent();
+        var length = checked((int)(end - start));
+        return first >= 0 && last >= first && last < image.Length &&
+               (ulong)(last - first) == end - start - 1 &&
+               X64AncestorConstructorThunkProof.FileBackedExecutable(pe, unwind,
+                   image.Slice(checked((int)first), length), start) &&
+               unwind.IsUnaffectedByBaseRelocation(start, (uint)length);
     }
 
     private static bool Stack(NativeInstruction instruction, Mnemonic mnemonic, ulong value) =>

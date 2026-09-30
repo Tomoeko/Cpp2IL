@@ -236,6 +236,18 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                     "Reference-returning call and null-guarded Boolean tail IL emitted from complete native and metadata evidence, preserving literal or parameter arguments across the producer call; runtime-provided callees remain external declarations and behavior remains unverified.");
                 return;
             }
+            if (X64ConditionalCallResultTailRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Conditional Boolean predicate and typed tail IL emitted from complete bounded native and metadata evidence, preserving both observable reference-producing calls and their independent null failures; behavior remains unverified.");
+                return;
+            }
+            if (X64LookupGuardManagedThrowRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Lookup success and explicit managed throw IL emitted from complete bounded native and metadata evidence, preserving class initialization, receiver failures, string identity, culture-dependent message formatting and exception identity; inlined private storage requires an independently proved public getter, and behavior remains unverified.");
+                return;
+            }
 
             if (X64GuardedEnumParameterCallRecovery.TryGenerate(methodContext, methodDefinition))
             {

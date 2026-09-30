@@ -26,7 +26,7 @@ public static class ArrayRecovery
     {
         RecoverAccesses(method);
         RecoverStructElementAddresses(method);
-        GroupInitialisers(method.ControlFlowGraph!);
+        // Keep allocation and stores in native order, including intervening effects and failures.
     }
 
     private static void RecoverAccesses(MethodAnalysisContext method)
@@ -61,104 +61,6 @@ public static class ArrayRecovery
                     instruction.SetOperand(i, new ArrayAccess(array, index));
             }
         }
-    }
-
-    // Group initializers after an array allocation together so ILSpy decompiles them better
-    private static void GroupInitialisers(ISILControlFlowGraph cfg)
-    {
-        var movedAny = false;
-
-        foreach (var block in cfg.Blocks.ToList())
-        {
-            foreach (var allocation in block.Instructions.ToList())
-            {
-                if (allocation.OpCode != OpCode.NewArr || allocation.Operands[0] is not LocalVariable array)
-                    continue;
-
-                var stores = new List<(Block Block, Instruction Instruction)>();
-                var current = block;
-                var index = current.Instructions.IndexOf(allocation) + 1;
-
-                while (true)
-                {
-                    if (index >= current.Instructions.Count)
-                    {
-                        // only a straight-line run can be regrouped without changing what runs when
-                        if (current.Successors.Count != 1 || current.Successors[0].Predecessors.Count != 1)
-                            break;
-
-                        current = current.Successors[0];
-                        index = 0;
-                        continue;
-                    }
-
-                    var instruction = current.Instructions[index];
-
-                    if (IsElementStore(instruction, array))
-                    {
-                        stores.Add((current, instruction));
-                        index++;
-                        continue;
-                    }
-
-                    if (!ReadsArray(instruction, array))
-                    {
-                        index++;
-                        continue;
-                    }
-
-                    // Found the first read. Move the allocation and its stores immediately in front, so the whole array is built in one chain with the elements already computed.
-                    if (stores.Count > 1)
-                    {
-                        foreach (var (storeBlock, store) in stores)
-                            storeBlock.Instructions.Remove(store);
-
-                        block.Instructions.Remove(allocation);
-
-                        var moved = new List<Instruction> { allocation };
-                        moved.AddRange(stores.Select(s => s.Instruction));
-
-                        current.Instructions.InsertRange(current.Instructions.IndexOf(instruction), moved);
-                        movedAny = true;
-                    }
-
-                    break;
-                }
-            }
-        }
-
-        // Emptying a block out entirely leaves branches pointing at nothing to jump to
-        if (movedAny)
-            cfg.RemoveEmptyBlocks();
-    }
-
-    private static bool IsElementStore(Instruction instruction, LocalVariable array) =>
-        instruction.OpCode == OpCode.Move && instruction.Operands[0] is ArrayAccess { Index: Immediate } stored
-                                          && ReferenceEquals(stored.Array, array)
-                                          && !ReadsArray(instruction, array);
-
-    private static bool ReadsArray(Instruction instruction, LocalVariable array)
-    {
-        for (var i = 0; i < instruction.Operands.Count; i++)
-        {
-            if (i == 0 && instruction.OpCode == OpCode.Move)
-                continue;
-
-            var reads = instruction.Operands[i] switch
-            {
-                LocalVariable local => ReferenceEquals(local, array),
-                ArrayAccess access => ReferenceEquals(access.Array, array),
-                ArrayLength length => ReferenceEquals(length.Array, array),
-                MemoryOperand memory => ReferenceEquals(memory.Base, array) || ReferenceEquals(memory.Index, array),
-                AddressOf { Target: LocalVariable addressed } => ReferenceEquals(addressed, array),
-                _ => false
-            };
-
-            if (reads)
-                return true;
-        }
-
-        return false;
     }
 
     private static void RecoverAllocation(Instruction instruction)

@@ -60,6 +60,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         context.GuardedArrayAccessEvidence = null;
         context.ParameterGuardedArrayAccessEvidence = null;
         context.ComposedReferenceFieldStoreEvidence = null;
+        context.PutExtraData<X64GuardedArrayOperationProof.Evidence>(
+            X64GuardedArrayOperationProof.EvidenceKey, null!);
         if (X64ClosedSwitchDispatchRecovery.Find(context) is { } closedSwitch)
             return GetIsilFromClosedSwitch(context, closedSwitch);
 
@@ -151,6 +153,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var parameterGuardedArray = guardedArray == null && possibleGuardedArray
             ? X64ArrayGuardSiteProof.FindParameter(context, nativeInstructions)
             : null;
+        var composedArray = guardedArray == null && parameterGuardedArray == null
+            ? X64GuardedArrayOperationProof.Find(context, nativeInstructions)
+            : null;
         HashSet<ulong>? suppressedArrayGuards = null;
         HashSet<ulong>? arrayIndexExtensions = null;
         if (guardedArray != null)
@@ -207,6 +212,14 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 suppressedArrayGuards.Add(site.BoundsBranchIp);
             }
         }
+        if (composedArray != null)
+        {
+            nativeInstructions = composedArray.Body.ToArray();
+            context.PutExtraData(X64GuardedArrayOperationProof.EvidenceKey, composedArray);
+            suppressedArrayGuards = new HashSet<ulong>(composedArray.RemovedAddresses);
+            arrayIndexExtensions = new HashSet<ulong>(composedArray.IndexExtensions.Select(extension => extension.Ip));
+            noReturnCalls.UnionWith(composedArray.NoReturnCallAddresses);
+        }
         var referenceNullReturn = X86ReferenceNullReturnProof.IsApplicable(context, nativeInstructions);
         var booleanReturnSelfTests = X86BooleanReturnSelfTestProof.Find(context, nativeInstructions);
         var nonvolatileXmmTraffic = X86NonvolatileXmmStackProof.Find(context, nativeInstructions);
@@ -235,8 +248,28 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 // volatile source register; the signed address bits are supplied
                 // by the eventual managed array access.
                 addresses.Add(instruction.IP);
+                var composedExtension = composedArray?.IndexExtensions
+                    .SingleOrDefault(extension => extension.Ip == instruction.IP);
                 instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.Move,
-                    ConvertOperand(instruction, 0), ConvertOperand(instruction, 1))
+                    composedExtension == null ? ConvertOperand(instruction, 0) :
+                        new ISIL.Register(null, X86Utils.GetRegisterName(composedExtension.Destination)),
+                    composedExtension == null ? ConvertOperand(instruction, 1) :
+                        new ISIL.Register(null, X86Utils.GetRegisterName(composedExtension.Source)))
+                    { NativeAddress = instruction.IP });
+                continue;
+            }
+            if (composedArray?.Sites.SingleOrDefault(site => site.OperationIp == instruction.IP) is { } composedSite)
+            {
+                // The proof closes every use of any shared native LEA offset.
+                // Keep this access at its original IP with the canonical array layout.
+                var element = new ISIL.MemoryOperand(
+                    new ISIL.Register(null, X86Utils.GetRegisterName(composedSite.ArrayRegister)),
+                    new ISIL.Register(null, X86Utils.GetRegisterName(composedSite.IndexRegister)),
+                    0x20, composedSite.Width);
+                addresses.Add(instruction.IP);
+                instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.Move,
+                    composedSite.IsStore ? element : ConvertOperand(instruction, 0),
+                    composedSite.IsStore ? ConvertOperand(instruction, 1) : element)
                     { NativeAddress = instruction.IP });
                 continue;
             }
