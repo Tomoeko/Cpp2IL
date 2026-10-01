@@ -84,7 +84,7 @@ internal static class X64ScalarZeroReturnProof
         return [new ManagedInstruction(0, OpCode.Return, value) { NativeAddress = native[^1].IP }];
     }
 
-    private static bool HasAuthenticatedBody(MethodAnalysisContext method,
+    internal static bool HasAuthenticatedBody(MethodAnalysisContext method,
         IReadOnlyList<Iced.Intel.Instruction> native, PE pe, X64UnwindProof.Index unwind)
     {
         try

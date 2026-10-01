@@ -26,6 +26,7 @@ public sealed class UnitySourceEmissionReport
     public List<UnityReturnMetadataAssemblyReport> ReturnMetadata { get; } = [];
     public List<UnityValueTypeClassLayoutAssemblyReport> ValueTypeClassLayoutMetadata { get; } = [];
     public List<UnityReferenceClassLayoutAssemblyReport> ReferenceClassLayoutMetadata { get; } = [];
+    public List<UnityAssemblyReferenceAssemblyReport> AssemblyReferenceMetadata { get; } = [];
     public List<string> DeclarationDiagnostics { get; } = [];
 
     public void WriteJson(string path)
@@ -91,6 +92,28 @@ public sealed class UnitySourceEmissionReport
                     ",\"PlayerSpecifiedPackingSize\":" + type.PlayerSpecifiedPackingSize +
                     ",\"DeclaredClassSize\":" + JsonText.Quote(type.DeclaredClassSize) +
                     ",\"ClassLayoutEmission\":" + JsonText.Quote(type.ClassLayoutEmission) + "}")) + "]}")) + "],\n" +
+            "  \"AssemblyReferenceMetadata\":[" + string.Join(",", AssemblyReferenceMetadata.Select(item =>
+                "{\"Name\":" + JsonText.Quote(item.Name) +
+                ",\"SourceAssemblyDefinitionOrdinal\":" + (item.SourceAssemblyDefinitionOrdinal?.ToString() ?? "null") +
+                ",\"ReferencedAssemblyStart\":" + (item.ReferencedAssemblyStart?.ToString() ?? "null") +
+                ",\"BindingStatus\":" + JsonText.Quote(item.BindingStatus.ToString()) +
+                ",\"EvidenceSource\":" + JsonText.Quote(item.EvidenceSource) +
+                ",\"IdentityBasis\":" + JsonText.Quote(item.IdentityBasis) +
+                ",\"OriginalManagedAssemblyRefIdentity\":" + JsonText.Quote(item.OriginalManagedAssemblyRefIdentity) +
+                ",\"UnavailableOriginalManagedAssemblyRefFields\":" + JsonText.Array(item.UnavailableOriginalManagedAssemblyRefFields) +
+                ",\"FailureReason\":" + JsonText.Quote(item.FailureReason) +
+                ",\"ResolvedReferences\":[" + string.Join(",", item.ResolvedReferences.Select(reference =>
+                    "{\"SourceReferenceOrdinal\":" + reference.SourceReferenceOrdinal +
+                    ",\"ReferenceTableOrdinal\":" + reference.ReferenceTableOrdinal +
+                    ",\"ResolvedAssemblyDefinitionOrdinal\":" + reference.ResolvedAssemblyDefinitionOrdinal +
+                    ",\"ResolvedIdentity\":{\"Name\":" + JsonText.Quote(reference.ResolvedIdentity.Name) +
+                    ",\"Culture\":" + JsonText.Quote(reference.ResolvedIdentity.Culture) +
+                    ",\"RawDefinitionVersion\":" + JsonText.Quote(reference.ResolvedIdentity.RawDefinitionVersion) +
+                    ",\"DefinitionFlags\":" + reference.ResolvedIdentity.DefinitionFlags +
+                    ",\"DefinitionHashAlgorithm\":" + reference.ResolvedIdentity.DefinitionHashAlgorithm +
+                    ",\"DefinitionHashLength\":" + reference.ResolvedIdentity.DefinitionHashLength +
+                    ",\"PublicKey\":" + JsonText.Quote(reference.ResolvedIdentity.PublicKey) +
+                    ",\"PublicKeyToken\":" + JsonText.Quote(reference.ResolvedIdentity.PublicKeyToken) + "}}")) + "]}")) + "],\n" +
             "  \"DeclarationDiagnostics\":" + JsonText.Array(DeclarationDiagnostics) + ",\n" +
             "  \"Diagnostics\":" + JsonText.Array(Diagnostics) + "\n}\n";
         File.WriteAllText(path, json, new UTF8Encoding(false));
@@ -142,6 +165,35 @@ public sealed record UnityReferenceClassLayoutTypeReport(
     public string DeclaredClassSize => ClassSizeIsDefault ? "NoNondefaultClassSizeFlag" : "UnknownDeclaredClassSize";
     public string ClassLayoutEmission => ClassLayoutRowEmitted ? "PackOnlyClassLayoutRowEmitted" : "ClassLayoutRowOmitted";
 }
+
+public enum UnityAssemblyReferenceBindingStatus
+{
+    AuthenticatedResolvedIdentities,
+    UnavailablePlayerDefinition,
+    InvalidPlayerBindings,
+}
+
+public sealed record UnityAssemblyReferenceAssemblyReport(
+    string Name, int? SourceAssemblyDefinitionOrdinal, int? ReferencedAssemblyStart,
+    UnityAssemblyReferenceBindingStatus BindingStatus,
+    IReadOnlyList<UnityAssemblyReferenceReport> ResolvedReferences, string? FailureReason)
+{
+    public string EvidenceSource => "v29-player-indexed-assembly-definitions";
+    public string IdentityBasis => BindingStatus == UnityAssemblyReferenceBindingStatus.AuthenticatedResolvedIdentities
+        ? "ResolvedPlayerAssemblyDefinition" : "Unestablished";
+    public string OriginalManagedAssemblyRefIdentity => BindingStatus == UnityAssemblyReferenceBindingStatus.AuthenticatedResolvedIdentities
+        ? "UnavailableInPlayerSchema" : "Unestablished";
+    public IReadOnlyList<string> UnavailableOriginalManagedAssemblyRefFields =>
+        ["Name", "Version", "Culture", "KeyOrToken", "Flags", "Hash", "RowId", "RowPresence"];
+}
+
+public sealed record UnityAssemblyReferenceReport(
+    int SourceReferenceOrdinal, int ReferenceTableOrdinal, int ResolvedAssemblyDefinitionOrdinal,
+    UnityResolvedAssemblyIdentityReport ResolvedIdentity);
+
+public sealed record UnityResolvedAssemblyIdentityReport(
+    string Name, string Culture, string RawDefinitionVersion, uint DefinitionFlags,
+    uint DefinitionHashAlgorithm, int DefinitionHashLength, string PublicKey, string PublicKeyToken);
 
 public sealed class UnitySourceAssemblyReport
 {

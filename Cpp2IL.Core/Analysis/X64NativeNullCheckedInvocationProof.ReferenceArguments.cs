@@ -65,7 +65,10 @@ internal static partial class X64NativeNullCheckedInvocationProof
     // parameter type. Missing class data cannot be treated as a valid capture,
     // and lazy resolution would otherwise throw before proof rejection.
     private static bool ReferenceArgumentDescriptorsValid(List<Site> sites) => sites.All(site =>
-        site.Arguments.Select((argument, index) => argument.Reference == null && argument.NestedReference == null ||
+        site.Arguments.Select((argument, index) => argument.Enum is { } enumArgument ?
+            index < site.Target.Parameters.Count && site.Target.Parameters[index].Definition?.RawType is { } raw &&
+            IsSignedEnumArgumentType(enumArgument.Type) && EnumDescriptor(enumArgument.Type, raw) :
+            argument.Reference == null && argument.NestedReference == null ||
             index < site.Target.Parameters.Count &&
             site.Target.Parameters[index].Definition?.RawType is { Data: not null } &&
             (argument.Reference?.Origin.Field?.BackingData?.Field.RawFieldType is { Data: not null } ||

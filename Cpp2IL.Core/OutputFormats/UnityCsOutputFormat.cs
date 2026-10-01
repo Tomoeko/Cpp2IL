@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using AsmResolver.DotNet;
 using Cpp2IL.Core.Api;
+using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Logging;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.ProcessingLayers;
@@ -71,8 +72,19 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
             sourceReport.DeclarationDiagnostics.Add(
                 "DECL001: Version-29 player metadata cannot certify absence of return-parameter rows or return custom attributes. An independent managed oracle is required to validate these declaration facts.");
         }
+        var virtualZeroMethods = context.Assemblies
+            .Where(assembly => selected.Contains(assembly.Name, StringComparer.Ordinal))
+            .SelectMany(assembly => assembly.Types).SelectMany(type => type.Methods)
+            .Count(X64VirtualScalarZeroReturnProof.HasEvidence);
+        if (virtualZeroMethods != 0)
+        {
+            sourceReport.DeclarationFidelity = "partial";
+            sourceReport.DeclarationDiagnostics.Add(
+                $"DECL005: {virtualZeroMethods} virtual scalar-zero methods retain authenticated native slot relations, but version-29 player metadata cannot establish original managed MethodImpl or transported explicit-interface property row presence. An independent managed oracle is required to validate these declaration facts.");
+        }
         UnityV29ValueTypeClassLayoutProvenance.AddToReport(sourceReport, UnityV29ValueTypeClassLayoutProvenance.Analyze(context, selected));
         UnityV29ReferenceClassLayoutProvenance.AddToReport(sourceReport, UnityV29ReferenceClassLayoutProvenance.Analyze(context, selected));
+        UnityV29AssemblyReferenceProvenance.AddToReport(sourceReport, UnityV29AssemblyReferenceProvenance.Analyze(context, selected));
         foreach (var assessment in UnityV29AttributeTypeProvenance.AssessEmission(context, selected))
         {
             if (assessment.RetainedArgumentsEmitted)

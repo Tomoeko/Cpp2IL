@@ -567,7 +567,8 @@ internal static class RuntimeNullGuardCoalescer
                                  Immediate { Value: 32 }, Immediate { Value: 0 }] } ||
                          instruction is { OpCode: OpCode.Subtract, IntegerBitWidth: 32,
                              Operands: [LocalVariable, Immediate { Value: 0 },
-                                 Immediate { Value: >= int.MinValue and <= int.MaxValue }] }))
+                                 Immediate { Value: >= int.MinValue and <= int.MaxValue }] } ||
+                         X64NativeNullCheckedInvocationProof.IsEnumArgumentSetup(method, instruction)))
                     {
                         pendingTypedInvocationSetup = true;
                         continue;

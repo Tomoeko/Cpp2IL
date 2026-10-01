@@ -19,7 +19,10 @@ WRITER = """
 import os,pathlib,signal,sys,time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 with open(sys.argv[2], 'ab', buffering=0) as output:
-    pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+    marker = pathlib.Path(sys.argv[1])
+    pending = marker.with_name(marker.name + '.pending')
+    pending.write_text(str(os.getpid()))
+    pending.replace(marker)
     until = time.monotonic() + 8
     while time.monotonic() < until:
         output.write(b'x')

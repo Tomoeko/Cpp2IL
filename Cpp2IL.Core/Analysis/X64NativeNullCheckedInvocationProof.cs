@@ -33,7 +33,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
     private readonly record struct Argument(int? Entry, long? Literal, ScalarFieldArgument? Field = null,
         BooleanToggleArgument? Toggle = null, BooleanPredicateArgument? Predicate = null,
         ScalarProducerArgument? Producer = null, ReferenceFieldArgument? Reference = null,
-        NestedReferenceFieldArgument? NestedReference = null);
+        NestedReferenceFieldArgument? NestedReference = null, EnumArgument? Enum = null);
     private sealed record ValueKey(string Kind, object? Value, ValueKey[] Children);
     private sealed record OrderedEffect(Instruction Operation, ulong Address, bool Before, bool After,
         CallSemantics Semantics, ValueKey Value);
@@ -43,7 +43,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
         Argument[] Arguments, ulong Comparison, ulong Branch, ulong NullCall, RuntimeNullThrowEvidence Helper,
         Instruction GuardBranch, Block GuardOwner, Block NormalArm, NativeInstruction[] Body,
         OrderedEffect[] Effects, Control[] Controls, ReferenceStore[] Stores, ValueKey? ReceiverDeclarations,
-        ValueKey? ArgumentDeclarations, NestedReferenceGuard? NestedGuard);
+        ValueKey? ArgumentDeclarations, NestedReferenceGuard? NestedGuard, ValueKey? EnumDeclarations);
 
     internal static bool HasEvidence(MethodAnalysisContext method) =>
         NativeRecoveryProofTracker.Has(method, EvidenceKey) ||
@@ -60,6 +60,10 @@ internal static partial class X64NativeNullCheckedInvocationProof
     }
 
     internal static bool HasScalarParameters(MethodAnalysisContext target) =>
+        // Every newly supported enum signature requires the complete native
+        // route. Mixed or larger signatures must not use the legacy shortcut
+        // when their argument recipe is outside this proof's bounded domain.
+        target.Parameters.Any(parameter => IsSignedEnumArgumentType(parameter.ParameterType)) ||
         target.Parameters.Count is 1 or 2 && target.Parameters.All(parameter => Scalar(parameter.ParameterType));
 
     internal static bool TryRecord(MethodAnalysisContext caller, Instruction comparison, Instruction branch,
@@ -96,13 +100,14 @@ internal static partial class X64NativeNullCheckedInvocationProof
                         guardOwner, normalArm, body, values, nullCall, helper, out var nestedGuard) ||
                     !TryReceiverDeclarations(caller, origin, target, out var receiverDeclarations) ||
                     !TryReferenceArgumentDeclarations(target, arguments, out var argumentDeclarations) ||
+                    !TryEnumInvocationDeclarations(caller, target, out var enumDeclarations) ||
                     !TryEffects(caller, invocation, out var effects) ||
                     !TryControls(caller, branch, body, out var controls, nestedGuard?.Branch)) return false;
                 var sites = caller.GetExtraData<List<Site>>(EvidenceKey) ?? [];
                 if (sites.Any(site => ReferenceEquals(site.Invocation, invocation))) return false;
                 sites.Add(new(invocation, target, origin, arguments, comparisonIp, branchIp, nullCall, helper,
                     branch, guardOwner, normalArm, body, effects, controls, stores, receiverDeclarations,
-                    argumentDeclarations, nestedGuard));
+                    argumentDeclarations, nestedGuard, enumDeclarations));
                 var argumentIndex = invocation.OpCode == OpCode.Call ? 3 : 2;
                 for (var index = 0; index < arguments.Length; index++)
                     if (arguments[index].Reference == null && arguments[index].NestedReference == null)
@@ -147,7 +152,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
         for (var index = 0; index < candidate.Parameters.Count; index++)
         {
             var type = candidate.Parameters[index].ParameterType;
-            if (!OriginalParameter(candidate, index) || !Scalar(type) ||
+            if (!OriginalParameter(candidate, index) || (!Scalar(type) && !IsSignedEnumArgumentType(type)) ||
                 !TryArgument(caller, call.Operands[argumentIndex + index], call, type, out _, out var argument))
                 return false;
             operands[argumentIndex + index] = CanonicalArgument(caller, argument);
@@ -192,6 +197,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     !BindInvocation(caller, call, target, origin, body, values, out var arguments, site.Comparison) ||
                     !arguments.SequenceEqual(site.Arguments) ||
                     !ReferenceArgumentDeclarationsRetained(target, arguments, site.ArgumentDeclarations) ||
+                    !EnumInvocationDeclarationsRetained(caller, target, site.EnumDeclarations) ||
                     !NestedReferenceGuardRetained(caller, site, body, values) ||
                     !EffectsRetained(caller, call, site.Effects) ||
                     !ControlsRetained(caller, body, site.Controls) ||
@@ -328,8 +334,9 @@ internal static partial class X64NativeNullCheckedInvocationProof
         for (var index = 0; index < target.Parameters.Count; index++)
         {
             var parameter = target.Parameters[index];
-            if ((!Scalar(parameter.ParameterType) && !OrdinaryClass(parameter.ParameterType)) ||
-                parameter.Definition?.RawType?.Type != parameter.ParameterType.Type ||
+            if ((!Scalar(parameter.ParameterType) && !OrdinaryClass(parameter.ParameterType) &&
+                 !IsSignedEnumArgumentType(parameter.ParameterType)) ||
+                !OriginalParameter(target, index) ||
                 !TryArgument(caller, call.Operands[argumentIndex + index], call,
                     parameter.ParameterType, out var source, out var managed))
                 return false;
@@ -349,7 +356,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
             // Ordinary references are admitted only through the captured field
             // route above. Incoming references, literals and producer arguments
             // need their own immutable declaration and use proofs.
-            if (!Scalar(parameter.ParameterType)) return false;
+            if (!Scalar(parameter.ParameterType) && managed.Enum == null) return false;
             if (managed.Field is { } field && !BindScalarFieldArgument(caller, field, body, values, address, out source) ||
                 managed.Toggle is { } toggle && (target.Parameters.Count != 1 ||
                     !BindBooleanToggleArgument(caller, toggle, receiver, body, values, address, out source)) ||
@@ -474,6 +481,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
     {
         source = default;
         argument = default;
+        if (type.Type == Il2CppTypeEnum.IL2CPP_TYPE_ENUM)
+            return TryEnumArgument(method, operand, use, type, out source, out argument);
         if (OrdinaryClass(type))
         {
             if (TryReferenceFieldArgument(method, operand, use, type, out var reference))
@@ -629,6 +638,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
     {
         var parameter = method.Parameters[index];
         var type = parameter.ParameterType;
+        if (type.Type == Il2CppTypeEnum.IL2CPP_TYPE_ENUM) return OriginalEnumParameter(method, index);
         return parameter.ParameterIndex == index && ReferenceEquals(parameter.DeclaringMethod, method) &&
                !parameter.IsRef && parameter.OverrideParameterType == null && parameter.Attributes == parameter.DefaultAttributes &&
                ReferenceEquals(type, parameter.DefaultParameterType) && (Scalar(type) || OrdinaryClass(type)) &&
@@ -829,7 +839,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
             for (var index = start; index < end; index++)
             {
                 var parameterIndex = index - start - (target.IsStatic ? 0 : 1);
-                if (parameterIndex >= 0 && Scalar(target.Parameters[parameterIndex].ParameterType) &&
+                if (parameterIndex >= 0 && (Scalar(target.Parameters[parameterIndex].ParameterType) ||
+                    IsSignedEnumArgumentType(target.Parameters[parameterIndex].ParameterType)) &&
                     TryArgument(method, operation.Operands[index], operation, target.Parameters[parameterIndex].ParameterType,
                         out _, out var scalar)) children.Add(new("argument", scalar, []));
                 else if (OperandKey(method, operation.Operands[index], operation, seen, out var value)) children.Add(value);

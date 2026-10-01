@@ -175,6 +175,9 @@ import scalar_int32_single_conversion
 import scalar_word_wrapper_conversion
 import scalar_double_accumulator
 import native_scalar_double_leaf
+import native_virtual_scalar_zero_leaf
+import native_enum_argument_invocation
+import native_stack_aggregate_argument
 import native_framework_reference_transport
 import scalar_float_conversion_composition
 import native_null_checked_invocation
@@ -272,6 +275,15 @@ PROFILES = {
                                "source": VALIDATION / "ScalarFloatSelectionFixture", "methods": 9},
     "native-scalar-double-leaf": {"assembly": "NativeScalarDoubleLeafFixture",
                                   "source": VALIDATION / "NativeScalarDoubleLeafFixture", "methods": 7},
+    "native-virtual-scalar-zero-leaf": {"assembly": "NativeVirtualScalarZeroLeafFixture",
+                                       "source": VALIDATION / "NativeVirtualScalarZeroLeafFixture", "methods": 12,
+                                       "noManagedBody": (("NativeVirtualScalarZeroLeafFixture.IZeroPair", "get_First"),
+                                                         ("NativeVirtualScalarZeroLeafFixture.IZeroPair", "get_Second"),
+                                                         ("NativeVirtualScalarZeroLeafFixture.ZeroPair+IStringZero", "Read"))},
+    "native-enum-argument-invocation": {"assembly": "NativeEnumArgumentInvocationFixture",
+                                       "source": VALIDATION / "NativeEnumArgumentInvocationFixture", "methods": 8},
+    "native-stack-aggregate-argument": {"assembly": "NativeStackAggregateArgumentFixture",
+                                       "source": VALIDATION / "NativeStackAggregateArgumentFixture", "methods": 2},
     "native-framework-reference-transport": {"assembly": "NativeFrameworkReferenceTransportFixture",
                                              "source": VALIDATION / "NativeFrameworkReferenceTransportFixture", "methods": 4},
     "scalar-double-accumulator": {"assembly": "ScalarDoubleAccumulatorFixture",
@@ -759,6 +771,12 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return scalar_float_selection.verify(path, stage, VERSION)
     if profile == "native-scalar-double-leaf":
         return native_scalar_double_leaf.verify(path, stage, VERSION)
+    if profile == "native-virtual-scalar-zero-leaf":
+        return native_virtual_scalar_zero_leaf.verify(path, stage, VERSION)
+    if profile == "native-enum-argument-invocation":
+        return native_enum_argument_invocation.verify(path, stage, VERSION)
+    if profile == "native-stack-aggregate-argument":
+        return native_stack_aggregate_argument.verify(path, stage, VERSION)
     if profile == "native-framework-reference-transport":
         return native_framework_reference_transport.verify(path, stage, VERSION)
     if profile == "scalar-double-accumulator":

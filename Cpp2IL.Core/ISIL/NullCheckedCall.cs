@@ -47,7 +47,7 @@ internal static class NullCheckedCall
                 parameter.Definition is { } definition && definition.RawType is not { Data: not null } ||
                 parameter.IsRef || parameter.Attributes != parameter.DefaultAttributes ||
                 parameter.OverrideParameterType != null ||
-                !IsOrdinaryValue(parameter.ParameterType) ||
+                !IsOrdinaryArgument(parameter.ParameterType) ||
                 !CanLoadWithoutEffects(instruction.Operands[receiverIndex + 1 + index], parameter.ParameterType))
                 return false;
         }
@@ -94,10 +94,15 @@ internal static class NullCheckedCall
     private static bool IsOrdinaryValue(TypeAnalysisContext type) =>
         IsReferenceClass(type) || IsBoundedArrayReference(type) || IsNumeric(type);
 
+    private static bool IsOrdinaryArgument(TypeAnalysisContext type) => IsOrdinaryValue(type) ||
+        X64NativeNullCheckedInvocationProof.IsSignedEnumArgumentType(type);
+
     public static bool CanLoadWithoutEffects(IOperand operand, TypeAnalysisContext expected) => operand switch
     {
-        LocalVariable local => SameOrdinaryType(local.Type, expected) && IsOrdinaryValue(expected),
-        Immediate number => IsInteger(expected) || number.Value == 0 &&
+        LocalVariable local => SameOrdinaryType(local.Type, expected) && IsOrdinaryArgument(expected),
+        Immediate number => IsInteger(expected) ||
+            X64NativeNullCheckedInvocationProof.IsSignedEnumArgumentType(expected) && number.Value is >= int.MinValue and <= int.MaxValue ||
+            number.Value == 0 &&
             (IsReferenceClass(expected) || IsBoundedArrayReference(expected)),
         FloatLiteral => ReferenceEquals(expected, expected.AppContext.SystemTypes.SystemSingleType),
         DoubleLiteral => ReferenceEquals(expected, expected.AppContext.SystemTypes.SystemDoubleType),

@@ -74,6 +74,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         var noReturnCalls = new HashSet<ulong>();
         if (X64ObjectConstructorThunkProof.TryLift(context, nativeInstructions) is { } objectConstructorThunk)
             return objectConstructorThunk; // The complete tail thunk binds the shared Object constructor target.
+        if (X64BeforeFieldInitBaseConstructorRecovery.TryLift(context, nativeInstructions) is { } beforeFieldInitConstructor)
+            return beforeFieldInitConstructor; // Retain the immediate base call and its original initialization declaration.
         if (X64FoldedLiteralConstructorProof.TryLift(context, nativeInstructions) is { } foldedLiteralConstructor)
             return foldedLiteralConstructor; // The field initializer and inert Object tail are both independently bound.
         if (X64IteratorConstructorProof.TryLift(context, nativeInstructions) is { } iteratorConstructor)
@@ -96,6 +98,8 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             return booleanTailBranch; // Complete frame-free Boolean branch with two uniquely bound tail targets.
         if (X64ByteMaskBooleanParameterProof.TryLift(context, nativeInstructions) is { } byteMaskBoolean)
             return byteMaskBoolean; // Complete Boolean leaf proves the second argument's low-byte mask.
+        if (X64VirtualScalarZeroReturnProof.TryLift(context, nativeInstructions) is { } virtualScalarZero)
+            return virtualScalarZero; // Bind the complete shared leaf and original class/interface dispatch.
         if (X64ScalarZeroReturnProof.TryLift(context, nativeInstructions) is { } scalarZero)
             return scalarZero; // The complete leaf clears all XMM0 bits before a scalar return.
         if (X64ScalarFloatConversionProof.TryLift(context, nativeInstructions) is { } scalarFloatConversion)
@@ -367,6 +371,7 @@ public class X86InstructionSet : Cpp2IlInstructionSet
         X86BodyBoundary.AppendFallthroughFailure(instructions);
 
         FixBranchTargets(instructions, addresses);
+        X64StackAggregateCallRecovery.TryRewriteArguments(context, nativeInstructions, instructions);
 
         return instructions;
 

@@ -86,12 +86,14 @@ public static partial class IlGenerator
         ValidateOpenGenericPrefixFields(context);
         ValidateScalarVirtualDispatch(context);
         ValidateScalarLaneCopies(context);
+        X64StackAggregateCallRecovery.ValidateFinalGraph(context, definition);
         ValidateCallSemantics(context);
         if (X64ReferenceScalarFieldEffectsProof.HasEvidence(context) &&
             !X64ReferenceScalarFieldEffectsProof.IsValidFor(context))
             throw new DecompilerException("Reference and scalar field effects lost their complete native frame, layout or effect-order proof");
         if (X64NativeNullCheckedInvocationProof.HasEvidence(context) &&
-            !X64NativeNullCheckedInvocationProof.IsValidFor(context))
+            (!X64NativeNullCheckedInvocationProof.IsValidFor(context) ||
+             !X64NativeNullCheckedInvocationProof.EnumOutputDeclarationsValid(context)))
             throw new DecompilerException("Native null-checked invocation lost its receiver, argument, target or effect-order proof");
         if (X64ScalarFloatingFieldStoreProof.HasEvidence(context) &&
             !X64ScalarFloatingFieldStoreProof.IsValidFor(context))
@@ -111,6 +113,13 @@ public static partial class IlGenerator
         if (X64ScalarDoubleLeafProof.HasEvidence(context) &&
             (!X64ScalarDoubleLeafProof.IsValidFor(context) || !X64ScalarDoubleLeafProof.MatchesOutput(context, definition)))
             throw new DecompilerException("Double leaf recovery lost its original identity, complete body, ordered field reads, signed conversion or binary64 arithmetic proof");
+        if (X64VirtualScalarZeroReturnProof.HasEvidence(context) &&
+            (!X64VirtualScalarZeroReturnProof.IsValidFor(context) || !X64VirtualScalarZeroReturnProof.MatchesOutput(context, definition)))
+            throw new DecompilerException("Virtual scalar zero recovery lost its original identity, complete shared leaf, signature or class/interface dispatch proof");
+        if (X64BeforeFieldInitBaseConstructorRecovery.HasEvidence(context) &&
+            (!X64BeforeFieldInitBaseConstructorRecovery.IsValidFor(context) ||
+             !X64BeforeFieldInitBaseConstructorRecovery.MatchesOutput(context, definition)))
+            throw new DecompilerException("BeforeFieldInit base constructor recovery lost its original declaration, complete native guard, shared base thunk or typed base call proof");
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
         ValidateGuardedArrayOperations(context);
