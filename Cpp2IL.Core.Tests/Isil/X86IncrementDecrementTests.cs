@@ -167,18 +167,18 @@ public class X86IncrementDecrementTests
         Assert.That(graph.Instructions.Count(i => i.OpCode is OpCode.Add or OpCode.Subtract), Is.EqualTo(1));
     }
 
-    [TestCase("FEC1")] // inc cl
-    [TestCase("FEC9")] // dec cl
-    [TestCase("66FFC1")] // inc cx
-    [TestCase("66FFC9")] // dec cx
-    [TestCase("FF01")] // inc dword ptr [rcx]
-    [TestCase("FF09")] // dec dword ptr [rcx]
-    [TestCase("48FF01")] // inc qword ptr [rcx]
-    [TestCase("48FF09")] // dec qword ptr [rcx]
-    public void NarrowAndMemoryStepsDoNotAcquireRegisterWidthProof(string bytes)
+    [TestCase("FEC1", 0)] // inc cl
+    [TestCase("FEC9", 0)] // dec cl
+    [TestCase("66FFC1", 0)] // inc cx
+    [TestCase("66FFC9", 0)] // dec cx
+    [TestCase("FF01", 32)] // inc dword ptr [rcx]
+    [TestCase("FF09", 32)] // dec dword ptr [rcx]
+    [TestCase("48FF01", 64)] // inc qword ptr [rcx]
+    [TestCase("48FF09", 64)] // dec qword ptr [rcx]
+    public void NarrowAndMemoryStepsKeepUnprovedFlagsAndPreservedCarry(string bytes, int width)
     {
         var instructions = Lift(bytes);
-        Assert.That(instructions.Single(i => i.OpCode is OpCode.Add or OpCode.Subtract).IntegerBitWidth, Is.Zero);
+        Assert.That(instructions.Single(i => i.OpCode is OpCode.Add or OpCode.Subtract).IntegerBitWidth, Is.EqualTo(width));
         foreach (var flag in new[] { "ZF", "SF", "OF", "PF" })
             Assert.That(instructions.Single(i => i.Destination is Register r && r.Name == flag).OpCode,
                 Is.EqualTo(OpCode.UnresolvedValue), flag);

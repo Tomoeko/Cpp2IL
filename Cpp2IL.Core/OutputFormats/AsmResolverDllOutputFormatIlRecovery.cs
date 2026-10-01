@@ -223,6 +223,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64ReferenceArrayScalarResetRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Reference-array scalar reset loop IL emitted from complete bounded native and metadata evidence, preserving each evidenced array reload, prefix stores and ordered null/bounds failures; behavior remains unverified.");
+                return;
+            }
+
             if (X64ReferenceArraySearchRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,

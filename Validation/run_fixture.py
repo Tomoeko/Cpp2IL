@@ -21,6 +21,7 @@ import reference_field
 import native_int_field
 import reference_array
 import reference_array_search
+import reference_array_scalar_reset
 import range_array_read
 import exception_regions
 import field_array
@@ -177,8 +178,10 @@ import native_scalar_field_invocation
 import native_scalar_producer_invocation
 import native_reference_producer_invocation
 import native_reference_field_invocation
+import native_nested_reference_field_invocation
 import signed_field_comparison
 import typed_field_address
+import typed_field_address_discarded_result
 import native_scalar_invocation_effects
 import native_subnormal_field_store
 import native_derived_receiver_invocation
@@ -276,12 +279,18 @@ PROFILES = {
                                            "source": VALIDATION / "NativeReferenceProducerInvocationFixture", "methods": 8},
     "native-reference-field-invocation": {"assembly": "NativeReferenceFieldInvocationFixture",
                                         "source": VALIDATION / "NativeReferenceFieldInvocationFixture", "methods": 5},
+    "native-nested-reference-field-invocation": {"assembly": "NativeNestedReferenceFieldInvocationFixture",
+                                               "source": VALIDATION / "NativeNestedReferenceFieldInvocationFixture", "methods": 6},
     "signed-field-comparison": {"assembly": "SignedFieldComparisonFixture",
                                 "source": VALIDATION / "SignedFieldComparisonFixture", "methods": 6},
     "typed-field-address": {"assembly": "TypedFieldAddressFixture",
                             "source": VALIDATION / "TypedFieldAddressFixture", "methods": 12},
+    "typed-field-address-discarded-result": {"assembly": "TypedFieldAddressDiscardedResultFixture",
+                                            "source": VALIDATION / "TypedFieldAddressDiscardedResultFixture", "methods": 7},
     "reference-array-search": {"assembly": "ReferenceArraySearchFixture",
                                "source": VALIDATION / "ReferenceArraySearchFixture", "methods": 8},
+    "reference-array-scalar-reset": {"assembly": "ReferenceArrayScalarResetFixture",
+                                     "source": VALIDATION / "ReferenceArrayScalarResetFixture", "methods": 5},
     "native-scalar-invocation-effects": {"assembly": "NativeScalarInvocationEffectsFixture",
                                        "source": VALIDATION / "NativeScalarInvocationEffectsFixture", "methods": 6},
     "native-subnormal-field-store": {"assembly": "NativeSubnormalFieldStoreFixture",
@@ -693,12 +702,18 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_reference_producer_invocation.verify(path, stage, VERSION)
     if profile == "native-reference-field-invocation":
         return native_reference_field_invocation.verify(path, stage, VERSION)
+    if profile == "native-nested-reference-field-invocation":
+        return native_nested_reference_field_invocation.verify(path, stage, VERSION)
     if profile == "signed-field-comparison":
         return signed_field_comparison.verify(path, stage, VERSION)
     if profile == "typed-field-address":
         return typed_field_address.verify(path, stage, VERSION)
+    if profile == "typed-field-address-discarded-result":
+        return typed_field_address_discarded_result.verify(path, stage, VERSION)
     if profile == "reference-array-search":
         return reference_array_search.verify(path, stage, VERSION)
+    if profile == "reference-array-scalar-reset":
+        return reference_array_scalar_reset.verify(path, stage, VERSION)
     if profile == "native-scalar-invocation-effects":
         return native_scalar_invocation_effects.verify(path, stage, VERSION)
     if profile == "native-subnormal-field-store":

@@ -1072,14 +1072,26 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             // The following pair of instructions does not update the Carry Flag (CF):
             case Mnemonic.Dec:
             case Mnemonic.Inc:
+                if (instruction.HasLockPrefix || instruction.HasRepPrefix || instruction.HasRepnePrefix ||
+                    instruction.SegmentPrefix != Register.None ||
+                    instruction.CodeSize == CodeSize.Code64 && instruction.Op0Kind == OpKind.Memory &&
+                    (instruction.MemoryBase != Register.None && instruction.MemoryBase.GetSize() != 8 ||
+                     instruction.MemoryIndex != Register.None && instruction.MemoryIndex.GetSize() != 8))
+                {
+                    Add(instruction.IP, ISIL.OpCode.NotImplemented, new ISIL.StringLiteral(
+                        "Integer step requires independent address, memory or atomicity semantics: " + FormatInstruction(instruction)));
+                    break;
+                }
                 var increment = instruction.Mnemonic == Mnemonic.Inc;
                 var steppedOperand = ConvertOperand(instruction, 0);
                 var step = Add(instruction.IP, increment ? ISIL.OpCode.Add : ISIL.OpCode.Subtract,
                     steppedOperand, steppedOperand, Imm(1));
-                if (instruction.Op0Kind == OpKind.Register && instruction.Op0Register.GetSize() is 4 or 8)
-                {
-                    var stepWidth = instruction.Op0Register.GetSize() * 8;
+                var stepWidth = (instruction.Op0Kind == OpKind.Register
+                    ? instruction.Op0Register.GetSize() : instruction.MemorySize.GetSize()) * 8;
+                if (stepWidth is 32 or 64)
                     step.IntegerBitWidth = stepWidth;
+                if (instruction.Op0Kind == OpKind.Register && stepWidth is 32 or 64)
+                {
                     Add(instruction.IP, ISIL.OpCode.CheckEqual, new ISIL.Register(null, "ZF"),
                         steppedOperand, Imm(0)).IntegerBitWidth = stepWidth;
                     Add(instruction.IP, ISIL.OpCode.CheckLess, new ISIL.Register(null, "SF"),

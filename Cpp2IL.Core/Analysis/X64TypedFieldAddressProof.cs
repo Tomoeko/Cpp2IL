@@ -21,7 +21,7 @@ namespace Cpp2IL.Core.Analysis;
 /// Taking a managed field address checks its owner; native ADD/LEA does not.
 /// Admission therefore also authenticates the first fault before call effects.
 /// </summary>
-internal static class X64TypedFieldAddressProof
+internal static partial class X64TypedFieldAddressProof
 {
     internal sealed record Site(ManagedInstruction Operation, LocalVariable Pointer,
         LocalVariable Owner, FieldAnalysisContext Field, NativeInstruction Native,
@@ -117,7 +117,7 @@ internal static class X64TypedFieldAddressProof
                         !values.Matches(callAddress, NativeRegister.RCX, 64,
                             new(NativeRegister.None, address, destinationRegister)) ||
                         !values.HasCallFrame(callAddress, nativeCall.Code == Code.Jmp_rel32_64) ||
-                        Target(method, field.FieldType, nativeCall.NearBranchTarget, call) is not { } target ||
+                        Target(method, field.FieldType, nativeCall.NearBranchTarget, call, projected) is not { } target ||
                         !Arguments(method, target, call, pointer, nativeCall, values, projected) ||
                         ReadBody(target) is not { } callee ||
                         !FirstReceiverFault(target, callee, size) ||
@@ -191,7 +191,7 @@ internal static class X64TypedFieldAddressProof
                     Il2CppTypeEnum.IL2CPP_TYPE_I or Il2CppTypeEnum.IL2CPP_TYPE_U);
     }
 
-    private static bool OrdinaryMethod(MethodAnalysisContext method) =>
+    private static bool OrdinaryMethod(MethodAnalysisContext method, bool allowEnumArgument = false) =>
         method.Definition is { RawReturnType: { Data: not null } } &&
         method.Parameters.All(parameter => parameter.Definition?.RawType is { Data: not null }) &&
         !method.IsStatic && !method.IsVirtual && method.Name is not (".ctor" or ".cctor") &&
@@ -208,9 +208,10 @@ internal static class X64TypedFieldAddressProof
             parameter.Name == parameter.DefaultName && parameter.Attributes == parameter.DefaultAttributes &&
             !parameter.UseOverrideDefaultValue && ReferenceEquals(parameter.ParameterType, parameter.DefaultParameterType) &&
             parameter.Definition?.RawType is { NumMods: 0, Byref: 0, Pinned: 0 } &&
-            parameter.ParameterType.Type is Il2CppTypeEnum.IL2CPP_TYPE_I4 or Il2CppTypeEnum.IL2CPP_TYPE_U4 or
+            (parameter.ParameterType.Type is Il2CppTypeEnum.IL2CPP_TYPE_I4 or Il2CppTypeEnum.IL2CPP_TYPE_U4 or
                 Il2CppTypeEnum.IL2CPP_TYPE_I8 or Il2CppTypeEnum.IL2CPP_TYPE_U8 or
-                Il2CppTypeEnum.IL2CPP_TYPE_I or Il2CppTypeEnum.IL2CPP_TYPE_U) &&
+                Il2CppTypeEnum.IL2CPP_TYPE_I or Il2CppTypeEnum.IL2CPP_TYPE_U ||
+             allowEnumArgument && IsSignedEnum32(parameter.ParameterType))) &&
         RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method, requireUniqueBinding: false) &&
         !RuntimeNullGuardCoalescer.HasOutputOptions(method);
 
@@ -268,19 +269,30 @@ internal static class X64TypedFieldAddressProof
         => offset >= 16 && size is 4 or 8 && offset <= 0x10000 - size;
 
     private static MethodAnalysisContext? Target(MethodAnalysisContext caller, TypeAnalysisContext aggregate,
-        ulong address, ManagedInstruction call)
+        ulong address, ManagedInstruction call, bool projected)
     {
         // Even a different managed signature can share the observed native ABI
         // after casts or dead results disappear. Do not filter those identities
         // away using types that were inferred from an earlier guessed binding.
         var candidates = aggregate.Methods.Where(method => method.UnderlyingPointer == address).ToArray();
-        if (candidates is not [var unique] || !OrdinaryMethod(unique) ||
+        if (candidates is not [var unique]) return null;
+        var discardedEnum = caller.IsVoid && caller.Parameters.Count == 0 &&
+                            unique.Definition?.RawReturnType is { Data: not null } &&
+                            IsSignedEnum32(unique.ReturnType);
+        if (!OrdinaryMethod(unique, discardedEnum) ||
             new X64CallingConventionResolver().ReturnsViaHiddenBuffer(unique)) return null;
         // Native sharing alone is ambiguous. The exact addressed managed owner,
         // argument count/types and return declaration must leave one identity.
-        if (unique.Parameters.Count != caller.Parameters.Count || !ReferenceEquals(unique.ReturnType, caller.ReturnType) ||
-            !unique.Parameters.Select(parameter => parameter.ParameterType)
-                .SequenceEqual(caller.Parameters.Select(parameter => parameter.ParameterType))) return null;
+        if (discardedEnum)
+        {
+            if (unique.Parameters.Count > 1 ||
+                unique.Parameters.Count == 1 && !IsSignedEnum32(unique.Parameters[0].ParameterType) ||
+                call.Operands[0] is MethodAnalysisContext && !HasUnusedEnumResult(caller, unique, call, projected))
+                return null;
+        }
+        else if (unique.Parameters.Count != caller.Parameters.Count || !ReferenceEquals(unique.ReturnType, caller.ReturnType) ||
+                 !unique.Parameters.Select(parameter => parameter.ParameterType)
+                     .SequenceEqual(caller.Parameters.Select(parameter => parameter.ParameterType))) return null;
         if (call.Operands[0] is MethodAnalysisContext bound)
             return ReferenceEquals(unique, bound) ? unique : null;
         return call.Operands[0] is Immediate raw && unchecked((ulong)raw.Value) == address ? unique : null;
@@ -298,25 +310,28 @@ internal static class X64TypedFieldAddressProof
         if (call.Operands[0] is not MethodAnalysisContext)
             return !projected && call.OpCode == ISIL.OpCode.CallVoid && call.Operands.Count >= 2 &&
                    ReferenceEquals(call.Operands[1], pointer) && target.Parameters.Count == 0;
-        var first = target.IsVoid ? 1 : 2;
-        if (call.OpCode != (target.IsVoid ? ISIL.OpCode.CallVoid : ISIL.OpCode.Call) ||
+        var discardedEnum = HasUnusedEnumResult(caller, target, call, projected);
+        var first = call.OpCode == ISIL.OpCode.Call ? 2 : 1;
+        if (call.OpCode != (target.IsVoid || discardedEnum && projected ? ISIL.OpCode.CallVoid : ISIL.OpCode.Call) ||
             call.Operands.Count != first + target.Parameters.Count + 1 ||
             !ReferenceEquals(call.Operands[first], pointer) ||
-            !target.IsVoid && call.Operands[1] is not LocalVariable { Type: not null } ||
-            !target.IsVoid && !ReferenceEquals(((LocalVariable)call.Operands[1]).Type, target.ReturnType))
+            call.OpCode == ISIL.OpCode.Call && call.Operands[1] is not LocalVariable { Type: not null } ||
+            call.OpCode == ISIL.OpCode.Call && !ReferenceEquals(((LocalVariable)call.Operands[1]).Type, target.ReturnType))
             return false;
         for (var index = 0; index < target.Parameters.Count; index++)
         {
             var type = target.Parameters[index].ParameterType;
-            var bits = type.Type is Il2CppTypeEnum.IL2CPP_TYPE_I4 or Il2CppTypeEnum.IL2CPP_TYPE_U4 ? 32 : 64;
+            var enumArgument = IsSignedEnum32(type);
+            var bits = enumArgument || type.Type is Il2CppTypeEnum.IL2CPP_TYPE_I4 or Il2CppTypeEnum.IL2CPP_TYPE_U4 ? 32 : 64;
             if (abi[index + 1] is not ManagedRegister register) return false;
             var argument = call.Operands[first + index + 1];
             if (argument is Immediate literal)
             {
+                if (enumArgument && (!discardedEnum || literal.Value != 0)) return false;
                 if (!values.Matches(native.IP, Native(register), bits,
                         new(NativeRegister.None, Literal: unchecked((ulong)literal.Value)))) return false;
             }
-            else if (argument is LocalVariable local && caller.ParameterLocals.Contains(local) &&
+            else if (!enumArgument && argument is LocalVariable local && caller.ParameterLocals.Contains(local) &&
                      LocalVariables.GetIncomingParameterIndex(caller, local) is { } parameterIndex &&
                      ReferenceEquals(caller.Parameters[parameterIndex].ParameterType, type) &&
                      ReferenceEquals(local.Type, type) && local.Register.Copy().Name is { } name &&
@@ -451,7 +466,8 @@ internal static class X64TypedFieldAddressProof
         if (tails is [(var call, var target)])
         {
             if (!ManagedDominates(method, call, operation)) return false;
-            if (method.IsVoid) return target.IsVoid && operation.Operands.Count == 0;
+            if (method.IsVoid) return (target.IsVoid || HasUnusedEnumResult(method, target, call, projected)) &&
+                                      operation.Operands.Count == 0;
             if (!ReferenceEquals(method.ReturnType, target.ReturnType) ||
                 operation.Operands is not [LocalVariable result] ||
                 !ReferenceEquals(result.Type, method.ReturnType)) return false;
@@ -463,6 +479,16 @@ internal static class X64TypedFieldAddressProof
                        { OpCode: ISIL.OpCode.UnresolvedValue, Operands: [_, StringLiteral] };
         }
         var index = Array.FindIndex(body, native => native.IP == address && native.Code == Code.Retnq);
+        if (method.IsVoid && operation.Operands.Count == 0 && index >= 0)
+        {
+            // The guarded no-op path reaches its exact native RET without any
+            // call. Otherwise every admitted call must precede this return.
+            if (body.Length > 1 && body[0].Code == Code.Cmp_rm8_imm8 &&
+                body[1].Code is Code.Je_rel8_64 or Code.Jne_rel8_64 && body[1].NearBranchTarget == address)
+                return method.ControlFlowGraph!.Blocks.Single(block => block.Instructions.Contains(operation))
+                    .Instructions.Count == 1;
+            return sites.SelectMany(site => site.Calls).All(call => ManagedDominates(method, call, operation));
+        }
         return index > 0 && body[index - 1].Mnemonic == Mnemonic.Xor &&
                body[index - 1].Op0Kind == OpKind.Register && body[index - 1].Op1Kind == OpKind.Register &&
                body[index - 1].Op0Register == NativeRegister.EAX && body[index - 1].Op1Register == NativeRegister.EAX &&
@@ -581,6 +607,7 @@ internal static class X64TypedFieldAddressProof
         }
         X64SmallAggregateFieldGetterProof.CaptureMethod(method, facts);
         X64SmallAggregateFieldGetterProof.CaptureRawType(method.Definition!.RawReturnType!, facts);
+        if (method.ReturnType.IsEnumType) CaptureSignedEnum32(method.ReturnType, facts);
         foreach (var parameter in method.Parameters)
         {
             facts.Add(parameter);
@@ -588,6 +615,7 @@ internal static class X64TypedFieldAddressProof
             facts.Add(parameter.Attributes);
             facts.Add(parameter.ParameterType);
             X64SmallAggregateFieldGetterProof.CaptureRawType(parameter.Definition!.RawType!, facts);
+            if (parameter.ParameterType.IsEnumType) CaptureSignedEnum32(parameter.ParameterType, facts);
         }
         facts.AddRange(body.Cast<object>());
         var length = checked((int)(body[^1].NextIP - method.UnderlyingPointer));

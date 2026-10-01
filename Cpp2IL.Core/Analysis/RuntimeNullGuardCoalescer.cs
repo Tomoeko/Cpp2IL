@@ -541,6 +541,8 @@ internal static class RuntimeNullGuardCoalescer
                         (X64NativeNullCheckedInvocationProof.IsScalarFieldArgumentCapture(method,
                             capturedField, instruction, capturedAccess.Field.FieldType) ||
                          X64NativeNullCheckedInvocationProof.IsReferenceFieldArgumentCapture(method,
+                            capturedField, instruction) ||
+                         X64NativeNullCheckedInvocationProof.IsNestedReferenceFieldArgumentCapture(method,
                             capturedField, instruction)))
                     {
                         pendingTypedInvocationSetup = true;

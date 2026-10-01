@@ -65,10 +65,13 @@ internal static partial class X64NativeNullCheckedInvocationProof
     // parameter type. Missing class data cannot be treated as a valid capture,
     // and lazy resolution would otherwise throw before proof rejection.
     private static bool ReferenceArgumentDescriptorsValid(List<Site> sites) => sites.All(site =>
-        site.Arguments.Select((argument, index) => argument.Reference == null ||
-            argument.Reference.Origin.Field?.BackingData?.Field.RawFieldType is { Data: not null } &&
+        site.Arguments.Select((argument, index) => argument.Reference == null && argument.NestedReference == null ||
             index < site.Target.Parameters.Count &&
-            site.Target.Parameters[index].Definition?.RawType is { Data: not null }).All(valid => valid));
+            site.Target.Parameters[index].Definition?.RawType is { Data: not null } &&
+            (argument.Reference?.Origin.Field?.BackingData?.Field.RawFieldType is { Data: not null } ||
+             argument.NestedReference is { } nested &&
+             nested.Field.BackingData?.Field.RawFieldType is { Data: not null } &&
+             nested.Owner.Field?.BackingData?.Field.RawFieldType is { Data: not null })).All(valid => valid));
 
     // Captures before a guard must require the same proof as captures encountered
     // behind it. A typed target alone does not bind the argument's native value.
@@ -104,6 +107,12 @@ internal static partial class X64NativeNullCheckedInvocationProof
         var fields = new List<ValueKey>();
         for (var index = 0; index < arguments.Length; index++)
         {
+            if (arguments[index].NestedReference is { } nested)
+            {
+                if (!TryNestedReferenceDeclarations(target, index, nested, out var nestedDeclarations)) return false;
+                fields.Add(nestedDeclarations);
+                continue;
+            }
             if (arguments[index].Reference is not { } reference) continue;
             var origin = reference.Origin;
             var field = origin.Field!;

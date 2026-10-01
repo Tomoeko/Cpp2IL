@@ -45,8 +45,14 @@ internal static class TypedFieldAddressRecovery
                 for (var index = 0; index < site.Calls.Length; index++)
                 {
                     var call = site.Calls[index];
-                    if (call.Operands[0] is MethodAnalysisContext) continue;
                     var target = site.Targets[index];
+                    if (X64TypedFieldAddressProof.HasUnusedEnumResult(method, target, call, false))
+                    {
+                        call.OpCode = OpCode.CallVoid;
+                        call.SetOperands(call.Operands.Where((_, operandIndex) => operandIndex != 1).ToList());
+                        continue;
+                    }
+                    if (call.Operands[0] is MethodAnalysisContext) continue;
                     if (target.IsVoid)
                         call.SetOperands(target, site.Pointer);
                     else

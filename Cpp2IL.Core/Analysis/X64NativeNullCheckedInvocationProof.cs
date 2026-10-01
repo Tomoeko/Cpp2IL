@@ -32,7 +32,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
         int Offset = 0, bool ReferenceWidened = false);
     private readonly record struct Argument(int? Entry, long? Literal, ScalarFieldArgument? Field = null,
         BooleanToggleArgument? Toggle = null, BooleanPredicateArgument? Predicate = null,
-        ScalarProducerArgument? Producer = null, ReferenceFieldArgument? Reference = null);
+        ScalarProducerArgument? Producer = null, ReferenceFieldArgument? Reference = null,
+        NestedReferenceFieldArgument? NestedReference = null);
     private sealed record ValueKey(string Kind, object? Value, ValueKey[] Children);
     private sealed record OrderedEffect(Instruction Operation, ulong Address, bool Before, bool After,
         CallSemantics Semantics, ValueKey Value);
@@ -42,7 +43,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
         Argument[] Arguments, ulong Comparison, ulong Branch, ulong NullCall, RuntimeNullThrowEvidence Helper,
         Instruction GuardBranch, Block GuardOwner, Block NormalArm, NativeInstruction[] Body,
         OrderedEffect[] Effects, Control[] Controls, ReferenceStore[] Stores, ValueKey? ReceiverDeclarations,
-        ValueKey? ArgumentDeclarations);
+        ValueKey? ArgumentDeclarations, NestedReferenceGuard? NestedGuard);
 
     internal static bool HasEvidence(MethodAnalysisContext method) =>
         NativeRecoveryProofTracker.Has(method, EvidenceKey) ||
@@ -91,19 +92,22 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     graph.Instructions.Where(instruction => instruction.OpCode == OpCode.RuntimeNullThrow).ToArray() is not
                         [{ NativeAddress: { } onlyNullCall }] || onlyNullCall != nullCall ||
                     !BindInvocation(caller, invocation, target, origin, body, values, out var arguments, comparisonIp) ||
+                    !TryNestedReferenceGuard(caller, invocation, origin, arguments, comparison, branch,
+                        guardOwner, normalArm, body, values, nullCall, helper, out var nestedGuard) ||
                     !TryReceiverDeclarations(caller, origin, target, out var receiverDeclarations) ||
                     !TryReferenceArgumentDeclarations(target, arguments, out var argumentDeclarations) ||
                     !TryEffects(caller, invocation, out var effects) ||
-                    !TryControls(caller, branch, body, out var controls)) return false;
+                    !TryControls(caller, branch, body, out var controls, nestedGuard?.Branch)) return false;
                 var sites = caller.GetExtraData<List<Site>>(EvidenceKey) ?? [];
                 if (sites.Any(site => ReferenceEquals(site.Invocation, invocation))) return false;
                 sites.Add(new(invocation, target, origin, arguments, comparisonIp, branchIp, nullCall, helper,
                     branch, guardOwner, normalArm, body, effects, controls, stores, receiverDeclarations,
-                    argumentDeclarations));
+                    argumentDeclarations, nestedGuard));
                 var argumentIndex = invocation.OpCode == OpCode.Call ? 3 : 2;
                 for (var index = 0; index < arguments.Length; index++)
-                    if (arguments[index].Reference == null)
+                    if (arguments[index].Reference == null && arguments[index].NestedReference == null)
                         invocation.SetOperand(argumentIndex + index, CanonicalArgument(caller, arguments[index]));
+                if (nestedGuard != null) RewriteNestedReferenceGuard(nestedGuard, undo);
                 caller.PutExtraData(EvidenceKey, sites);
                 NativeRecoveryProofTracker.Mark(caller, EvidenceKey);
                 admitted = true;
@@ -188,6 +192,7 @@ internal static partial class X64NativeNullCheckedInvocationProof
                     !BindInvocation(caller, call, target, origin, body, values, out var arguments, site.Comparison) ||
                     !arguments.SequenceEqual(site.Arguments) ||
                     !ReferenceArgumentDeclarationsRetained(target, arguments, site.ArgumentDeclarations) ||
+                    !NestedReferenceGuardRetained(caller, site, body, values) ||
                     !EffectsRetained(caller, call, site.Effects) ||
                     !ControlsRetained(caller, body, site.Controls) ||
                     site.Stores.Any(store => !ReferenceStoreRetained(caller, body, values, store)))
@@ -197,7 +202,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
                    ScalarFieldArgumentUsesRetained(caller, sites) && ReferenceReceiverUsesRetained(caller, sites) &&
                    BooleanToggleArgumentUsesRetained(caller, sites) && BooleanPredicateArgumentUsesRetained(caller, sites) &&
                    ScalarProducerArgumentUsesRetained(caller, sites) &&
-                   ReferenceProducerUsesRetained(caller, sites) && ReferenceArgumentUsesRetained(caller, sites);
+                   ReferenceProducerUsesRetained(caller, sites) && ReferenceArgumentUsesRetained(caller, sites) &&
+                   NestedReferenceArgumentUsesRetained(caller, sites);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
                                           IndexOutOfRangeException or OverflowException)
@@ -334,6 +340,12 @@ internal static partial class X64NativeNullCheckedInvocationProof
                 bound[index] = managed;
                 continue;
             }
+            if (managed.NestedReference is { } nested)
+            {
+                if (!BindNestedReferenceArgument(caller, nested, body, values, address, register)) return false;
+                bound[index] = managed;
+                continue;
+            }
             // Ordinary references are admitted only through the captured field
             // route above. Incoming references, literals and producer arguments
             // need their own immutable declaration and use proofs.
@@ -464,8 +476,13 @@ internal static partial class X64NativeNullCheckedInvocationProof
         argument = default;
         if (OrdinaryClass(type))
         {
-            if (!TryReferenceFieldArgument(method, operand, use, type, out var reference)) return false;
-            argument = new(null, null, Reference: reference);
+            if (TryReferenceFieldArgument(method, operand, use, type, out var reference))
+            {
+                argument = new(null, null, Reference: reference);
+                return true;
+            }
+            if (!TryNestedReferenceFieldArgument(method, operand, use, type, out var nested)) return false;
+            argument = new(null, null, NestedReference: nested);
             return true;
         }
         var visited = new HashSet<LocalVariable>();
@@ -741,13 +758,15 @@ internal static partial class X64NativeNullCheckedInvocationProof
     // Other retained conditions and destinations must keep the same semantic
     // reaching definitions, even when pure register copies are coalesced.
     private static bool TryControls(MethodAnalysisContext method, Instruction? pendingGuard,
-        NativeInstruction[] body, out Control[] controls)
+        NativeInstruction[] body, out Control[] controls, Instruction? pendingFieldGuard = null)
     {
         controls = [];
         if (method.ControlFlowGraph is not { } graph) return false;
-        var provedGuards = new HashSet<Instruction>(method.GetExtraData<List<Site>>(EvidenceKey)?.Select(site => site.GuardBranch)
+        var provedGuards = new HashSet<Instruction>(method.GetExtraData<List<Site>>(EvidenceKey)?.SelectMany(site =>
+            site.NestedGuard == null ? new[] { site.GuardBranch } : new[] { site.GuardBranch, site.NestedGuard.Branch })
             ?? Enumerable.Empty<Instruction>());
         if (pendingGuard != null) provedGuards.Add(pendingGuard);
+        if (pendingFieldGuard != null) provedGuards.Add(pendingFieldGuard);
         var results = new List<Control>();
         foreach (var operation in graph.Instructions.Where(instruction =>
                      instruction.OpCode is OpCode.Jump or OpCode.ConditionalJump && !provedGuards.Contains(instruction)))
@@ -785,7 +804,8 @@ internal static partial class X64NativeNullCheckedInvocationProof
     private static bool ControlsRetained(MethodAnalysisContext method, NativeInstruction[] body, Control[] captured)
     {
         if (!TryControls(method, null, body, out var current)) return false;
-        var guards = new HashSet<Instruction>(method.GetExtraData<List<Site>>(EvidenceKey)!.Select(site => site.GuardBranch));
+        var guards = new HashSet<Instruction>(method.GetExtraData<List<Site>>(EvidenceKey)!.SelectMany(site =>
+            site.NestedGuard == null ? new[] { site.GuardBranch } : new[] { site.GuardBranch, site.NestedGuard.Branch }));
         var saved = captured.Where(control => !guards.Contains(control.Operation)).ToArray();
         return saved.Length == current.Length && saved.Zip(current, (left, right) =>
             ReferenceEquals(left.Operation, right.Operation) && left.Address == right.Address && left.Code == right.Code &&
