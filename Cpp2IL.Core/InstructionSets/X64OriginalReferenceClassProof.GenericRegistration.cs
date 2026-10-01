@@ -20,14 +20,27 @@ internal static partial class X64OriginalReferenceClassProof
         Cpp2IlMethodRef reference, ulong pointer)
     {
         if (app.MetadataVersion != 29 || app.Binary is not PE pe || pe.PointerSizeBytes != sizeof(ulong) ||
+            !pe.TryGetGenericMethodTableRegistration(out var tables) ||
+            !pe.TryGetGenericInstantiationTableRegistration(out var instantiations) ||
             !pe.TryGetGenericMethodRegistration(reference, out var origin) ||
+            origin.CodeRegistrationAddress != tables.CodeRegistrationAddress ||
+            origin.MetadataRegistrationAddress != tables.MetadataRegistrationAddress ||
+            instantiations.MetadataRegistrationAddress != tables.MetadataRegistrationAddress ||
+            !pe.TryGetGenericMethodSpecificationRegistration(origin.SpecificationIndex, out var originalSpecification) ||
+            !pe.TryGetGenericMethodFunctionRegistration(origin.TableIndex, out var originalFunction) ||
             !NativeData(pe, origin.CodeRegistrationAddress, Il2CppCodeRegistration.GetStructSize(false, 29)) ||
             !NativeData(pe, origin.MetadataRegistrationAddress, Il2CppMetadataRegistration.GetStructSize(false, 29)))
             return false;
         var code = pe.ReadReadableAtVirtualAddress<Il2CppCodeRegistration>(origin.CodeRegistrationAddress);
         var registration = pe.ReadReadableAtVirtualAddress<Il2CppMetadataRegistration>(origin.MetadataRegistrationAddress);
         var metadata = app.Metadata;
-        if (registration.methodSpecsCount != metadata.AllGenericMethodSpecs.Length ||
+        if (registration.methodSpecsCount != tables.SpecificationCount || registration.methodSpecs != tables.SpecificationsAddress ||
+            registration.genericMethodTableCount != tables.FunctionCount || registration.genericMethodTable != tables.FunctionsAddress ||
+            registration.genericInstsCount != instantiations.Count || registration.genericInsts != instantiations.Address ||
+            code.genericMethodPointersCount != tables.MethodPointerCount || code.genericMethodPointers != tables.MethodPointersAddress ||
+            code.invokerPointersCount != tables.InvokerCount || code.invokerPointers != tables.InvokersAddress ||
+            code.genericAdjustorThunks != tables.AdjustorThunksAddress ||
+            registration.methodSpecsCount != metadata.AllGenericMethodSpecs.Length ||
             registration.genericMethodTableCount != metadata.genericMethodTables.Length ||
             origin.SpecificationIndex < 0 || origin.SpecificationIndex >= registration.methodSpecsCount ||
             origin.TableIndex < 0 || origin.TableIndex >= registration.genericMethodTableCount ||
@@ -42,7 +55,13 @@ internal static partial class X64OriginalReferenceClassProof
         var retained = metadata.AllGenericMethodSpecs[origin.SpecificationIndex];
         var function = pe.ReadReadableAtVirtualAddress<Il2CppGenericMethodFunctionsDefinitions>(tableAddress);
         var retainedFunction = metadata.genericMethodTables[origin.TableIndex];
-        if (specification.methodDefinitionIndex != retained.methodDefinitionIndex ||
+        if (specification.methodDefinitionIndex.Value != originalSpecification.MethodDefinitionIndex ||
+            specification.classIndexIndex.Value != originalSpecification.ClassInstantiationIndex ||
+            specification.methodIndexIndex.Value != originalSpecification.MethodInstantiationIndex ||
+            function.GenericMethodIndex != originalFunction.SpecificationIndex ||
+            function.methodIndex != originalFunction.MethodPointerIndex || function.invokerIndex != originalFunction.InvokerIndex ||
+            function.adjustorThunk != originalFunction.AdjustorThunkIndex ||
+            specification.methodDefinitionIndex != retained.methodDefinitionIndex ||
             specification.classIndexIndex != retained.classIndexIndex || specification.methodIndexIndex != retained.methodIndexIndex ||
             function.GenericMethodIndex != origin.SpecificationIndex ||
             function.GenericMethodIndex != retainedFunction.GenericMethodIndex || function.methodIndex != retainedFunction.methodIndex ||
@@ -67,14 +86,17 @@ internal static partial class X64OriginalReferenceClassProof
         Il2CppMetadataRegistration registration, int index, Cpp2IlMethodRef reference, bool classArguments)
     {
         if (index == -1) return (classArguments ? reference.TypeGenericParams : reference.MethodGenericParams).Length == 0;
-        if (index < 0 || index >= registration.genericInstsCount) return false;
+        if (index < 0 || index >= registration.genericInstsCount ||
+            !pe.TryGetGenericInstantiationRegistration(index, out var origin) || origin.Index != index)
+            return false;
         var slot = checked(registration.genericInsts + (ulong)index * sizeof(ulong));
         if (!NativeData(pe, slot, sizeof(ulong))) return false;
         var address = pe.ReadPointerAtVirtualAddress(slot);
-        if (!NativeData(pe, address, 2 * sizeof(ulong))) return false;
+        if (address != origin.Address || !NativeData(pe, address, 2 * sizeof(ulong))) return false;
         var original = pe.ReadReadableAtVirtualAddress<Il2CppGenericInst>(address);
         var retained = pe.GetGenericInst(Il2CppVariableWidthIndex<Il2CppGenericInst>.MakeTemporaryForFixedWidthUsage(index));
-        if (original.pointerCount is < 1 or > 32 || original.pointerCount != retained.pointerCount ||
+        if (original.pointerCount is < 1 or > 32 || original.pointerCount != origin.ArgumentCount ||
+            original.pointerStart != origin.ArgumentsAddress || original.pointerCount != retained.pointerCount ||
             original.pointerStart != retained.pointerStart || !NativeData(pe, original.pointerStart, (long)original.pointerCount * sizeof(ulong)))
             return false;
         // Authenticate the bounded original instantiation before a lazy Types
