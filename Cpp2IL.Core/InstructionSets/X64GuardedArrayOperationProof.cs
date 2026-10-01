@@ -41,19 +41,21 @@ internal static partial class X64GuardedArrayOperationProof
 
     internal sealed record Site(ulong OperationIp, ulong? NullTestIp,
         ulong? NullBranchIp, ulong BoundsCompareIp, ulong BoundsBranchIp,
-        IndexExtension Index, ValueOrigin IndexOrigin, Origin ArrayOrigin, TypeAnalysisContext ElementType,
+        IndexExtension? Index, ValueOrigin? IndexOrigin, Origin ArrayOrigin, TypeAnalysisContext ElementType,
         bool IsStore, int Width, StoreValue? StoredValue, NativeRegister ArrayRegister,
-        NativeRegister IndexRegister, ulong? OffsetPreparationIp);
+        NativeRegister IndexRegister, ulong? OffsetPreparationIp, int? ConstantIndex = null);
 
     internal sealed record Evidence(IReadOnlyList<NativeInstruction> Body,
         IReadOnlyList<Site> Sites, HashSet<ulong> RemovedAddresses,
         IReadOnlyList<IndexExtension> IndexExtensions,
         HashSet<ulong> NoReturnCallAddresses, IReadOnlyList<ulong> EffectAddresses,
-        IReadOnlyList<CheckedCall> NullCheckedCalls, IReadOnlyList<InvocationArgument> InvocationArguments);
+        IReadOnlyList<CheckedCall> NullCheckedCalls, IReadOnlyList<InvocationArgument> InvocationArguments,
+        X64SmallAggregateFieldGetterProof.InputState? ConstantInput = null);
 
     internal sealed record NativeSite(int Operation, int NullTest, int BoundsCompare,
         int Extension, NativeRegister ArrayRegister, NativeRegister IndexRegister,
-        NativeRegister IndexSource, bool IsStore, int Width, int? OffsetPreparation);
+        NativeRegister IndexSource, bool IsStore, int Width, int? OffsetPreparation,
+        int? ConstantIndex = null);
 
     internal sealed record NativeEvidence(int SuccessEnd, int NullCall, int BoundsCall,
         IReadOnlyList<NativeSite> Sites, IReadOnlyList<int> Effects);
@@ -64,13 +66,15 @@ internal static partial class X64GuardedArrayOperationProof
         try
         {
             if (decoded.Count is < 12 or > 512 ||
-                !decoded.Any(instruction => instruction.Mnemonic == Mnemonic.Jae) ||
+                !decoded.Any(instruction => instruction.Mnemonic is Mnemonic.Jae or Mnemonic.Jbe) ||
                 !X86RuntimeNullThrowProof.IsSupportedProfile(method.AppContext) ||
-                RuntimeNullGuardCoalescer.HasOutputOptions(method) || !OrdinaryMethod(method) ||
+                RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
                 X64NativeInstructionReader.ReadRootBody(method) is not { } body ||
                 TryProveNative(body,
                     target => X86RuntimeNullThrowProof.TryIdentify(method.AppContext, target) != null,
-                    target => X86RuntimeBoundsThrowProof.TryIdentify(method.AppContext, target)) is not { } native)
+                    target => X86RuntimeBoundsThrowProof.TryIdentify(method.AppContext, target)) is not { } native ||
+                native.Sites.Any(site => site.ConstantIndex != null) && !ConstantMetadata(method, body, native) ||
+                !OrdinaryMethod(method))
                 return null;
 
             var facts = new Facts(body);
@@ -99,12 +103,17 @@ internal static partial class X64GuardedArrayOperationProof
                     ArrayType(origin) is not { } array ||
                     !AllowedElement(method.AppContext, array.ElementType, site.Width, site.IsStore))
                     return null;
-                var extension = new IndexExtension(body[site.Extension].IP,
-                    site.IndexRegister, site.IndexSource);
-                var indexWriter = facts.TraceScalarCopies(site.Extension, site.IndexSource,
-                    out var indexEntry);
-                var indexOrigin = new ValueOrigin(indexEntry,
-                    indexWriter < 0 ? null : body[indexWriter].IP);
+                IndexExtension? extension = null;
+                ValueOrigin? indexOrigin = null;
+                if (site.ConstantIndex == null)
+                {
+                    extension = new IndexExtension(body[site.Extension].IP,
+                        site.IndexRegister, site.IndexSource);
+                    var indexWriter = facts.TraceScalarCopies(site.Extension, site.IndexSource,
+                        out var indexEntry);
+                    indexOrigin = new ValueOrigin(indexEntry,
+                        indexWriter < 0 ? null : body[indexWriter].IP);
+                }
                 StoreValue? stored = null;
                 if (site.IsStore)
                 {
@@ -126,7 +135,8 @@ internal static partial class X64GuardedArrayOperationProof
                     site.NullTest < 0 ? null : body[site.NullTest + 1].IP, body[site.BoundsCompare].IP,
                     body[site.BoundsCompare + 1].IP, extension, indexOrigin, origin,
                     array.ElementType, site.IsStore, site.Width, stored, site.ArrayRegister,
-                    site.IndexRegister, site.OffsetPreparation is { } offset ? body[offset].IP : null));
+                    site.IndexRegister, site.OffsetPreparation is { } offset ? body[offset].IP : null,
+                    site.ConstantIndex));
                 removed.UnionWith([body[site.BoundsCompare].IP, body[site.BoundsCompare + 1].IP]);
                 if (site.NullTest >= 0)
                     removed.UnionWith([body[site.NullTest].IP, body[site.NullTest + 1].IP]);
@@ -169,12 +179,17 @@ internal static partial class X64GuardedArrayOperationProof
                  !X64NativeInvocationFrameProof.IsValid(method, body, tailValues)) ||
                 !TryInvocationArguments(method, facts, native, sites, noReturn, out var arguments))
                 return null;
+            var constantInput = native.Sites.Any(site => site.ConstantIndex != null)
+                ? CaptureConstantInput(method, body, native) : null;
+            if (native.Sites.Any(site => site.ConstantIndex != null) && constantInput == null)
+                return null;
             return new Evidence(body, sites, removed,
-                sites.Select(site => site.Index).Distinct().ToArray(), noReturn,
-                native.Effects.Select(index => body[index].IP).ToArray(), checkedCalls.Distinct().ToArray(), arguments);
+                sites.Where(site => site.Index != null).Select(site => site.Index!).Distinct().ToArray(), noReturn,
+                native.Effects.Select(index => body[index].IP).ToArray(), checkedCalls.Distinct().ToArray(), arguments,
+                constantInput);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
-                                          IndexOutOfRangeException or OverflowException)
+                                          IndexOutOfRangeException or OverflowException or KeyNotFoundException)
         {
             return null;
         }
@@ -368,6 +383,8 @@ internal static partial class X64GuardedArrayOperationProof
         for (var index = 1; index < body.Count; index++)
             if (body[index - 1].NextIP != body[index].IP)
                 return null;
+        if (body.Any(instruction => instruction.Mnemonic == Mnemonic.Jbe))
+            return TryConstantTail(body, nullHelper, boundsHelper);
         var successEnd = -1;
         for (var index = 0; index < body.Count; index++)
             if (body[index].FlowControl is FlowControl.Return or FlowControl.UnconditionalBranch)

@@ -275,8 +275,9 @@ public class X86InstructionSet : Cpp2IlInstructionSet
                 // Keep this access at its original IP with the canonical array layout.
                 var element = new ISIL.MemoryOperand(
                     new ISIL.Register(null, X86Utils.GetRegisterName(composedSite.ArrayRegister)),
-                    new ISIL.Register(null, X86Utils.GetRegisterName(composedSite.IndexRegister)),
-                    0x20, composedSite.Width);
+                    composedSite.ConstantIndex == 0 ? null :
+                        new ISIL.Register(null, X86Utils.GetRegisterName(composedSite.IndexRegister)),
+                    0x20, composedSite.ConstantIndex == 0 ? 0 : composedSite.Width);
                 addresses.Add(instruction.IP);
                 instructions.Add(new ISIL.Instruction(instructions.Count, ISIL.OpCode.Move,
                     composedSite.IsStore ? element : ConvertOperand(instruction, 0),

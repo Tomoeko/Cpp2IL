@@ -55,6 +55,8 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "native-nested-reference-getter-invocation",
     "native-nested-reference-getter-folded-invocation",
     "native-nested-reference-getter-ambiguous-invocation",
+    "native-constant-reference-array-argument",
+    "owner-effect-array-element-store",
     "class-reference-setter",
     "signed-field-comparison",
     "typed-field-address",

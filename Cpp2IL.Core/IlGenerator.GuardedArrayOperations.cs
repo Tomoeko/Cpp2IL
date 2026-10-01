@@ -30,6 +30,8 @@ public static partial class IlGenerator
             !current.NullCheckedCalls.SequenceEqual(evidence.NullCheckedCalls) ||
             !current.InvocationArguments.SequenceEqual(evidence.InvocationArguments) ||
             !current.EffectAddresses.SequenceEqual(evidence.EffectAddresses) ||
+            (evidence.ConstantInput == null ? current.ConstantInput != null :
+                current.ConstantInput == null || !evidence.ConstantInput.Matches(current.ConstantInput)) ||
             LinearInstructions(method.ControlFlowGraph!) is not { } instructions ||
             !ValidArrayCompositionJumps(method, instructions))
             throw ArrayOperationFailure("the native evidence or successful linear path changed");
@@ -42,6 +44,7 @@ public static partial class IlGenerator
             var operation = UniqueAt(instructions, site.OperationIp, instruction =>
                 instruction is { OpCode: OpCode.Move, IntegerBitWidth: 0 or 32,
                     CallSemantics: CallSemantics.Direct } &&
+                (instruction.IntegerBitWidth == 0 || site.Width == 4) &&
                 instruction.Operands.Count == 2 &&
                 instruction.Operands[site.IsStore ? 0 : 1] is ArrayAccess);
             if (operation == null || !operations.Add(operation) ||
@@ -50,9 +53,7 @@ public static partial class IlGenerator
                 !ReferenceEquals(array.ElementType, site.ElementType) ||
                 !ValidArrayOrigin(method, instructions, access.Array,
                     instructions.IndexOf(operation), site.ArrayOrigin) ||
-                access.Index is not LocalVariable index ||
-                !ReferenceEquals(index.Type, method.AppContext.SystemTypes.SystemInt32Type) ||
-                !ValidArrayIndex(method, instructions, index, instructions.IndexOf(operation), site.IndexOrigin))
+                !ValidArraySiteIndex(method, instructions, access.Index, instructions.IndexOf(operation), site))
                 throw ArrayOperationFailure("an access lost its exact typed array, index, or native origin");
             var value = operation.Operands[site.IsStore ? 1 : 0];
             if (value is LocalVariable local
@@ -364,6 +365,15 @@ public static partial class IlGenerator
                ReferenceEquals(field.Field.FieldType, method.AppContext.SystemTypes.SystemInt32Type) &&
                NarrowFieldEqualityProof.HasUnchangedFieldLayout(field, 32);
     }
+
+    private static bool ValidArraySiteIndex(MethodAnalysisContext method, List<Instruction> instructions,
+        IOperand value, int before, X64GuardedArrayOperationProof.Site site) => site.ConstantIndex is { } constant
+        ? constant == 0 && site.Index == null && site.IndexOrigin == null &&
+          site.IndexRegister == Iced.Intel.Register.None && site.OffsetPreparationIp == null &&
+          value is Immediate { Value: 0 }
+        : site.Index != null && site.IndexOrigin is { } origin && value is LocalVariable index &&
+          ReferenceEquals(index.Type, method.AppContext.SystemTypes.SystemInt32Type) &&
+          ValidArrayIndex(method, instructions, index, before, origin);
 
     private static DecompilerException ArrayOperationFailure(string reason) =>
         new("Proved native array guard composition lost managed semantics: " + reason);

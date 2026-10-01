@@ -20,8 +20,30 @@ internal static class X64ArrayElementBooleanStoreRecovery
             VerifyLabelsOnBuild = true
         };
         definition.CilMethodBody = il;
-        il.Instructions.Add(CilOpCodes.Ldarg_0);
-        il.Instructions.Add(CilOpCodes.Ldfld, evidence.ArrayField.ToFieldDescriptor());
+        CilLocalVariable? capturedArray = null;
+        if (evidence.OwnerEffectField is { } ownerEffect)
+        {
+            if (evidence.CapturesArrayBeforeOwnerEffect)
+            {
+                capturedArray = new CilLocalVariable(evidence.ArrayField.FieldType.ToTypeSignature());
+                il.LocalVariables.Add(capturedArray);
+                il.Instructions.Add(CilOpCodes.Ldarg_0);
+                il.Instructions.Add(CilOpCodes.Ldfld, evidence.ArrayField.ToFieldDescriptor());
+                il.Instructions.Add(CilOpCodes.Stloc, capturedArray);
+            }
+            // This effect is observable even when the following checked access
+            // throws. Preserve the independently proved native capture order.
+            il.Instructions.Add(CilOpCodes.Ldarg_0);
+            il.Instructions.Add(evidence.OwnerEffectValue ? CilOpCodes.Ldc_I4_1 : CilOpCodes.Ldc_I4_0);
+            il.Instructions.Add(CilOpCodes.Stfld, ownerEffect.ToFieldDescriptor());
+        }
+        if (capturedArray != null)
+            il.Instructions.Add(CilOpCodes.Ldloc, capturedArray);
+        else
+        {
+            il.Instructions.Add(CilOpCodes.Ldarg_0);
+            il.Instructions.Add(CilOpCodes.Ldfld, evidence.ArrayField.ToFieldDescriptor());
+        }
         il.Instructions.Add(CilOpCodes.Ldarg_1);
         il.Instructions.Add(CilOpCodes.Ldelem_Ref);
         il.Instructions.Add(evidence.Value ? CilOpCodes.Ldc_I4_1 : CilOpCodes.Ldc_I4_0);

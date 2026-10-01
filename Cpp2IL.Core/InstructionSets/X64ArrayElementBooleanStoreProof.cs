@@ -17,15 +17,21 @@ namespace Cpp2IL.Core.InstructionSets;
 
 /// <summary>
 /// Proves a Boolean literal store through an instance's reference-array element.
-/// Array null, unsigned bounds and element null checks precede the only store.
+/// Array null, unsigned bounds and element null checks precede the element store.
+/// An optional owner Boolean effect precedes those checked failures, with the
+/// native array capture order preserved independently.
 /// </summary>
-internal static class X64ArrayElementBooleanStoreProof
+internal static partial class X64ArrayElementBooleanStoreProof
 {
     internal sealed record Evidence(FieldAnalysisContext ArrayField,
-        FieldAnalysisContext ValueField, bool Value);
+        FieldAnalysisContext ValueField, bool Value,
+        FieldAnalysisContext? OwnerEffectField = null, bool OwnerEffectValue = false,
+        bool CapturesArrayBeforeOwnerEffect = false);
 
     internal static Evidence? Find(MethodAnalysisContext method)
     {
+        if (FindOwnerEffect(method) is { } ownerEffect)
+            return ownerEffect;
         try
         {
             var app = method.AppContext;
@@ -125,7 +131,8 @@ internal static class X64ArrayElementBooleanStoreProof
             return new Evidence(arrayField, valueField, value);
         }
         catch (Exception exception) when (exception is ArgumentException or
-            InvalidOperationException or IndexOutOfRangeException or OverflowException)
+            InvalidOperationException or IndexOutOfRangeException or OverflowException or
+            KeyNotFoundException)
         {
             return null;
         }

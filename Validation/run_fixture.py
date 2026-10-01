@@ -180,6 +180,8 @@ import native_reference_producer_invocation
 import native_reference_field_invocation
 import native_nested_reference_field_invocation
 import native_nested_reference_getter_invocation
+import native_constant_reference_array_argument
+import owner_effect_array_element_store
 import class_reference_setter
 import signed_field_comparison
 import typed_field_address
@@ -292,6 +294,12 @@ PROFILES = {
     "native-nested-reference-getter-ambiguous-invocation": {
         "assembly": "NativeNestedReferenceGetterAmbiguousInvocationFixture",
         "source": VALIDATION / "NativeNestedReferenceGetterAmbiguousInvocationFixture", "methods": 8},
+    "native-constant-reference-array-argument": {
+        "assembly": "NativeConstantReferenceArrayArgumentFixture",
+        "source": VALIDATION / "NativeConstantReferenceArrayArgumentFixture", "methods": 4},
+    "owner-effect-array-element-store": {
+        "assembly": "OwnerEffectArrayElementStoreFixture",
+        "source": VALIDATION / "OwnerEffectArrayElementStoreFixture", "methods": 3},
     "signed-field-comparison": {"assembly": "SignedFieldComparisonFixture",
                                 "source": VALIDATION / "SignedFieldComparisonFixture", "methods": 6},
     "typed-field-address": {"assembly": "TypedFieldAddressFixture",
@@ -723,6 +731,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_nested_reference_getter_invocation.verify_folded(path, stage, VERSION)
     if profile == "native-nested-reference-getter-ambiguous-invocation":
         return native_nested_reference_getter_invocation.verify_ambiguous(path, stage, VERSION)
+    if profile == "native-constant-reference-array-argument":
+        return native_constant_reference_array_argument.verify(path, stage, VERSION)
+    if profile == "owner-effect-array-element-store":
+        return owner_effect_array_element_store.verify(path, stage, VERSION)
     if profile == "class-reference-setter":
         return class_reference_setter.verify(path, stage, VERSION)
     if profile == "signed-field-comparison":
