@@ -24,7 +24,7 @@ public class X64GenericMethodTableProofTests
                 Directory.EnumerateFiles(input!, "global-metadata.dat", SearchOption.AllDirectories).Single(),
                 UnityVersion.Parse("2021.3.35f1"));
             var results = X64GenericMethodTableControls.Run(Cpp2IlApi.CurrentAppContext!);
-            Assert.That(results, Has.Length.EqualTo(37));
+            Assert.That(results, Has.Length.EqualTo(39));
             Assert.Multiple(() =>
             {
                 foreach (var result in results)

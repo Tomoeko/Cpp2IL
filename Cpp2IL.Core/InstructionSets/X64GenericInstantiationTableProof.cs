@@ -123,6 +123,7 @@ internal static class X64GenericInstantiationTableProof
         try
         {
             if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) || app.MetadataVersion != 29 ||
+                !pe.HasOriginalGenericRegistrationContext(app.LibCpp2IlContext) ||
                 !ReferenceEquals(app.Binary, pe) || !ReferenceEquals(X64UnwindProof.ForBinary(pe), index) ||
                 pe.PointerSizeBytes != sizeof(ulong) || !pe.TryGetGenericInstantiationTableRegistration(out var table) ||
                 table.Count is < 1 or > MaximumRows ||

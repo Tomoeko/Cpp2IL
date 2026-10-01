@@ -508,6 +508,77 @@ public class GenericInstantiationRegistrationTests
         }
     }
 
+    [Theory]
+    [InlineData(false, "metadata")]
+    [InlineData(true, "metadata")]
+    [InlineData(false, "binary")]
+    [InlineData(true, "binary")]
+    [InlineData(false, "context")]
+    [InlineData(true, "context")]
+    public void EquivalentInputSubstitutionCannotBorrowPublishedGenericOrigins(bool is32Bit, string part)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        var metadata = context.Metadata;
+        var reference = Assert.Single(binary.ConcreteGenericMethods[metadata.methodDefs[0]]);
+        Assert.True(binary.HasOriginalGenericRegistrationContext(context));
+        Assert.False(binary.HasOriginalGenericRegistrationContext(null));
+        try
+        {
+            if (part == "metadata")
+                context.Metadata = (Il2CppMetadata)typeof(object).GetMethod("MemberwiseClone",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(metadata, null)!;
+            else if (part == "binary")
+                context.Binary = new FlatBinary(binary.GetRawBinaryContent().ToArray(), is32Bit);
+            else
+                SetField(binary, "_context", new LibCpp2IlContext(new LibCpp2IlMain.LibCpp2IlSettings())
+                    { Metadata = metadata, Binary = binary });
+            Assert.False(binary.HasOriginalGenericRegistrationContext(context));
+            AssertUnavailable(binary);
+            Assert.False(binary.TryGetGenericMethodRegistration(reference, out _));
+            Assert.False(binary.TryGetGenericMethodPointerVirtualAddress(reference, out _));
+        }
+        finally
+        {
+            context.Metadata = metadata;
+            context.Binary = binary;
+            SetField(binary, "_context", context);
+        }
+        Assert.True(binary.HasOriginalGenericRegistrationContext(context));
+        Assert.True(binary.TryGetGenericInstantiationRegistration(1, out _));
+        Assert.True(binary.TryGetGenericMethodSpecificationRegistration(1, out _));
+        Assert.True(binary.TryGetGenericMethodFunctionRegistration(1, out _));
+        Assert.True(binary.TryGetGenericMethodRegistration(reference, out _));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NewContextMustActuallyInitializeBeforeAcquiringGenericOrigins(bool is32Bit)
+    {
+        var (binary, original) = Create(is32Bit, includeMethodTables: true);
+        var prior = Assert.Single(binary.ConcreteGenericMethods[original.Metadata.methodDefs[0]]);
+        var next = new LibCpp2IlContext(new LibCpp2IlMain.LibCpp2IlSettings())
+            { Metadata = original.Metadata, Binary = binary };
+        Assert.False(binary.HasOriginalGenericRegistrationContext(next));
+        Assert.True(binary.HasOriginalGenericRegistrationContext(original));
+        binary.Init(next);
+        Assert.False(binary.HasOriginalGenericRegistrationContext(original));
+        Assert.True(binary.HasOriginalGenericRegistrationContext(next));
+        Assert.False(binary.TryGetGenericMethodRegistration(prior, out _));
+        var current = Assert.Single(binary.ConcreteGenericMethods[next.Metadata.methodDefs[0]]);
+        Assert.True(binary.TryGetGenericMethodRegistration(current, out _));
+        binary.FailSearch = true;
+        Assert.Throws<InvalidOperationException>(() => binary.Init(original));
+        Assert.False(binary.HasOriginalGenericRegistrationContext(original));
+        Assert.False(binary.HasOriginalGenericRegistrationContext(next));
+        AssertUnavailable(binary);
+        binary.FailSearch = false;
+        binary.Init(original);
+        Assert.True(binary.HasOriginalGenericRegistrationContext(original));
+        Assert.False(binary.HasOriginalGenericRegistrationContext(next));
+        Assert.False(binary.TryGetGenericMethodRegistration(current, out _));
+    }
+
     private sealed class ObservingWriter(LibCpp2IL.Logging.LogWriter previous, Action observe) : LibCpp2IL.Logging.LogWriter
     {
         private readonly int _ownerThread = Environment.CurrentManagedThreadId;

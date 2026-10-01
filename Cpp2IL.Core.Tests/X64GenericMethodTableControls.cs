@@ -102,6 +102,21 @@ internal static class X64GenericMethodTableControls
             if (!restored) throw new InvalidOperationException("Restoration failed: " + name);
         }
 
+        Check("equivalent-metadata-substitution-cannot-borrow-registration", changes =>
+        {
+            var context = app.LibCpp2IlContext;
+            var property = typeof(LibCpp2IlContext).GetProperty(nameof(LibCpp2IlContext.Metadata))!;
+            changes.Assign(() => context.Metadata, value => property.SetValue(context, value), Clone(context.Metadata));
+        }, expectedSelected: false);
+        Check("new-context-cannot-borrow-registration", changes =>
+        {
+            var context = (LibCpp2IlContext)Activator.CreateInstance(typeof(LibCpp2IlContext),
+                BindingFlags.Instance | BindingFlags.NonPublic, null, [app.LibCpp2IlContext.Settings], null)!;
+            typeof(LibCpp2IlContext).GetProperty(nameof(LibCpp2IlContext.Binary))!.SetValue(context, pe);
+            typeof(LibCpp2IlContext).GetProperty(nameof(LibCpp2IlContext.Metadata))!.SetValue(context, app.Metadata);
+            changes.Assign(() => app.LibCpp2IlContext, value => app.LibCpp2IlContext = value, context);
+        }, expectedSelected: false);
+
         Check("coherent-specification-tail-truncation", changes =>
         {
             changes.Write64(origin.MetadataRegistrationAddress + 64, (ulong)specRows.Length - 1);

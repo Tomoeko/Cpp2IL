@@ -82,6 +82,7 @@ internal static class OriginalGenericDeclarationIdentityProof
             var app = owner.AppContext;
             var metadata = app.Metadata;
             if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) || metadata.MetadataVersion != 29 ||
+                !app.Binary.HasOriginalGenericRegistrationContext(app.LibCpp2IlContext) ||
                 !AuthenticateTables(metadata, out var table) ||
                 !TryBindOwner(owner, out var containerIndex, out var ownerIndex, out var isMethod) ||
                 !metadata.TryGetGenericContainerOrigin(containerIndex, out var container) ||

@@ -186,6 +186,8 @@ import native_constant_reference_array_argument
 import owner_effect_array_element_store
 import framework_ancestor_array_argument
 import native_direct_generic_reference_invocation
+import native_nested_scalar_parameter_store
+import native_nested_owner_scalar_parameter_store
 import application_parent_cctor_array_argument
 import owner_cctor_array_argument
 import element_cctor_array_argument
@@ -310,6 +312,12 @@ PROFILES = {
     "framework-ancestor-array-argument": {
         "assembly": "FrameworkAncestorArrayArgumentFixture",
         "source": VALIDATION / "FrameworkAncestorArrayArgumentFixture", "methods": 4},
+    "native-nested-scalar-parameter-store": {
+        "assembly": "NativeNestedScalarParameterStoreFixture",
+        "source": VALIDATION / "NativeNestedScalarParameterStoreFixture", "methods": 6},
+    "native-nested-owner-scalar-parameter-store": {
+        "assembly": "NativeNestedOwnerScalarParameterStoreFixture",
+        "source": VALIDATION / "NativeNestedOwnerScalarParameterStoreFixture", "methods": 3},
     "native-direct-generic-reference-invocation": {
         "assembly": "NativeDirectGenericReferenceInvocationFixture",
         "source": VALIDATION / "NativeDirectGenericReferenceInvocationFixture", "methods": 6},
@@ -759,6 +767,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return owner_effect_array_element_store.verify(path, stage, VERSION)
     if profile == "framework-ancestor-array-argument":
         return framework_ancestor_array_argument.verify(path, stage, VERSION)
+    if profile == "native-nested-scalar-parameter-store":
+        return native_nested_scalar_parameter_store.verify(path, stage, VERSION)
+    if profile == "native-nested-owner-scalar-parameter-store":
+        return native_nested_owner_scalar_parameter_store.verify(path, stage, VERSION)
     if profile == "native-direct-generic-reference-invocation":
         return native_direct_generic_reference_invocation.verify(path, stage, VERSION)
     if profile == "application-parent-cctor-array-argument":

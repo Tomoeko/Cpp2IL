@@ -78,6 +78,7 @@ internal static class X64GenericMethodTableProof
         try
         {
             if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) || app.MetadataVersion != 29 ||
+                !pe.HasOriginalGenericRegistrationContext(app.LibCpp2IlContext) ||
                 pe.PointerSizeBytes != sizeof(ulong) || !ReferenceEquals(app.Binary, pe) ||
                 !ReferenceEquals(X64UnwindProof.ForBinary(pe), index) ||
                 !pe.TryGetGenericMethodTableRegistration(out var origin) ||

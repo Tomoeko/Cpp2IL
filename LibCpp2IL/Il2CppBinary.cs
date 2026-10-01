@@ -65,7 +65,8 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
         ulong ArgumentCount, ulong ArgumentsAddress);
 
     private GenericMethodTableRegistration? _genericMethodTableRegistration;
-    private Il2CppMetadata? _genericMethodRegistrationMetadata;
+    private Il2CppMetadata? _genericRegistrationMetadata;
+    private LibCpp2IlContext? _genericRegistrationContext;
     private (Il2CppMethodSpec Instance, GenericMethodSpecificationRegistration Registration)[] _genericMethodSpecificationRegistrations = [];
     private (Il2CppGenericMethodFunctionsDefinitions Instance, GenericMethodFunctionRegistration Registration)[] _genericMethodFunctionRegistrations = [];
 
@@ -445,7 +446,8 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
         _genericMethodSpecificationRegistrations = genericMethodSpecificationRegistrations;
         _genericMethodFunctionRegistrations = genericMethodFunctionRegistrations;
-        _genericMethodRegistrationMetadata = genericMethodTableRegistration.HasValue ? metadata : null;
+        _genericRegistrationMetadata = metadata;
+        _genericRegistrationContext = _context;
         _genericMethodTableRegistration = genericMethodTableRegistration;
         _genericInstantiationRegistrations = genericInstantiationRegistrations;
         _genericInstantiationTableRegistration = genericInstantiationTableRegistration;
@@ -555,7 +557,8 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
         _genericInstantiationTableRegistration = null;
         _genericInstantiationRegistrations = [];
         _genericMethodTableRegistration = null;
-        _genericMethodRegistrationMetadata = null;
+        _genericRegistrationMetadata = null;
+        _genericRegistrationContext = null;
         _genericMethodSpecificationRegistrations = [];
         _genericMethodFunctionRegistrations = [];
     }
@@ -569,11 +572,21 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
         _genericMethodDictionary.Clear();
     }
 
+    /// <summary>
+    /// Checks the original input context associated with published generic registrations.
+    /// Counts, row values and native bytes still require separate authentication.
+    /// </summary>
+    public bool HasOriginalGenericRegistrationContext(LibCpp2IlContext? context) =>
+        _genericMethodRegistrationsPublished && context is not null &&
+        ReferenceEquals(context, _genericRegistrationContext) && ReferenceEquals(context, _context) &&
+        ReferenceEquals(context.Binary, this) && ReferenceEquals(context.Metadata, _genericRegistrationMetadata);
+
     /// <summary>Returns the original parsed instantiation-table identity, independent of mutable cached rows.</summary>
     public bool TryGetGenericInstantiationTableRegistration(out GenericInstantiationTableRegistration registration)
     {
         registration = default;
-        if (_genericInstantiationTableRegistration is not { } original ||
+        if (!HasOriginalGenericRegistrationContext(_context) ||
+            _genericInstantiationTableRegistration is not { } original ||
             original.Count != _genericInsts.Length || _genericInstantiationRegistrations.Length != _genericInsts.Length)
             return false;
         registration = original;
@@ -595,7 +608,8 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     public bool TryGetGenericMethodTableRegistration(out GenericMethodTableRegistration registration)
     {
         registration = default;
-        if (_genericMethodTableRegistration is not { } original || _genericMethodRegistrationMetadata is not { } metadata ||
+        if (!HasOriginalGenericRegistrationContext(_context) ||
+            _genericMethodTableRegistration is not { } original || _genericRegistrationMetadata is not { } metadata ||
             metadata.methodSpecs is not { } specifications || metadata.genericMethodTables is not { } functions ||
             original.SpecificationCount != specifications.LongLength ||
             original.FunctionCount != functions.LongLength ||
@@ -612,7 +626,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     {
         registration = default;
         if (!TryGetGenericMethodTableRegistration(out _) || index < 0 || index >= _genericMethodSpecificationRegistrations.Length ||
-            !ReferenceEquals(_genericMethodSpecificationRegistrations[index].Instance, _genericMethodRegistrationMetadata!.methodSpecs[index]))
+            !ReferenceEquals(_genericMethodSpecificationRegistrations[index].Instance, _genericRegistrationMetadata!.methodSpecs[index]))
             return false;
         registration = _genericMethodSpecificationRegistrations[index].Registration;
         return true;
@@ -623,7 +637,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     {
         registration = default;
         if (!TryGetGenericMethodTableRegistration(out _) || index < 0 || index >= _genericMethodFunctionRegistrations.Length ||
-            !ReferenceEquals(_genericMethodFunctionRegistrations[index].Instance, _genericMethodRegistrationMetadata!.genericMethodTables[index]))
+            !ReferenceEquals(_genericMethodFunctionRegistrations[index].Instance, _genericRegistrationMetadata!.genericMethodTables[index]))
             return false;
         registration = _genericMethodFunctionRegistrations[index].Registration;
         return true;
@@ -633,7 +647,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     public bool TryGetGenericMethodRegistration(Cpp2IlMethodRef reference, out GenericMethodRegistration registration)
     {
         registration = default;
-        return _genericMethodRegistrationsPublished && _genericMethodRegistrations.TryGetValue(reference, out registration);
+        return HasOriginalGenericRegistrationContext(_context) && _genericMethodRegistrations.TryGetValue(reference, out registration);
     }
 
     public bool TryGetGenericMethodPointerVirtualAddress(Cpp2IlMethodRef reference, out ulong address)

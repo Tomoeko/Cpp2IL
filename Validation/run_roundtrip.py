@@ -58,6 +58,8 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "native-constant-reference-array-argument",
     "owner-effect-array-element-store",
     "framework-ancestor-array-argument",
+    "native-nested-scalar-parameter-store",
+    "native-nested-owner-scalar-parameter-store",
     "native-direct-generic-reference-invocation",
     "application-parent-cctor-array-argument",
     "owner-cctor-array-argument",

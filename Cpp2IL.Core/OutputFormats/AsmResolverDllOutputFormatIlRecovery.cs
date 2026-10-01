@@ -165,6 +165,18 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                     Reason: { } methodRefReason })
                 throw new DecompilerException(methodRefReason);
 
+            if (X64GenericReferenceDefinitionRecovery.TryGeneratePartial(methodContext, methodDefinition, out var genericBodyReasons))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Partial, genericBodyReasons);
+                return;
+            }
+
+            if (X64NestedScalarParameterStoreRecovery.TryGeneratePartial(methodContext, methodDefinition, out var nestedStoreReasons))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Partial, nestedStoreReasons);
+                return;
+            }
+
             if (X64CatchDivideRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,

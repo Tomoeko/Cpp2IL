@@ -20,6 +20,7 @@ internal static partial class X64OriginalReferenceClassProof
         Cpp2IlMethodRef reference, ulong pointer)
     {
         if (app.MetadataVersion != 29 || app.Binary is not PE pe || pe.PointerSizeBytes != sizeof(ulong) ||
+            !pe.HasOriginalGenericRegistrationContext(app.LibCpp2IlContext) ||
             !pe.TryGetGenericMethodTableRegistration(out var tables) ||
             !pe.TryGetGenericInstantiationTableRegistration(out var instantiations) ||
             !pe.TryGetGenericMethodRegistration(reference, out var origin) ||

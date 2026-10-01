@@ -7,6 +7,7 @@ using System.Reflection;
 using AssetRipper.Primitives;
 using Cpp2IL.Core.Analysis;
 using Cpp2IL.Core.Model.Contexts;
+using LibCpp2IL;
 using LibCpp2IL.BinaryStructures;
 using LibCpp2IL.Metadata;
 
@@ -31,7 +32,7 @@ public class GenericDeclarationIdentityTests
                 Directory.EnumerateFiles(input!, "global-metadata.dat", SearchOption.AllDirectories).Single(),
                 UnityVersion.Parse("2021.3.35f1"));
             var results = GenericDeclarationIdentityControls.Run(Cpp2IlApi.CurrentAppContext!);
-            Assert.That(results, Has.Length.EqualTo(31));
+            Assert.That(results, Has.Length.EqualTo(33));
             Assert.Multiple(() =>
             {
                 foreach (var result in results)
@@ -131,6 +132,28 @@ internal static class GenericDeclarationIdentityControls
             metadata.BaseStream.WriteByte(value);
             return restore;
         }
+
+        Check("equivalent-metadata-context-cannot-borrow-declarations", () =>
+        {
+            var context = app.LibCpp2IlContext;
+            var property = typeof(LibCpp2IlContext).GetProperty(nameof(LibCpp2IlContext.Metadata))!;
+            Action restore = () => property.SetValue(context, metadata);
+            rollback.Push(restore);
+            property.SetValue(context, Clone(metadata));
+            return restore;
+        });
+        Check("new-context-cannot-borrow-original-declarations", () =>
+        {
+            var original = app.LibCpp2IlContext;
+            var context = (LibCpp2IlContext)Activator.CreateInstance(typeof(LibCpp2IlContext),
+                BindingFlags.Instance | BindingFlags.NonPublic, null, [app.LibCpp2IlContext.Settings], null)!;
+            typeof(LibCpp2IlContext).GetProperty(nameof(LibCpp2IlContext.Binary))!.SetValue(context, app.Binary);
+            typeof(LibCpp2IlContext).GetProperty(nameof(LibCpp2IlContext.Metadata))!.SetValue(context, metadata);
+            Action restore = () => app.LibCpp2IlContext = original;
+            rollback.Push(restore);
+            app.LibCpp2IlContext = context;
+            return restore;
+        });
 
         Check("equal-valued-selected-container-replacement", () =>
         {
