@@ -104,10 +104,10 @@ internal static class X64GenericBaseConstructorProof
             !X64MetadataStaticGetterProof.FileBackedWritableData(pe, unwind, shape.MethodSlot, 8) ||
             shape.Initializer != app.GetOrCreateKeyFunctionAddresses()
                 .il2cpp_codegen_initialize_runtime_metadata ||
-            !X64MetadataInitializationHelperProof.TryIdentifyMethodDefArm(app, pe, unwind,
-                shape.Initializer) ||
             app.LibCpp2IlContext.GetMethodGlobalByAddress(shape.MethodSlot) is not
-                { Type: MetadataUsageType.MethodRef, IsValid: true } usage)
+                { Type: MetadataUsageType.MethodRef, IsValid: true } usage ||
+            !X64MetadataInitializationHelperProof.TryIdentifyMethodRefArm(app, pe, unwind,
+                shape.Initializer, usage, shape.MethodSlot, out _))
             return null;
 
         try

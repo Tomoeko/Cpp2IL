@@ -1638,8 +1638,27 @@ def isolate_player(player, destination):
     def excluded(_directory, names):
         return [name for name in names if "BackUpThisFolder" in name or "BurstDebugInformation" in name
                 or Path(name).suffix.lower() in {".pdb", ".mdb", ".cs", ".cpp", ".h", ".map"}]
-    # Account for this synchronous copy before duplicating the native player.
-    copy_bytes = sum(path.stat().st_size for path in player.rglob("*") if path.is_file())
+    def walk_error(error):
+        raise error
+
+    # Use the copy's exclusion rules when reserving space, including excluded directories.
+    # Refuse links so the estimate cannot omit an external tree followed by copytree.
+    if player.is_symlink():
+        raise ValueError("Player copy source must not be a symbolic link")
+    copy_bytes = 0
+    for directory, directories, files in os.walk(player, onerror=walk_error, followlinks=False):
+        omitted = set(excluded(directory, directories + files))
+        directories[:] = [name for name in directories if name not in omitted]
+        for name in directories + [name for name in files if name not in omitted]:
+            path = Path(directory) / name
+            if path.is_symlink():
+                raise ValueError("Player copy must not follow symbolic links")
+        for name in files:
+            if name not in omitted:
+                path = Path(directory) / name
+                if not path.is_file():
+                    raise ValueError("Player copy contains a non-regular file")
+                copy_bytes += path.stat().st_size
     storage_budget.check_headroom(ROOT / "Files", copy_bytes + storage_budget.STOP_RESERVE_BYTES)
     shutil.copytree(player, destination, ignore=excluded)
     required = ["RecoveryFixture.exe", "GameAssembly.dll", "UnityPlayer.dll",

@@ -267,14 +267,37 @@ class HarnessBoundaries(unittest.TestCase):
         player = self.root / "player"
         files = ["RecoveryFixture.exe", "GameAssembly.dll", "UnityPlayer.dll",
                  "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat",
-                 "GameAssembly.pdb", "source.cs",
+                 "GameAssembly.pdb", "source.cs", "BurstDebugInformation/nested/debug.bin",
                  "RecoveryFixture_BackUpThisFolder_ButDontShipItWithYourGame/Managed/RecoveryFixture.dll"]
         for name in files:
             target = player / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"synthetic test placeholder")
-        manifest = run_fixture.isolate_player(player, self.root / "player-input")
+        with mock.patch.object(run_fixture.storage_budget, "check_headroom") as headroom:
+            manifest = run_fixture.isolate_player(player, self.root / "player-input")
+        headroom.assert_called_once_with(
+            run_fixture.ROOT / "Files", 4 * len(b"synthetic test placeholder")
+            + run_fixture.storage_budget.STOP_RESERVE_BYTES)
         self.assertEqual({item["path"] for item in manifest}, set(files[:4]))
+
+    @unittest.skipIf(os.name == "nt", "symbolic link creation requires Windows privileges")
+    def test_player_copy_rejects_external_symbolic_links_before_copying(self):
+        player = self.root / "player"
+        player.mkdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "native.bin").write_bytes(b"external test data")
+        for name, target in (("external", outside), ("linked.bin", outside / "native.bin")):
+            with self.subTest(name=name):
+                link = player / name
+                link.symlink_to(target)
+                destination = self.root / "player-input"
+                with mock.patch.object(run_fixture.storage_budget, "check_headroom") as headroom:
+                    with self.assertRaisesRegex(ValueError, "symbolic links"):
+                        run_fixture.isolate_player(player, destination)
+                headroom.assert_not_called()
+                self.assertFalse(destination.exists())
+                link.unlink()
 
     def test_empty_observations_cannot_pass(self):
         report = self.root / "behavior.json"

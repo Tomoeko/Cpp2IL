@@ -160,6 +160,11 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64MetadataInitializationHelperProof.CheckGuardedMethodRef(methodContext) is
+                { Disposition: X64MetadataInitializationHelperProof.MethodRefDisposition.Unsupported,
+                    Reason: { } methodRefReason })
+                throw new DecompilerException(methodRefReason);
+
             if (X64CatchDivideRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
