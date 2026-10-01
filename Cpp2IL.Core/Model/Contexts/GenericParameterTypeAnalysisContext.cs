@@ -12,6 +12,8 @@ public class GenericParameterTypeAnalysisContext : ReferencedTypeAnalysisContext
 {
     private readonly Il2CppGenericParameter? definition;
 
+    internal new Il2CppGenericParameter? Definition => definition;
+
     public sealed override string DefaultName { get; }
 
     public sealed override string DefaultNamespace => "";

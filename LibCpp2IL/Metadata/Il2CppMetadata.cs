@@ -12,7 +12,7 @@ using LibCpp2IL.Logging;
 
 namespace LibCpp2IL.Metadata;
 
-public class Il2CppMetadata : ClassReadingBinaryReader
+public partial class Il2CppMetadata : ClassReadingBinaryReader
 {
     public const uint MetadataMagic = 0xFAB11BAF;
     public sealed override float MetadataVersion { get; }
@@ -581,6 +581,7 @@ public class Il2CppMetadata : ClassReadingBinaryReader
 
             LibLogger.VerboseNewline($"OK ({(DateTime.Now - start).TotalMilliseconds} ms)");
 
+            _genericDeclarationOrigins = CaptureGenericDeclarationOrigins();
             _hasFinishedInitialRead = true;
         }
         finally
