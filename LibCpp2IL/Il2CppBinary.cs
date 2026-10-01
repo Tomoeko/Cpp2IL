@@ -63,6 +63,22 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     public readonly record struct GenericInstantiationRegistration(int Index, ulong Address,
         ulong ArgumentCount, ulong ArgumentsAddress);
 
+    private GenericMethodTableRegistration? _genericMethodTableRegistration;
+    private Il2CppMetadata? _genericMethodRegistrationMetadata;
+    private (Il2CppMethodSpec Instance, GenericMethodSpecificationRegistration Registration)[] _genericMethodSpecificationRegistrations = [];
+    private (Il2CppGenericMethodFunctionsDefinitions Instance, GenericMethodFunctionRegistration Registration)[] _genericMethodFunctionRegistrations = [];
+
+    public readonly record struct GenericMethodTableRegistration(ulong CodeRegistrationAddress,
+        ulong MetadataRegistrationAddress, long SpecificationCount, ulong SpecificationsAddress,
+        long FunctionCount, ulong FunctionsAddress, ulong MethodPointerCount, ulong MethodPointersAddress,
+        ulong InvokerCount, ulong InvokersAddress, ulong AdjustorThunksAddress);
+
+    public readonly record struct GenericMethodSpecificationRegistration(int Index, int MethodDefinitionIndex,
+        int ClassInstantiationIndex, int MethodInstantiationIndex);
+
+    public readonly record struct GenericMethodFunctionRegistration(int Index, int SpecificationIndex,
+        int MethodPointerIndex, int InvokerIndex, int AdjustorThunkIndex);
+
     public readonly record struct GenericMethodRegistration(int SpecificationIndex, int TableIndex,
         ulong PointerAddress, ulong CodeRegistrationAddress, ulong MetadataRegistrationAddress);
 
@@ -100,7 +116,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
     public void Init(LibCpp2IlContext context)
     {
-        ClearGenericInstantiationRegistrations();
+        ClearGenericRegistrationSnapshots();
         var metadata = context.Metadata ?? throw new InvalidOperationException("The metadata must be initialized before the binary.");
         context.Binary = this;
         _context = context;
@@ -123,7 +139,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
     public void Init(ulong pCodeRegistration, ulong pMetadataRegistration, Il2CppMetadata metadata)
     {
-        ClearGenericInstantiationRegistrations();
+        ClearGenericRegistrationSnapshots();
         // Ensure any derived code that needs max metadata usages can access it without static metadata.
         _maxMetadataUsages = metadata.GetMaxMetadataUsages();
 
@@ -333,6 +349,9 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
         InBinaryMetadataSize += GetNumBytesReadSinceLastCallAndClear();
 
+        GenericMethodTableRegistration? genericMethodTableRegistration = null;
+        (Il2CppMethodSpec Instance, GenericMethodSpecificationRegistration Registration)[] genericMethodSpecificationRegistrations = [];
+        (Il2CppGenericMethodFunctionsDefinitions Instance, GenericMethodFunctionRegistration Registration)[] genericMethodFunctionRegistrations = [];
         if (metadata.MetadataVersion < 108)
         {
             //On v108+ these are read from the metadata file instead, by the Il2CppMetadata constructor
@@ -349,6 +368,36 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
             LibLogger.VerboseNewline($"OK ({(DateTime.Now - start).TotalMilliseconds} ms)");
 
             InBinaryMetadataSize += GetNumBytesReadSinceLastCallAndClear();
+
+            // Capture only native-backed tables read above. These are original
+            // registration facts, not proof of pointer targets or runtime behavior.
+            if (pCodeRegistration != 0 && pMetadataRegistration != 0 &&
+                _metadataRegistration.methodSpecsCount == metadata.methodSpecs.LongLength &&
+                _metadataRegistration.genericMethodTableCount == metadata.genericMethodTables.LongLength &&
+                _codeRegistration.genericMethodPointersCount == (ulong)_genericMethodPointers.LongLength)
+            {
+                genericMethodTableRegistration = new(pCodeRegistration, pMetadataRegistration,
+                    _metadataRegistration.methodSpecsCount, _metadataRegistration.methodSpecs,
+                    _metadataRegistration.genericMethodTableCount, _metadataRegistration.genericMethodTable,
+                    _codeRegistration.genericMethodPointersCount, _codeRegistration.genericMethodPointers,
+                    _codeRegistration.invokerPointersCount, _codeRegistration.invokerPointers,
+                    _codeRegistration.genericAdjustorThunks);
+                genericMethodSpecificationRegistrations = new (Il2CppMethodSpec, GenericMethodSpecificationRegistration)[metadata.methodSpecs.Length];
+                for (var index = 0; index < metadata.methodSpecs.Length; index++)
+                {
+                    var specification = metadata.methodSpecs[index];
+                    genericMethodSpecificationRegistrations[index] = (specification, new(index,
+                        specification.methodDefinitionIndex.Value, specification.classIndexIndex.Value,
+                        specification.methodIndexIndex.Value));
+                }
+                genericMethodFunctionRegistrations = new (Il2CppGenericMethodFunctionsDefinitions, GenericMethodFunctionRegistration)[metadata.genericMethodTables.Length];
+                for (var index = 0; index < metadata.genericMethodTables.Length; index++)
+                {
+                    var function = metadata.genericMethodTables[index];
+                    genericMethodFunctionRegistrations[index] = (function, new(index, function.GenericMethodIndex,
+                        function.methodIndex, function.invokerIndex, function.adjustorThunk));
+                }
+            }
         }
 
         if (_genericMethodPointers.Length > 0)
@@ -387,6 +436,10 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
             LibLogger.WarnNewline("\tNo generic method pointer data found, skipping generic mapping.");
         }
 
+        _genericMethodSpecificationRegistrations = genericMethodSpecificationRegistrations;
+        _genericMethodFunctionRegistrations = genericMethodFunctionRegistrations;
+        _genericMethodRegistrationMetadata = genericMethodTableRegistration.HasValue ? metadata : null;
+        _genericMethodTableRegistration = genericMethodTableRegistration;
         _genericInstantiationRegistrations = genericInstantiationRegistrations;
         _genericInstantiationTableRegistration = genericInstantiationTableRegistration;
         _hasFinishedInitialRead = true;
@@ -488,10 +541,14 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     public bool TryGetCodegenModuleVirtualAddress(Il2CppCodeGenModule module, out ulong address)
         => _codeGenModuleAddresses.TryGetValue(module, out address) && address != 0;
 
-    private void ClearGenericInstantiationRegistrations()
+    private void ClearGenericRegistrationSnapshots()
     {
         _genericInstantiationTableRegistration = null;
         _genericInstantiationRegistrations = [];
+        _genericMethodTableRegistration = null;
+        _genericMethodRegistrationMetadata = null;
+        _genericMethodSpecificationRegistrations = [];
+        _genericMethodFunctionRegistrations = [];
     }
 
     /// <summary>Returns the original parsed instantiation-table identity, independent of mutable cached rows.</summary>
@@ -513,6 +570,44 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
             !ReferenceEquals(_genericInstantiationRegistrations[index].Instance, _genericInsts[index]))
             return false;
         registration = _genericInstantiationRegistrations[index].Registration;
+        return true;
+    }
+
+    /// <summary>Returns original native table counts and addresses, independent of mutable cached rows.</summary>
+    public bool TryGetGenericMethodTableRegistration(out GenericMethodTableRegistration registration)
+    {
+        registration = default;
+        if (_genericMethodTableRegistration is not { } original || _genericMethodRegistrationMetadata is not { } metadata ||
+            metadata.methodSpecs is not { } specifications || metadata.genericMethodTables is not { } functions ||
+            original.SpecificationCount != specifications.LongLength ||
+            original.FunctionCount != functions.LongLength ||
+            original.MethodPointerCount != (ulong)_genericMethodPointers.LongLength ||
+            _genericMethodSpecificationRegistrations.LongLength != original.SpecificationCount ||
+            _genericMethodFunctionRegistrations.LongLength != original.FunctionCount)
+            return false;
+        registration = original;
+        return true;
+    }
+
+    /// <summary>Returns original values for the exact parsed native method specification at this ordinal.</summary>
+    public bool TryGetGenericMethodSpecificationRegistration(int index, out GenericMethodSpecificationRegistration registration)
+    {
+        registration = default;
+        if (!TryGetGenericMethodTableRegistration(out _) || index < 0 || index >= _genericMethodSpecificationRegistrations.Length ||
+            !ReferenceEquals(_genericMethodSpecificationRegistrations[index].Instance, _genericMethodRegistrationMetadata!.methodSpecs[index]))
+            return false;
+        registration = _genericMethodSpecificationRegistrations[index].Registration;
+        return true;
+    }
+
+    /// <summary>Returns original values for the exact parsed native method function at this ordinal.</summary>
+    public bool TryGetGenericMethodFunctionRegistration(int index, out GenericMethodFunctionRegistration registration)
+    {
+        registration = default;
+        if (!TryGetGenericMethodTableRegistration(out _) || index < 0 || index >= _genericMethodFunctionRegistrations.Length ||
+            !ReferenceEquals(_genericMethodFunctionRegistrations[index].Instance, _genericMethodRegistrationMetadata!.genericMethodTables[index]))
+            return false;
+        registration = _genericMethodFunctionRegistrations[index].Registration;
         return true;
     }
 

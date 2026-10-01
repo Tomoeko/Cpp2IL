@@ -83,11 +83,11 @@ public class GenericInstantiationRegistrationTests
         var (binary, _) = Create(is32Bit);
         var original = Field<Il2CppGenericInst[]>(binary, "_genericInsts");
         SetField(binary, "_genericInsts", new[] { original[0] });
-        AssertUnavailable(binary);
+        AssertInstantiationUnavailable(binary);
         SetField(binary, "_genericInsts", original);
         Assert.True(binary.TryGetGenericInstantiationRegistration(1, out _));
         SetField(binary, "_genericInsts", new[] { original[0], original[1], original[1] });
-        AssertUnavailable(binary);
+        AssertInstantiationUnavailable(binary);
     }
 
     [Theory]
@@ -161,10 +161,254 @@ public class GenericInstantiationRegistrationTests
         Assert.True(binary.TryGetGenericInstantiationRegistration(1, out _));
     }
 
-    private static void AssertUnavailable(Il2CppBinary binary)
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NativeMethodTablesCaptureHeadersAndEachOriginalOrdinal(bool is32Bit)
+    {
+        var (binary, _) = Create(is32Bit, includeMethodTables: true);
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out var table));
+        Assert.Equal(0x100ul, table.CodeRegistrationAddress);
+        Assert.Equal(0x200ul, table.MetadataRegistrationAddress);
+        Assert.Equal(2, table.SpecificationCount);
+        Assert.Equal(0x700ul, table.SpecificationsAddress);
+        Assert.Equal(2, table.FunctionCount);
+        Assert.Equal(0x730ul, table.FunctionsAddress);
+        Assert.Equal(2ul, table.MethodPointerCount);
+        Assert.Equal(0x780ul, table.MethodPointersAddress);
+        Assert.Equal(2ul, table.InvokerCount);
+        Assert.Equal(0x7A0ul, table.InvokersAddress);
+        Assert.Equal(0x7C0ul, table.AdjustorThunksAddress);
+        for (var ordinal = 0; ordinal < 2; ordinal++)
+        {
+            Assert.True(binary.TryGetGenericMethodSpecificationRegistration(ordinal, out var specification));
+            Assert.Equal(new Il2CppBinary.GenericMethodSpecificationRegistration(ordinal, ordinal, -1, ordinal), specification);
+            Assert.True(binary.TryGetGenericMethodFunctionRegistration(ordinal, out var function));
+            Assert.Equal(new Il2CppBinary.GenericMethodFunctionRegistration(ordinal, ordinal, ordinal, ordinal, -1), function);
+        }
+        Assert.False(binary.TryGetGenericMethodSpecificationRegistration(-1, out _));
+        Assert.False(binary.TryGetGenericMethodSpecificationRegistration(2, out _));
+        Assert.False(binary.TryGetGenericMethodFunctionRegistration(int.MaxValue, out _));
+    }
+
+    [Theory]
+    [InlineData(false, "specifications")]
+    [InlineData(true, "specifications")]
+    [InlineData(false, "functions")]
+    [InlineData(true, "functions")]
+    [InlineData(false, "pointers")]
+    [InlineData(true, "pointers")]
+    public void CoherentRawCountAndCacheTruncationCannotHideAnOriginalTail(bool is32Bit, string table)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out var original));
+        var specifications = context.Metadata.methodSpecs;
+        var functions = context.Metadata.genericMethodTables;
+        var pointers = Field<ulong[]>(binary, "_genericMethodPointers");
+        var selectedReference = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[0]]);
+        Assert.True(binary.TryGetGenericMethodRegistration(selectedReference, out var selectedOrigin));
+        if (table == "specifications")
+        {
+            binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 8, 1);
+            context.Metadata.methodSpecs = specifications[..1];
+        }
+        else if (table == "functions")
+        {
+            binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 4, 1);
+            context.Metadata.genericMethodTables = functions[..1];
+        }
+        else
+        {
+            binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 2, 1);
+            SetField(binary, "_genericMethodPointers", pointers[..1]);
+        }
+        // The selected per-reference origin still exists. It cannot establish
+        // completeness of a table whose original tail was removed.
+        Assert.True(binary.TryGetGenericMethodRegistration(selectedReference, out var retainedOrigin));
+        Assert.Equal(selectedOrigin, retainedOrigin);
+        Assert.False(binary.TryGetGenericMethodTableRegistration(out _));
+        Assert.False(binary.TryGetGenericMethodSpecificationRegistration(0, out _));
+        Assert.False(binary.TryGetGenericMethodFunctionRegistration(0, out _));
+        context.Metadata.methodSpecs = specifications;
+        context.Metadata.genericMethodTables = functions;
+        SetField(binary, "_genericMethodPointers", pointers);
+        binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 8, 2);
+        binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 4, 2);
+        binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 2, 2);
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out var restored));
+        Assert.Equal(original, restored);
+    }
+
+    [Theory]
+    [InlineData(false, "specification")]
+    [InlineData(true, "specification")]
+    [InlineData(false, "function")]
+    [InlineData(true, "function")]
+    public void EquivalentNativeRowReplacementCannotBorrowTheOriginalOrdinal(bool is32Bit, string row)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        if (row == "specification")
+        {
+            var original = context.Metadata.methodSpecs[1];
+            context.Metadata.methodSpecs[1] = new Il2CppMethodSpec
+            {
+                methodDefinitionIndex = original.methodDefinitionIndex,
+                classIndexIndex = original.classIndexIndex, methodIndexIndex = original.methodIndexIndex
+            };
+            Assert.True(binary.TryGetGenericMethodTableRegistration(out _));
+            Assert.False(binary.TryGetGenericMethodSpecificationRegistration(1, out _));
+            Assert.True(binary.TryGetGenericMethodSpecificationRegistration(0, out _));
+            context.Metadata.methodSpecs[1] = original;
+            Assert.True(binary.TryGetGenericMethodSpecificationRegistration(1, out _));
+        }
+        else
+        {
+            var original = context.Metadata.genericMethodTables[1];
+            context.Metadata.genericMethodTables[1] = new Il2CppGenericMethodFunctionsDefinitions
+            {
+                GenericMethodIndex = original.GenericMethodIndex, methodIndex = original.methodIndex,
+                invokerIndex = original.invokerIndex, adjustorThunk = original.adjustorThunk
+            };
+            Assert.True(binary.TryGetGenericMethodTableRegistration(out _));
+            Assert.False(binary.TryGetGenericMethodFunctionRegistration(1, out _));
+            Assert.True(binary.TryGetGenericMethodFunctionRegistration(0, out _));
+            context.Metadata.genericMethodTables[1] = original;
+            Assert.True(binary.TryGetGenericMethodFunctionRegistration(1, out _));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MutableMethodHeadersAndRowValuesDoNotRewriteTheirOriginalSnapshots(bool is32Bit)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out var table));
+        Assert.True(binary.TryGetGenericMethodSpecificationRegistration(1, out var specification));
+        Assert.True(binary.TryGetGenericMethodFunctionRegistration(1, out var function));
+        context.Metadata.methodSpecs[1].methodDefinitionIndex = Il2CppVariableWidthIndex<Il2CppMethodDefinition>.MakeTemporaryForFixedWidthUsage(77);
+        context.Metadata.genericMethodTables[1].invokerIndex = 88;
+        binary.Word(0x700 + 12, 77);
+        binary.Word(0x730 + 16 + 8, 88);
+        binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 8, 1);
+        var code = Field<Il2CppCodeRegistration>(binary, "_codeRegistration");
+        code.genericMethodPointersCount = 1;
+        code.invokerPointersCount = 1;
+        code.invokerPointers = 99;
+        code.genericAdjustorThunks = 111;
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out var currentTable));
+        Assert.True(binary.TryGetGenericMethodSpecificationRegistration(1, out var currentSpecification));
+        Assert.True(binary.TryGetGenericMethodFunctionRegistration(1, out var currentFunction));
+        Assert.Equal(table, currentTable);
+        Assert.Equal(specification, currentSpecification);
+        Assert.Equal(function, currentFunction);
+        // Provenance remains available; its consumer must reject changed
+        // current raw/cache facts before selecting runtime aliases.
+    }
+
+    [Theory]
+    [InlineData(false, "specifications")]
+    [InlineData(true, "specifications")]
+    [InlineData(false, "functions")]
+    [InlineData(true, "functions")]
+    [InlineData(false, "mapping")]
+    [InlineData(true, "mapping")]
+    public void FailedNativeTableReadOrMappingCannotPublishNewOrPriorRows(bool is32Bit, string failure)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        if (failure == "specifications") binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 9, 0xFFF);
+        if (failure == "functions") binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 5, 0xFFF);
+        if (failure == "mapping") binary.Word(0x700, 99);
+        if (failure == "mapping")
+            Assert.Throws<IndexOutOfRangeException>(() => binary.Init(0x100, 0x200, context.Metadata));
+        else
+            Assert.Throws<EndOfStreamException>(() => binary.Init(0x100, 0x200, context.Metadata));
+        AssertUnavailable(binary);
+        binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 9, 0x700);
+        binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 5, 0x730);
+        binary.Word(0x700, 0);
+        binary.Init(0x100, 0x200, context.Metadata);
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out var restored));
+        Assert.Equal(2, restored.SpecificationCount);
+        Assert.Equal(2, restored.FunctionCount);
+        Assert.True(binary.TryGetGenericMethodSpecificationRegistration(1, out _));
+        Assert.True(binary.TryGetGenericMethodFunctionRegistration(1, out _));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NonemptyMethodTablesAreInvalidatedBeforeAContextSearchFailure(bool is32Bit)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        binary.FailSearch = true;
+        Assert.Throws<InvalidOperationException>(() => binary.Init(context));
+        AssertUnavailable(binary);
+        binary.FailSearch = false;
+        binary.Init(context);
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out var restored));
+        Assert.Equal(2, restored.FunctionCount);
+        Assert.True(binary.TryGetGenericMethodFunctionRegistration(1, out _));
+    }
+
+    [Theory]
+    [InlineData(false, "code")]
+    [InlineData(true, "code")]
+    [InlineData(false, "metadata")]
+    [InlineData(true, "metadata")]
+    [InlineData(false, "both")]
+    [InlineData(true, "both")]
+    public void DelegatedStructuresWithoutBothNativeRootAddressesDoNotClaimTableProvenance(bool is32Bit, string missing)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        void Locate(Il2CppBinary current, Il2CppMetadata metadata,
+            ref Il2CppCodeRegistration code, ref Il2CppMetadataRegistration registration)
+        {
+            if (!ReferenceEquals(current, binary) || !ReferenceEquals(metadata, context.Metadata)) return;
+            code ??= binary.ReadReadableAtVirtualAddress<Il2CppCodeRegistration>(0x100);
+            registration ??= binary.ReadReadableAtVirtualAddress<Il2CppMetadataRegistration>(0x200);
+        }
+        Il2CppBinary.OnRegistrationStructLocationFailure += Locate;
+        try
+        {
+            binary.Init(missing == "metadata" ? 0x100ul : 0,
+                missing == "code" ? 0x200ul : 0, context.Metadata);
+            Assert.False(binary.TryGetGenericMethodTableRegistration(out _));
+            Assert.False(binary.TryGetGenericMethodSpecificationRegistration(0, out _));
+            Assert.False(binary.TryGetGenericMethodFunctionRegistration(0, out _));
+        }
+        finally
+        {
+            Il2CppBinary.OnRegistrationStructLocationFailure -= Locate;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PendingNativeReadsKeepAllMethodTableSnapshotsUnavailable(bool is32Bit)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        binary.ObservePendingRead = true;
+        binary.Init(context);
+        Assert.True(binary.PendingReadsObserved > 0);
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out _));
+        Assert.True(binary.TryGetGenericMethodSpecificationRegistration(1, out _));
+        Assert.True(binary.TryGetGenericMethodFunctionRegistration(1, out _));
+    }
+
+    private static void AssertInstantiationUnavailable(Il2CppBinary binary)
     {
         Assert.False(binary.TryGetGenericInstantiationTableRegistration(out _));
         Assert.False(binary.TryGetGenericInstantiationRegistration(0, out _));
+    }
+
+    private static void AssertUnavailable(Il2CppBinary binary)
+    {
+        AssertInstantiationUnavailable(binary);
+        Assert.False(binary.TryGetGenericMethodTableRegistration(out _));
+        Assert.False(binary.TryGetGenericMethodSpecificationRegistration(0, out _));
+        Assert.False(binary.TryGetGenericMethodFunctionRegistration(0, out _));
     }
 
     private static T Field<T>(Il2CppBinary binary, string name) =>
@@ -172,7 +416,7 @@ public class GenericInstantiationRegistrationTests
     private static void SetField(Il2CppBinary binary, string name, object value) =>
         typeof(Il2CppBinary).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(binary, value);
 
-    private static (FlatBinary Binary, LibCpp2IlContext Context) Create(bool is32Bit)
+    private static (FlatBinary Binary, LibCpp2IlContext Context) Create(bool is32Bit, bool includeMethodTables = false)
     {
         var metadata = new byte[1024];
         BinaryPrimitives.WriteUInt32LittleEndian(metadata, Il2CppMetadata.MetadataMagic);
@@ -181,6 +425,16 @@ public class GenericInstantiationRegistrationTests
         // Point them to a zeroed payload rather than the metadata magic/header.
         for (var at = 8; at < 512; at += 8)
             BinaryPrimitives.WriteInt32LittleEndian(metadata.AsSpan(at), 512);
+        if (includeMethodTables)
+        {
+            // Two real v29 method rows are parsed for the native generic mapper.
+            // They have empty names and no declaring type or signature graph.
+            BinaryPrimitives.WriteInt32LittleEndian(metadata.AsSpan(8 + 5 * 8), 0x240);
+            BinaryPrimitives.WriteInt32LittleEndian(metadata.AsSpan(8 + 5 * 8 + 4), 2 * 32);
+            for (var ordinal = 0; ordinal < 2; ordinal++)
+                for (var field = 1; field <= 4; field++)
+                    BinaryPrimitives.WriteInt32LittleEndian(metadata.AsSpan(0x240 + ordinal * 32 + field * 4), -1);
+        }
         var context = new LibCpp2IlContext(new LibCpp2IlMain.LibCpp2IlSettings());
         context.Metadata = Il2CppMetadata.ReadFrom(metadata, UnityVersion.Parse("2021.3.35f1"));
         context.Metadata.SetOwningContext(context);
@@ -193,6 +447,32 @@ public class GenericInstantiationRegistrationTests
             binary.Native(0x300 + (ulong)ordinal * (ulong)binary.PointerSizeBytes, row);
             binary.Native(row, (ulong)ordinal + 1);
             binary.Native(row + (ulong)binary.PointerSizeBytes, 0x600ul + (ulong)ordinal * 0x20);
+        }
+        if (includeMethodTables)
+        {
+            binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 4, 2);
+            binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 5, 0x730);
+            binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 8, 2);
+            binary.Native(0x200 + (ulong)binary.PointerSizeBytes * 9, 0x700);
+            binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 2, 2);
+            binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 3, 0x780);
+            binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 4, 0x7C0);
+            binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 5, 2);
+            binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 6, 0x7A0);
+            for (var ordinal = 0; ordinal < 2; ordinal++)
+            {
+                var specification = 0x700ul + (ulong)ordinal * 12;
+                binary.Word(specification, ordinal);
+                binary.Word(specification + 4, -1);
+                binary.Word(specification + 8, ordinal);
+                var function = 0x730ul + (ulong)ordinal * 16;
+                binary.Word(function, ordinal);
+                binary.Word(function + 4, ordinal);
+                binary.Word(function + 8, ordinal);
+                binary.Word(function + 12, -1);
+                binary.Native(0x780ul + (ulong)ordinal * (ulong)binary.PointerSizeBytes, 0x900ul + (ulong)ordinal * 8);
+                binary.Native(0x7A0ul + (ulong)ordinal * (ulong)binary.PointerSizeBytes, 0x910ul + (ulong)ordinal * 8);
+            }
         }
         binary.Init(context);
         return (binary, context);
@@ -227,6 +507,8 @@ public class GenericInstantiationRegistrationTests
             is32Bit = native32Bit;
             return (0x100, 0x200);
         }
+        public void Word(ulong address, int value) =>
+            BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(checked((int)address)), value);
         public void Native(ulong address, ulong value)
         {
             is32Bit = native32Bit;
