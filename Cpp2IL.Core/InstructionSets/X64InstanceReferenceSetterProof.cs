@@ -25,14 +25,36 @@ internal static class X64InstanceReferenceSetterProof
 
     internal static Evidence? Find(MethodAnalysisContext method)
     {
-        if (!X86RuntimeNullThrowProof.IsSupportedProfile(method.AppContext) ||
-            !PossibleSetter(method))
+        try
+        {
+            if (!X86RuntimeNullThrowProof.IsSupportedProfile(method.AppContext) ||
+                !PossibleSetter(method))
+                return null;
+            method.EnsureRawBytes();
+            return Find(method, X86Utils.Iterate(method).ToArray());
+        }
+        catch (Exception exception) when (exception is ArgumentException or
+            IndexOutOfRangeException or OverflowException or KeyNotFoundException)
+        {
             return null;
-        method.EnsureRawBytes();
-        return Find(method, X86Utils.Iterate(method).ToArray());
+        }
     }
 
     internal static Evidence? Find(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> decoded)
+    {
+        try
+        {
+            return FindCore(method, decoded);
+        }
+        catch (Exception exception) when (exception is ArgumentException or
+            IndexOutOfRangeException or OverflowException or KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    private static Evidence? FindCore(MethodAnalysisContext method,
         IReadOnlyList<NativeInstruction> decoded)
     {
         var app = method.AppContext;
@@ -52,6 +74,7 @@ internal static class X64InstanceReferenceSetterProof
             !X64ReferenceWriteBarrierProof.TryIdentify(pe, unwind, shape.BarrierTarget) ||
             !app.MethodsByAddress.TryGetValue(method.UnderlyingPointer, out var bindings) ||
             bindings.Count(candidate => ReferenceEquals(candidate, method)) != 1 ||
+            bindings.Distinct().Count() != bindings.Count ||
             bindings.Count > 64 ||
             Enumerable.Range(1, 11).Any(offset =>
                 app.MethodsByAddress.ContainsKey(method.UnderlyingPointer + (ulong)offset)))
@@ -67,7 +90,8 @@ internal static class X64InstanceReferenceSetterProof
         return bindings.Where(candidate => ReferenceEquals(
                 candidate.DeclaringType?.DeclaringAssembly,
                 method.DeclaringType?.DeclaringAssembly))
-            .All(candidate => BindMetadata(candidate, shape.FieldOffset) != null)
+            .All(candidate => candidate.UnderlyingPointer == method.UnderlyingPointer &&
+                BindMetadata(candidate, shape.FieldOffset) != null)
             ? evidence : null;
     }
 
@@ -152,22 +176,20 @@ internal static class X64InstanceReferenceSetterProof
     private static Evidence? BindMetadata(MethodAnalysisContext method, int offset)
     {
         var app = method.AppContext;
-        if (method.DeclaringType is not { Definition: { GenericContainer: null,
+        if (method.DeclaringType is not { Definition: { GenericContainerIndex: { IsNull: true },
                 HasCctor: false, PackingSizeIsDefault: true,
-                ClassSizeIsDefault: true,
-                RawType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_CLASS,
-                    NumMods: 0, Byref: 0, Pinned: 0 } } } owner ||
-            owner.IsValueType || owner.IsInterface || owner.IsGenericInstance ||
-            owner.GenericParameters.Count != 0 || owner.DeclaringType != null ||
-            owner.Attributes != owner.DefaultAttributes ||
-            owner.Name != owner.DefaultName || owner.Namespace != owner.DefaultNamespace ||
-            !ReferenceEquals(owner.BaseType, owner.DefaultBaseType) ||
+                ClassSizeIsDefault: true } } owner ||
+            !OriginalClass(owner) ||
             !ReferenceEquals(owner.BaseType, app.SystemTypes.SystemObjectType) ||
-            method.Definition is not { GenericContainer: null, parameterCount: 1,
-                RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
-                    NumMods: 0, Byref: 0, Pinned: 0 } } definition ||
+            !OriginalSignatureIndices(method) ||
+            method.Definition is not { genericContainerIndex: { IsNull: true }, parameterCount: 1,
+                RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID } rawReturn } definition ||
+            !OriginalVoid(rawReturn) ||
             !ReferenceEquals(definition.DeclaringType, owner.Definition) ||
-            definition.InternalParameterData is not [var rawValue] ||
+            definition.InternalParameterData is not [{ RawType: { } rawType } rawValue] ||
+            ResolveReferenceType(app, rawType) is not { } valueType ||
+            rawType.Type == Il2CppTypeEnum.IL2CPP_TYPE_CLASS &&
+                (!OriginalClass(valueType) || !AccessibleValueType(owner, valueType, method.Visibility)) ||
             !RuntimeNullGuardCoalescer.HasUnchangedNativeSignature(method,
                 requireUniqueBinding: false) ||
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
@@ -181,23 +203,28 @@ internal static class X64InstanceReferenceSetterProof
             (method.Attributes & (MethodAttributes.Abstract | MethodAttributes.PinvokeImpl)) != 0 ||
             (method.ImplAttributes & (MethodImplAttributes.CodeTypeMask |
                                       MethodImplAttributes.ManagedMask |
-                                      MethodImplAttributes.InternalCall)) != 0 ||
+                                      MethodImplAttributes.InternalCall |
+                                      MethodImplAttributes.Synchronized)) != 0 ||
             method.OverrideReturnType != null ||
             !ReferenceEquals(method.ReturnType, app.SystemTypes.SystemVoidType) ||
             !ReferenceEquals(value.Definition, rawValue) ||
             !ReferenceEquals(value.DeclaringMethod, method) ||
             value.ParameterIndex != 0 || value.IsRef ||
+            value.Name != value.DefaultName || value.UseOverrideDefaultValue ||
             value.Attributes != value.DefaultAttributes ||
             value.OverrideParameterType != null ||
-            rawValue.RawType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawType ||
-            rawType.Type is not (Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or
-                                Il2CppTypeEnum.IL2CPP_TYPE_STRING))
+            !ReferenceEquals(value.ParameterType, valueType))
             return null;
 
-        var valueType = rawType.Type == Il2CppTypeEnum.IL2CPP_TYPE_OBJECT
-            ? app.SystemTypes.SystemObjectType : app.SystemTypes.SystemStringType;
-        if (!ReferenceEquals(value.ParameterType, valueType) ||
-            offset + app.Binary.PointerSizeBytes > owner.Definition.RawSizes.instance_size)
+        if (offset < 2 * app.Binary.PointerSizeBytes ||
+            offset + app.Binary.PointerSizeBytes > owner.Definition.RawSizes.instance_size ||
+            owner.Methods.Count != owner.Definition.MethodCount ||
+            !owner.Methods.Select(member => member.Definition).SequenceEqual(owner.Definition.Methods!) ||
+            owner.Properties.Count != owner.Definition.PropertyCount ||
+            !owner.Properties.Select(member => member.Definition).SequenceEqual(owner.Definition.Properties!) ||
+            owner.Fields.Count != owner.Definition.FieldCount ||
+            !owner.Fields.Select(field => field.BackingData?.Field).SequenceEqual(owner.Definition.Fields!) ||
+            owner.Fields.Any(field => field.BackingData?.Field.RawFieldType is not { Data: not null }))
             return null;
 
         var properties = owner.Properties.Where(property =>
@@ -206,21 +233,26 @@ internal static class X64InstanceReferenceSetterProof
         // change this setter's native store or field binding.
         if (properties is not [{ } property] ||
             property.Definition is not { } rawProperty ||
+            !ReferenceEquals(property.DeclaringType, owner) ||
+            !ReferenceEquals(rawProperty.DeclaringType, owner.Definition) ||
+            rawProperty.set.Value < 0 || rawProperty.set.Value >= owner.Definition.MethodCount ||
+            !rawProperty.get.IsNull && (rawProperty.get.Value < 0 || rawProperty.get.Value >= owner.Definition.MethodCount) ||
             !ReferenceEquals(rawProperty.Setter, definition) ||
+            !ReferenceEquals(property.Getter?.Definition, rawProperty.Getter) ||
+            property.Getter is { } getter && !OriginalGetter(getter, property.Name, valueType) ||
             property.Name != property.DefaultName ||
             method.Name != "set_" + property.Name ||
             property.Attributes != property.DefaultAttributes ||
             property.OverridePropertyType != null ||
             property.IsStatic || !ReferenceEquals(property.PropertyType, valueType) ||
-            rawProperty.RawPropertyType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawPropertyType ||
-            rawPropertyType.Type != rawType.Type)
+            ResolveReferenceType(app, rawProperty.RawPropertyType) is not { } propertyType ||
+            !ReferenceEquals(propertyType, valueType))
             return null;
 
         var fields = owner.Fields.Where(field => !field.IsStatic &&
-            field.Offset == offset && ReferenceEquals(field.FieldType, valueType) &&
-            field.BackingData?.Field.RawFieldType is
-                { NumMods: 0, Byref: 0, Pinned: 0 } rawField &&
-            rawField.Type == rawType.Type).ToArray();
+            field.Offset == offset &&
+            ReferenceEquals(ResolveReferenceType(app, field.BackingData?.Field.RawFieldType), valueType) &&
+            ReferenceEquals(field.FieldType, valueType)).ToArray();
         if (fields is not [{ } stored] ||
             !ReferenceEquals(stored.DeclaringType, owner) ||
             stored.Name != stored.DefaultName ||
@@ -239,18 +271,132 @@ internal static class X64InstanceReferenceSetterProof
         return new Evidence(stored);
     }
 
+    // Validate the union and decoded flags before a context's lazy type resolver
+    // can dereference them. CLASS, OBJECT and STRING share reference storage, but
+    // CLASS additionally names an original, canonical metadata definition.
+    internal static bool OriginalDescriptor(Il2CppType raw) =>
+        raw.Data != null && raw.Datapoint == raw.Data.Dummy &&
+        raw.NumMods == 0 && raw.Byref == 0 && raw.Pinned == 0 && raw.ValueType == 0 &&
+        raw.Attrs <= ushort.MaxValue && raw.Bits == (raw.Attrs | ((uint)raw.Type << 16));
+
+    // In this metadata profile VOID carries the value-type flag. It is not a
+    // reference descriptor, even though it has no managed value or storage.
+    private static bool OriginalVoid(Il2CppType raw) =>
+        raw.Type == Il2CppTypeEnum.IL2CPP_TYPE_VOID && raw.Data != null &&
+        raw.Datapoint == raw.Data.Dummy && raw.Attrs == 0 &&
+        raw.NumMods == 0 && raw.Byref == 0 && raw.Pinned == 0 && raw.ValueType == 1 &&
+        raw.Bits == ((uint)raw.Type << 16 | 1U << 31);
+
+    private static TypeAnalysisContext? ResolveReferenceType(ApplicationAnalysisContext app, Il2CppType? raw)
+    {
+        if (raw == null || !OriginalDescriptor(raw)) return null;
+        if (raw.Type == Il2CppTypeEnum.IL2CPP_TYPE_OBJECT)
+            return ResolveBuiltinReference(app.SystemTypes.SystemObjectType, raw);
+        if (raw.Type == Il2CppTypeEnum.IL2CPP_TYPE_STRING)
+            return ResolveBuiltinReference(app.SystemTypes.SystemStringType, raw);
+        if (raw.Type != Il2CppTypeEnum.IL2CPP_TYPE_CLASS || raw.Data.Dummy >= (ulong)app.Metadata.TypeDefinitionCount)
+            return null;
+        var definition = app.Metadata.typeDefs[(int)raw.Data.Dummy];
+        if (definition.DeclaringAssembly is not { } image ||
+            app.ResolveContextForAssembly(image) is not { } assembly ||
+            !ReferenceEquals(assembly.Definition?.Image, image) ||
+            assembly.GetTypeByDefinition(definition) is not { } type ||
+            !ReferenceEquals(type.AppContext, app) || !ReferenceEquals(type.Definition, definition) ||
+            !ReferenceEquals(type.DeclaringAssembly, assembly) ||
+            assembly.Types.Count(candidate => ReferenceEquals(candidate, type)) != 1)
+            return null;
+        return type;
+    }
+
+    private static TypeAnalysisContext? ResolveBuiltinReference(TypeAnalysisContext type, Il2CppType raw)
+    {
+        if (type.Definition is not { } definition ||
+            definition.ByvalTypeIndex.Value < 0 ||
+            definition.ByvalTypeIndex.Value >= type.AppContext.Binary.AllTypes.Length ||
+            definition.RawType is not { } original || !OriginalDescriptor(original) ||
+            original.Type != raw.Type || original.Data.Dummy != raw.Data.Dummy ||
+            definition.TypeIndex.Value < 0 || original.Data.Dummy != (ulong)definition.TypeIndex.Value)
+            return null;
+        return type;
+    }
+
+    private static bool OriginalClass(TypeAnalysisContext type)
+    {
+        var visited = new HashSet<TypeAnalysisContext>();
+        for (var current = type; current != null;)
+        {
+            if (!visited.Add(current) || visited.Count > 32 ||
+                current.Definition is not { GenericContainerIndex: { IsNull: true }, PackingSizeIsDefault: true,
+                    ClassSizeIsDefault: true, DeclaringTypeIndex: { IsNull: true } } definition ||
+                definition.ByvalTypeIndex.Value < 0 || definition.ByvalTypeIndex.Value >= type.AppContext.Binary.AllTypes.Length ||
+                !definition.ParentIndex.IsNull && (definition.ParentIndex.Value < 0 ||
+                    definition.ParentIndex.Value >= type.AppContext.Binary.AllTypes.Length) ||
+                ResolveReferenceType(type.AppContext, definition.RawType) is not { } canonical ||
+                !ReferenceEquals(canonical, current) || current.DeclaringType != null ||
+                current.IsValueType || current.IsInterface || current.IsGenericInstance ||
+                current.GenericParameters.Count != 0 || current.Name != current.DefaultName ||
+                current.Namespace != current.DefaultNamespace || current.Attributes != current.DefaultAttributes ||
+                current.OverrideBaseType != null ||
+                (current.Attributes & TypeAttributes.LayoutMask) == TypeAttributes.ExplicitLayout)
+                return false;
+            if (ReferenceEquals(current, type.AppContext.SystemTypes.SystemObjectType))
+                return definition.ParentIndex.IsNull && definition.RawBaseType == null;
+            if (ResolveReferenceType(type.AppContext, definition.RawBaseType) is not { } parent ||
+                ReferenceEquals(parent, type.AppContext.SystemTypes.SystemStringType) ||
+                !ReferenceEquals(current.BaseType, parent))
+                return false;
+            current = parent;
+        }
+        return false;
+    }
+
+    private static bool AccessibleValueType(TypeAnalysisContext owner, TypeAnalysisContext value, MethodAttributes visibility) =>
+        X64ClassCastLookupProof.SameOrDirectlyReferencedAssembly(owner.DeclaringAssembly, value.DeclaringAssembly) &&
+        (value.Visibility == TypeAttributes.Public || value.Visibility == TypeAttributes.NotPublic &&
+            ReferenceEquals(owner.DeclaringAssembly, value.DeclaringAssembly)) &&
+        !(owner.Visibility == TypeAttributes.Public && visibility == MethodAttributes.Public && value.Visibility != TypeAttributes.Public);
+
+    private static bool OriginalGetter(MethodAnalysisContext getter, string propertyName, TypeAnalysisContext valueType) =>
+        OriginalSignatureIndices(getter) &&
+        getter.Definition is { genericContainerIndex: { IsNull: true }, parameterCount: 0, InternalParameterData: [] } definition &&
+        ReferenceEquals(ResolveReferenceType(getter.AppContext, definition.RawReturnType), valueType) &&
+        getter.Name == "get_" + propertyName && getter.Name == getter.DefaultName &&
+        getter.Attributes == getter.DefaultAttributes && getter.ImplAttributes == getter.DefaultImplAttributes &&
+        (getter.Attributes & MethodAttributes.SpecialName) != 0 && !getter.IsStatic && !getter.IsVirtual &&
+        getter.Parameters.Count == 0 && getter.GenericParameters.Count == 0 && getter.OverrideReturnType == null &&
+        ReferenceEquals(getter.ReturnType, valueType);
+
     private static bool PossibleSetter(MethodAnalysisContext method) =>
         method.Name.StartsWith("set_", StringComparison.Ordinal) &&
         !method.IsStatic && !method.IsVirtual && method.Parameters.Count == 1 &&
         (method.Attributes & MethodAttributes.SpecialName) != 0 &&
-        method.Definition is { parameterCount: 1,
+        OriginalSignatureIndices(method) &&
+        method.Definition is { genericContainerIndex: { IsNull: true }, parameterCount: 1,
             RawReturnType: { Type: Il2CppTypeEnum.IL2CPP_TYPE_VOID,
                 NumMods: 0, Byref: 0, Pinned: 0 } } definition &&
         definition.InternalParameterData is [{ RawType:
-            { NumMods: 0, Byref: 0, Pinned: 0,
+            { Data: not null, NumMods: 0, Byref: 0, Pinned: 0,
                 Type: Il2CppTypeEnum.IL2CPP_TYPE_OBJECT or
-                    Il2CppTypeEnum.IL2CPP_TYPE_STRING } }] &&
+                    Il2CppTypeEnum.IL2CPP_TYPE_STRING or Il2CppTypeEnum.IL2CPP_TYPE_CLASS } }] &&
         method.UnderlyingPointer is not (0 or ulong.MaxValue);
+
+    private static bool OriginalSignatureIndices(MethodAnalysisContext method)
+    {
+        var app = method.AppContext;
+        var types = app.Binary.AllTypes;
+        if (method.Definition is not { } definition ||
+            definition.returnTypeIdx.Value < 0 || definition.returnTypeIdx.Value >= types.Length ||
+            definition.declaringTypeIdx.Value < 0 ||
+            definition.declaringTypeIdx.Value >= app.Metadata.TypeDefinitionCount ||
+            definition.parameterCount != 0 && definition.parameterStart.IsNull)
+            return false;
+        // The metadata API bounds the parameter table. Resolve each raw index
+        // before accessing lazy parameter contexts; an invalid table span is
+        // declined by Find's narrow bounds-exception guard.
+        return definition.InternalParameterData is { } parameters &&
+            parameters.Length == definition.parameterCount && parameters.All(parameter =>
+                parameter.typeIndex.Value >= 0 && parameter.typeIndex.Value < types.Length);
+    }
 
     private static bool FileBackedExecutablePrefix(MethodAnalysisContext method, PE pe,
         X64UnwindProof.Index unwind, int length)

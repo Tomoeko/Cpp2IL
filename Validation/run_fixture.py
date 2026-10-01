@@ -179,6 +179,8 @@ import native_scalar_producer_invocation
 import native_reference_producer_invocation
 import native_reference_field_invocation
 import native_nested_reference_field_invocation
+import native_nested_reference_getter_invocation
+import class_reference_setter
 import signed_field_comparison
 import typed_field_address
 import typed_field_address_discarded_result
@@ -281,6 +283,15 @@ PROFILES = {
                                         "source": VALIDATION / "NativeReferenceFieldInvocationFixture", "methods": 5},
     "native-nested-reference-field-invocation": {"assembly": "NativeNestedReferenceFieldInvocationFixture",
                                                "source": VALIDATION / "NativeNestedReferenceFieldInvocationFixture", "methods": 6},
+    "native-nested-reference-getter-invocation": {
+        "assembly": "NativeNestedReferenceGetterInvocationFixture",
+        "source": VALIDATION / "NativeNestedReferenceGetterInvocationFixture", "methods": 7},
+    "native-nested-reference-getter-folded-invocation": {
+        "assembly": "NativeNestedReferenceGetterFoldedInvocationFixture",
+        "source": VALIDATION / "NativeNestedReferenceGetterFoldedInvocationFixture", "methods": 9},
+    "native-nested-reference-getter-ambiguous-invocation": {
+        "assembly": "NativeNestedReferenceGetterAmbiguousInvocationFixture",
+        "source": VALIDATION / "NativeNestedReferenceGetterAmbiguousInvocationFixture", "methods": 8},
     "signed-field-comparison": {"assembly": "SignedFieldComparisonFixture",
                                 "source": VALIDATION / "SignedFieldComparisonFixture", "methods": 6},
     "typed-field-address": {"assembly": "TypedFieldAddressFixture",
@@ -396,6 +407,8 @@ PROFILES = {
     "static-word-getter": {"assembly": "StaticWordGetterFixture", "source": VALIDATION / "StaticWordGetterFixture", "methods": 2},
     "static-scalar-setter": {"assembly": "StaticScalarSetterFixture", "source": VALIDATION / "StaticScalarSetterFixture", "methods": 1},
     "instance-reference-property": {"assembly": "InstanceReferencePropertyFixture", "source": VALIDATION / "InstanceReferencePropertyFixture", "methods": 5},
+    "class-reference-setter": {"assembly": "ClassReferenceSetterFixture",
+                               "source": VALIDATION / "ClassReferenceSetterFixture", "methods": 4},
     "instance-reference-setter": {"assembly": "InstanceReferenceSetterFixture", "source": VALIDATION / "InstanceReferenceSetterFixture", "methods": 5,
                                   "noManagedBody": {("InstanceReferenceSetterFixture.IIndexedCell", "set_Item")}},
     "reference-field": {"assembly": "ReferenceFieldFixture", "source": VALIDATION / "ReferenceFieldFixture", "methods": 25},
@@ -704,6 +717,14 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_reference_field_invocation.verify(path, stage, VERSION)
     if profile == "native-nested-reference-field-invocation":
         return native_nested_reference_field_invocation.verify(path, stage, VERSION)
+    if profile == "native-nested-reference-getter-invocation":
+        return native_nested_reference_getter_invocation.verify(path, stage, VERSION)
+    if profile == "native-nested-reference-getter-folded-invocation":
+        return native_nested_reference_getter_invocation.verify_folded(path, stage, VERSION)
+    if profile == "native-nested-reference-getter-ambiguous-invocation":
+        return native_nested_reference_getter_invocation.verify_ambiguous(path, stage, VERSION)
+    if profile == "class-reference-setter":
+        return class_reference_setter.verify(path, stage, VERSION)
     if profile == "signed-field-comparison":
         return signed_field_comparison.verify(path, stage, VERSION)
     if profile == "typed-field-address":

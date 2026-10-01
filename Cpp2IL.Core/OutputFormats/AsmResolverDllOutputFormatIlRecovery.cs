@@ -223,6 +223,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64GetterReferenceArgumentRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Getter-backed reference argument IL emitted from complete bounded native and metadata evidence, preserving both ordered null guards; the original getter represents an equivalent native field read, the erased call boundary is unavailable, and behavior remains unverified.");
+                return;
+            }
+
             if (X64ReferenceArrayScalarResetRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,
