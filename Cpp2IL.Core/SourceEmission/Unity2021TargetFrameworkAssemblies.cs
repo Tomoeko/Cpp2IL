@@ -37,8 +37,11 @@ internal static class Unity2021TargetFrameworkAssemblies
     internal static bool IsKnownName(string name) => Identities.ContainsKey(name);
 
     internal static bool HasTargetIdentity(AssemblyReference reference) =>
-        reference.Name?.ToString() is { } name && Identities.TryGetValue(name, out var identity) &&
-        reference.Version == identity.Version &&
-        string.IsNullOrEmpty(reference.Culture?.ToString()) &&
-        (reference.PublicKeyOrToken ?? []).SequenceEqual(identity.Token);
+        reference.Name?.ToString() is { } name &&
+        UnityTargetAssemblyScope.TryNormalizePublicKey(reference.PublicKeyOrToken, reference.HasPublicKey, out var token) &&
+        HasTargetIdentity(name, reference.Version, reference.Culture?.ToString(), token);
+
+    internal static bool HasTargetIdentity(string name, Version? version, string? culture, ReadOnlySpan<byte> token) =>
+        Identities.TryGetValue(name, out var identity) && version == identity.Version &&
+        string.IsNullOrEmpty(culture) && token.SequenceEqual(identity.Token);
 }

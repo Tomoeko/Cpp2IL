@@ -14,6 +14,7 @@ using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Logging;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Reporting;
+using Cpp2IL.Core.SourceEmission;
 using Cpp2IL.Core.Utils;
 
 namespace Cpp2IL.Core.OutputFormats;
@@ -133,13 +134,23 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            var declaringAssembly = methodContext.DeclaringType!.DeclaringAssembly;
+            var identityScope = UnityTargetAssemblyScope.UsesExactTargetProfile(methodContext.AppContext);
+            var assemblyKind = identityScope ? UnityTargetAssemblyScope.Classify(declaringAssembly) : UnityTargetAssemblyKind.Application;
+            if (assemblyKind == UnityTargetAssemblyKind.UnresolvedTargetReference)
+            {
+                if (methodDefinition.IsManagedMethodWithBody()) FillMethodBodyWithStub(methodDefinition);
+                Record(methodContext, MethodRecoveryDisposition.Failed, UnityTargetAssemblyScope.UnresolvedIdentityReason);
+                return;
+            }
+
             if (!methodDefinition.IsManagedMethodWithBody())
             {
                 Record(methodContext, MethodRecoveryDisposition.NoManagedBody, "Declaration does not require a managed body (abstract, external, or runtime-provided).");
                 return;
             }
 
-            if (IsReferenceAssembly(methodContext.DeclaringType!.DeclaringAssembly.Name))
+            if (identityScope ? assemblyKind == UnityTargetAssemblyKind.TargetReference : IsReferenceAssembly(declaringAssembly.Name))
             {
                 FillMethodBodyWithStub(methodDefinition);
                 Record(methodContext, MethodRecoveryDisposition.ExcludedReferenceAssembly, "Reference assembly body excluded from application recovery; emitted body is a stub.");
@@ -174,6 +185,18 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             if (X64NestedScalarParameterStoreRecovery.TryGeneratePartial(methodContext, methodDefinition, out var nestedStoreReasons))
             {
                 Record(methodContext, MethodRecoveryDisposition.Partial, nestedStoreReasons);
+                return;
+            }
+
+            if (X64CctorStaticFieldReadRecovery.TryGeneratePartial(methodContext, methodDefinition, out var staticFieldReasons))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Partial, staticFieldReasons);
+                return;
+            }
+
+            if (X64InstanceByrefThrowRecovery.TryGeneratePartial(methodContext, methodDefinition, out var throwBodyReasons))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Partial, throwBodyReasons);
                 return;
             }
 

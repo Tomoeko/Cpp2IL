@@ -114,6 +114,7 @@ import runtime_cast_concat
 import static_literal_concat
 import conditional_managed_throw
 import throw_only
+import native_instance_byref_throw
 import scalar_truncation
 import scalar_zero_return
 import arithmetic_zero_flag
@@ -318,6 +319,9 @@ PROFILES = {
     "native-nested-owner-scalar-parameter-store": {
         "assembly": "NativeNestedOwnerScalarParameterStoreFixture",
         "source": VALIDATION / "NativeNestedOwnerScalarParameterStoreFixture", "methods": 3},
+    "native-instance-byref-throw": {
+        "assembly": "NativeInstanceByrefThrowFixture",
+        "source": VALIDATION / "NativeInstanceByrefThrowFixture", "methods": 3},
     "native-direct-generic-reference-invocation": {
         "assembly": "NativeDirectGenericReferenceInvocationFixture",
         "source": VALIDATION / "NativeDirectGenericReferenceInvocationFixture", "methods": 6},
@@ -945,6 +949,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return static_literal_concat.verify(path, stage, VERSION)
     if profile == "throw-only":
         return throw_only.verify(path, stage, VERSION)
+    if profile == "native-instance-byref-throw":
+        return native_instance_byref_throw.verify(path, stage, VERSION)
     if profile == "conditional-managed-throw":
         return conditional_managed_throw.verify(path, stage, VERSION)
     if profile == "virtual-tail-dispatch":

@@ -148,7 +148,7 @@ internal static partial class X64OriginalReferenceClassProof
         return OriginalRow(app, app.Metadata.metadataHeader.methods, index, app.Metadata.MethodDefinitionCount, expected);
     }
 
-    private static bool OriginalField(ApplicationAnalysisContext app, Il2CppFieldDefinition definition)
+    internal static bool OriginalField(ApplicationAnalysisContext app, Il2CppFieldDefinition definition)
     {
         var section = app.Metadata.metadataHeader.fields;
         var index = definition.FieldIndex.Value;

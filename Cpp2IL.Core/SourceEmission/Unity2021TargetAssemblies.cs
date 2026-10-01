@@ -101,8 +101,10 @@ internal static class Unity2021TargetAssemblies
     internal static bool IsKnownName(string name) => Names.Contains(name);
 
     internal static bool HasTargetIdentity(AssemblyReference reference) =>
-        reference.Name?.ToString() is { } name && Names.Contains(name) &&
-        reference.Version == ModuleVersion &&
-        string.IsNullOrEmpty(reference.Culture?.ToString()) &&
-        (reference.PublicKeyOrToken?.Length ?? 0) == 0;
+        reference.Name?.ToString() is { } name &&
+        UnityTargetAssemblyScope.TryNormalizePublicKey(reference.PublicKeyOrToken, reference.HasPublicKey, out var token) &&
+        HasTargetIdentity(name, reference.Version, reference.Culture?.ToString(), token);
+
+    internal static bool HasTargetIdentity(string name, Version? version, string? culture, ReadOnlySpan<byte> token) =>
+        Names.Contains(name) && version == ModuleVersion && string.IsNullOrEmpty(culture) && token.IsEmpty;
 }

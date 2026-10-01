@@ -1,0 +1,5 @@
+{
+  "name": "NativeInstanceByrefThrowFixture",
+  "noEngineReferences": true,
+  "references": []
+}

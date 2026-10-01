@@ -652,6 +652,14 @@ public class X86InstructionSet : Cpp2IlInstructionSet
             case Mnemonic.Xorpd:
             case Mnemonic.Movapd:
             case Mnemonic.Movupd:
+                if (X64ScalarLaneDemandProof.CanProject(context, instruction, out var copyWidth))
+                {
+                    ISIL.IOperand value = X64ScalarLaneDemandProof.IsSelfZero(instruction)
+                        ? copyWidth == 32 ? new ISIL.FloatLiteral(0f) : new ISIL.DoubleLiteral(0d)
+                        : ConvertOperand(instruction, 1);
+                    Add(instruction.IP, ISIL.OpCode.Move, ConvertOperand(instruction, 0), value);
+                    break;
+                }
                 if (instruction.Mnemonic is Mnemonic.Movaps or Mnemonic.Movups or Mnemonic.Movapd or Mnemonic.Movupd or
                     Mnemonic.Xorps or Mnemonic.Xorpd &&
                     X64ScalarFloatSelectionProof.CanProject(context, instruction, out var scalarWidth))

@@ -51,6 +51,8 @@ public class X64TerminalManagedThrowProofTests
                 new HashSet<ulong> { native[16].IP }), Is.Null);
             var proof = X64TerminalManagedThrowProof.Find(method, native);
             Assert.That(proof, Is.Not.Null);
+            Assert.That(X64TerminalManagedThrowProof.FindPartialInstanceByref(method, native), Is.Null,
+                "The instance-only partial route must not downgrade a qualified static byref throw.");
             Assert.That(proof!.ExceptionType.Name,
                 Is.EqualTo("NotSupportedException"));
             Assert.That(X64TerminalManagedThrowProof.TryLift(method, native)!
@@ -135,6 +137,7 @@ public class X64TerminalManagedThrowProofTests
 
             var proof = X64TerminalManagedThrowProof.Find(reset, native);
             Assert.That(proof, Is.Not.Null);
+            Assert.That(X64TerminalManagedThrowProof.FindPartialInstanceByref(reset, native), Is.Null);
             Assert.That(proof!.ExceptionType.Name, Is.EqualTo("NotSupportedException"));
             Assert.That(X64TerminalManagedThrowProof.TryLift(reset, native)!
                 .Select(instruction => instruction.OpCode),

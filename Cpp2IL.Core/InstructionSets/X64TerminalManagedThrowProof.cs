@@ -43,13 +43,42 @@ internal static class X64TerminalManagedThrowProof
 
     internal static Evidence? Find(MethodAnalysisContext method,
         IReadOnlyList<NativeInstruction> decoded)
+        => FindBody(method, decoded, allowInstanceByref: false);
+
+    // An authenticated throw sequence can still be useful when incoming byref
+    // argument registers have not been qualified through every native helper.
+    // Keep that route separate from the complete-body admission above.
+    internal static Evidence? FindPartialInstanceByref(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> decoded)
+    {
+        try
+        {
+            if (!HasOriginalInstanceByrefSignature(method) ||
+                FindBody(method, decoded, allowInstanceByref: true) is not { } proof ||
+                proof.ExceptionType.Definition is not { } exceptionDefinition ||
+                !X64OriginalReferenceClassProof.OriginalType(method.AppContext, exceptionDefinition) ||
+                !ReferenceEquals(X64OriginalReferenceClassProof.ResolveClass(method.AppContext,
+                    exceptionDefinition.RawType), proof.ExceptionType) ||
+                !X64OriginalReferenceClassProof.OriginalMethodPointer(proof.Constructor))
+                return null;
+            return proof;
+        }
+        catch (Exception failure) when (failure is ArgumentException or InvalidOperationException or
+            IndexOutOfRangeException or OverflowException or KeyNotFoundException or NullReferenceException)
+        {
+            return null;
+        }
+    }
+
+    private static Evidence? FindBody(MethodAnalysisContext method,
+        IReadOnlyList<NativeInstruction> decoded, bool allowInstanceByref)
     {
         if (method.RawBytes.Length == 0)
             method.EnsureRawBytes();
         var app = method.AppContext;
         if (!X86RuntimeNullThrowProof.IsSupportedProfile(app) ||
             app.Binary is not PE pe || X64UnwindProof.ForApplication(app) is not { } unwind ||
-            !HasCallerIdentity(method) || decoded.Count < 17 ||
+            !HasCallerIdentity(method, allowInstanceByref) || decoded.Count < 17 ||
             method.RawBytes.Length < 70 ||
             method.UnderlyingPointer > ulong.MaxValue - 70 ||
             decoded[0].IP != method.UnderlyingPointer)
@@ -139,7 +168,7 @@ internal static class X64TerminalManagedThrowProof
             Move(body[15], NativeRegister.RCX, NativeRegister.RBX) && DirectCall(body[16]);
     }
 
-    private static bool HasCallerIdentity(MethodAnalysisContext method)
+    private static bool HasCallerIdentity(MethodAnalysisContext method, bool allowInstanceByref = false)
     {
         if (method.DeclaringType is not { Definition: { GenericContainer: null } } owner ||
             owner.Name != owner.DefaultName || owner.Namespace != owner.DefaultNamespace ||
@@ -158,11 +187,50 @@ internal static class X64TerminalManagedThrowProof
                                       MethodImplAttributes.ManagedMask |
                                       MethodImplAttributes.InternalCall)) != 0 ||
             RuntimeNullGuardCoalescer.HasOutputOptions(method) ||
-            !HasUnchangedThrowSignature(method) ||
+            !(allowInstanceByref ? HasOriginalInstanceByrefSignature(method) : HasUnchangedThrowSignature(method)) ||
             !method.AppContext.MethodsByAddress.TryGetValue(method.UnderlyingPointer, out var bindings) ||
             bindings is not [{ } unique] || !ReferenceEquals(unique, method))
             return false;
         return true;
+    }
+
+    private static bool HasOriginalInstanceByrefSignature(MethodAnalysisContext method)
+    {
+        var app = method.AppContext;
+        if (method.IsStatic || !app.Binary.HasOriginalGenericRegistrationContext(app.LibCpp2IlContext) ||
+            method.Definition is not { parameterCount: > 0 and <= 8 } definition ||
+            !X64OriginalReferenceClassProof.OriginalMethod(app, definition) ||
+            !definition.genericContainerIndex.IsNull ||
+            !X64OriginalReferenceClassProof.ValidTypeIndex(app, definition.returnTypeIdx.Value) ||
+            method.DeclaringType?.Definition is not { } owner ||
+            !X64OriginalReferenceClassProof.OriginalType(app, owner) ||
+            !owner.GenericContainerIndex.IsNull ||
+            definition.RawReturnType is not { NumMods: 0, Byref: 0, Pinned: 0 } rawReturn ||
+            method.Parameters.Count != definition.parameterCount ||
+            definition.InternalParameterData is not { } originals || originals.Length != method.Parameters.Count ||
+            method.OverrideReturnType != null ||
+            (method.ImplAttributes & MethodImplAttributes.Synchronized) != 0)
+            return false;
+
+        for (var index = 0; index < originals.Length; index++)
+        {
+            var parameter = method.Parameters[index];
+            if (!ReferenceEquals(parameter.DeclaringMethod, method) || parameter.ParameterIndex != index ||
+                !ReferenceEquals(parameter.Definition, originals[index]) ||
+                !X64OriginalReferenceClassProof.OriginalParameter(app, definition, index, originals[index]) ||
+                !X64OriginalReferenceClassProof.ValidTypeIndex(app, originals[index].typeIndex.Value) ||
+                originals[index].RawType is not { NumMods: 0, Byref: 1, Pinned: 0 } raw ||
+                !X64OriginalReferenceClassProof.RetainedDescriptor(app, raw) ||
+                parameter.ParameterType is not ByRefTypeAnalysisContext current ||
+                parameter.DefaultParameterType is not ByRefTypeAnalysisContext original ||
+                !ReferenceEquals(current.ElementType, original.ElementType) ||
+                parameter.Name != parameter.DefaultName || parameter.Attributes != parameter.DefaultAttributes ||
+                parameter.OverrideParameterType != null || parameter.OverrideAttributes != null ||
+                parameter.UseOverrideDefaultValue)
+                return false;
+        }
+        return X64OriginalReferenceClassProof.OriginalMethodPointer(method) &&
+               X64OriginalReferenceClassProof.RetainedDescriptor(app, rawReturn);
     }
 
     private static bool HasUnchangedThrowSignature(MethodAnalysisContext method)

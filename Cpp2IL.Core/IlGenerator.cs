@@ -85,6 +85,7 @@ public static partial class IlGenerator
         ValidateOpenGenericEarlyFields(context);
         ValidateOpenGenericPrefixFields(context);
         ValidateScalarVirtualDispatch(context);
+        ValidateScalarLaneCopies(context);
         ValidateCallSemantics(context);
         if (X64ReferenceScalarFieldEffectsProof.HasEvidence(context) &&
             !X64ReferenceScalarFieldEffectsProof.IsValidFor(context))
