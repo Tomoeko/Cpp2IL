@@ -56,6 +56,7 @@ import subprocess
 import sys
 import time
 import storage_budget
+import process_ownership
 
 import byte_fields
 import byte_mask_parameter
@@ -1524,9 +1525,11 @@ def run_process(command, environment, log, timeout, cwd=None):
     started = time.monotonic()
     timed_out = False
     storage_limit_reached = False
+    stop_attempted = False
     storage_root = storage_budget.root_for_log(ROOT, log)
     storage = storage_budget.check_headroom(storage_root) if storage_root else None
     peak_bytes = storage["countedBytes"] if storage else 0
+    child_environment, ownership_scope = process_ownership.child_environment(environment)
 
     def sample_storage():
         nonlocal storage, peak_bytes, storage_limit_reached
@@ -1536,35 +1539,43 @@ def run_process(command, environment, log, timeout, cwd=None):
             storage_limit_reached = storage["countedBytes"] + storage_budget.STOP_RESERVE_BYTES > storage_budget.LIMIT_BYTES
 
     def stop_process(process, output):
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                           stdout=output, stderr=subprocess.STDOUT, check=False)
-        else:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        nonlocal stop_attempted
+        stop_attempted = True
         try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
             if os.name == "nt":
-                process.kill()
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                               stdout=output, stderr=subprocess.STDOUT, check=False)
             else:
+                if process.poll() is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                process_ownership.signal_members(ownership_scope, signal.SIGTERM)
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                if os.name == "nt":
+                    process.kill()
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                process.wait()
+        finally:
+            if os.name != "nt":
+                # Scanner failures must not bypass the original group cleanup.
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-            process.wait()
-        if os.name != "nt":
-            # The session leader can exit while descendants ignore SIGTERM.
-            # Escalate the entire group even after reaping a successful leader.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+                process.wait()
+                # Nested monitors and detached writers can have separate sessions.
+                process_ownership.kill_members(ownership_scope)
 
     with log.open("wb") as output:
-        process = subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT,
+        process = subprocess.Popen(command, env=child_environment, stdout=output, stderr=subprocess.STDOUT,
                                    start_new_session=True, cwd=cwd)
         try:
             while True:
@@ -1580,13 +1591,17 @@ def run_process(command, environment, log, timeout, cwd=None):
                         stop_process(process, output)
                     break
                 except subprocess.TimeoutExpired:
+                    if stop_attempted:
+                        raise
                     sample_storage()
                     if storage_limit_reached:
                         stop_process(process, output)
                         break
         except BaseException:
             # A failed scan or interruption must not leave a child writing artifacts.
-            stop_process(process, output)
+            # A cleanup failure must propagate without signaling the same group twice.
+            if not stop_attempted:
+                stop_process(process, output)
             raise
     result = {"command": command, "exitCode": process.returncode, "timedOut": timed_out,
               "storageLimitReached": storage_limit_reached,
