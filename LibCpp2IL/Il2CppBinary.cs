@@ -54,6 +54,15 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     private ulong _codeRegistrationAddress;
     private ulong _metadataRegistrationAddress;
 
+    private GenericInstantiationTableRegistration? _genericInstantiationTableRegistration;
+    private (Il2CppGenericInst Instance, GenericInstantiationRegistration Registration)[] _genericInstantiationRegistrations = [];
+
+    public readonly record struct GenericInstantiationTableRegistration(long Count, ulong Address,
+        ulong MetadataRegistrationAddress);
+
+    public readonly record struct GenericInstantiationRegistration(int Index, ulong Address,
+        ulong ArgumentCount, ulong ArgumentsAddress);
+
     public readonly record struct GenericMethodRegistration(int SpecificationIndex, int TableIndex,
         ulong PointerAddress, ulong CodeRegistrationAddress, ulong MetadataRegistrationAddress);
 
@@ -91,6 +100,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
     public void Init(LibCpp2IlContext context)
     {
+        ClearGenericInstantiationRegistrations();
         var metadata = context.Metadata ?? throw new InvalidOperationException("The metadata must be initialized before the binary.");
         context.Binary = this;
         _context = context;
@@ -113,6 +123,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
     public void Init(ulong pCodeRegistration, ulong pMetadataRegistration, Il2CppMetadata metadata)
     {
+        ClearGenericInstantiationRegistrations();
         // Ensure any derived code that needs max metadata usages can access it without static metadata.
         _maxMetadataUsages = metadata.GetMaxMetadataUsages();
 
@@ -138,7 +149,22 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
         LibLogger.Verbose("\tReading generic instances...");
         var start = DateTime.Now;
-        _genericInsts = Array.ConvertAll(ReadNUintArrayAtVirtualAddress(_metadataRegistration.genericInsts, _metadataRegistration.genericInstsCount), ReadReadableAtVirtualAddress<Il2CppGenericInst>);
+        var genericInstantiationAddresses = ReadNUintArrayAtVirtualAddress(_metadataRegistration.genericInsts, _metadataRegistration.genericInstsCount);
+        _genericInsts = Array.ConvertAll(genericInstantiationAddresses, ReadReadableAtVirtualAddress<Il2CppGenericInst>);
+        GenericInstantiationTableRegistration? genericInstantiationTableRegistration = null;
+        (Il2CppGenericInst Instance, GenericInstantiationRegistration Registration)[] genericInstantiationRegistrations = [];
+        if (pMetadataRegistration != 0 && _metadataRegistration.genericInstsCount == _genericInsts.Length)
+        {
+            genericInstantiationTableRegistration = new(_metadataRegistration.genericInstsCount,
+                _metadataRegistration.genericInsts, pMetadataRegistration);
+            genericInstantiationRegistrations = new (Il2CppGenericInst, GenericInstantiationRegistration)[_genericInsts.Length];
+            for (var index = 0; index < _genericInsts.Length; index++)
+            {
+                var instance = _genericInsts[index];
+                genericInstantiationRegistrations[index] = (instance, new(index, genericInstantiationAddresses[index],
+                    instance.pointerCount, instance.pointerStart));
+            }
+        }
         LibLogger.VerboseNewline($"OK ({(DateTime.Now - start).TotalMilliseconds} ms)");
 
         InBinaryMetadataSize += GetNumBytesReadSinceLastCallAndClear();
@@ -361,6 +387,8 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
             LibLogger.WarnNewline("\tNo generic method pointer data found, skipping generic mapping.");
         }
 
+        _genericInstantiationRegistrations = genericInstantiationRegistrations;
+        _genericInstantiationTableRegistration = genericInstantiationTableRegistration;
         _hasFinishedInitialRead = true;
     }
 
@@ -459,6 +487,34 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     /// <summary>Returns the registration address for the exact parsed module instance.</summary>
     public bool TryGetCodegenModuleVirtualAddress(Il2CppCodeGenModule module, out ulong address)
         => _codeGenModuleAddresses.TryGetValue(module, out address) && address != 0;
+
+    private void ClearGenericInstantiationRegistrations()
+    {
+        _genericInstantiationTableRegistration = null;
+        _genericInstantiationRegistrations = [];
+    }
+
+    /// <summary>Returns the original parsed instantiation-table identity, independent of mutable cached rows.</summary>
+    public bool TryGetGenericInstantiationTableRegistration(out GenericInstantiationTableRegistration registration)
+    {
+        registration = default;
+        if (_genericInstantiationTableRegistration is not { } original ||
+            original.Count != _genericInsts.Length || _genericInstantiationRegistrations.Length != _genericInsts.Length)
+            return false;
+        registration = original;
+        return true;
+    }
+
+    /// <summary>Returns original native identity for the exact parsed instantiation at this ordinal.</summary>
+    public bool TryGetGenericInstantiationRegistration(int index, out GenericInstantiationRegistration registration)
+    {
+        registration = default;
+        if (!TryGetGenericInstantiationTableRegistration(out _) || index < 0 || index >= _genericInstantiationRegistrations.Length ||
+            !ReferenceEquals(_genericInstantiationRegistrations[index].Instance, _genericInsts[index]))
+            return false;
+        registration = _genericInstantiationRegistrations[index].Registration;
+        return true;
+    }
 
     /// <summary>Returns native registration provenance for the exact originally parsed reference.</summary>
     public bool TryGetGenericMethodRegistration(Cpp2IlMethodRef reference, out GenericMethodRegistration registration)
