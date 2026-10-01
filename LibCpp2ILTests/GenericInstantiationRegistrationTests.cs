@@ -397,6 +397,130 @@ public class GenericInstantiationRegistrationTests
         Assert.True(binary.TryGetGenericMethodFunctionRegistration(1, out _));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReinitializationReplacesGenericMethodOriginsAndCollections(bool is32Bit)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        var first = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[0]]);
+        var second = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[1]]);
+        Assert.True(binary.TryGetGenericMethodRegistration(first, out _));
+        binary.Init(context);
+        Assert.False(binary.TryGetGenericMethodRegistration(first, out _));
+        Assert.False(binary.TryGetGenericMethodPointerVirtualAddress(second, out _));
+        var currentFirst = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[0]]);
+        var currentSecond = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[1]]);
+        Assert.NotSame(first, currentFirst);
+        Assert.NotSame(second, currentSecond);
+        Assert.True(binary.TryGetGenericMethodRegistration(currentFirst, out _));
+        Assert.True(binary.TryGetGenericMethodRegistration(currentSecond, out _));
+        Assert.Same(currentFirst, Assert.Single(binary.ConcreteGenericImplementationsByAddress[0x900]));
+        Assert.Same(currentSecond, Assert.Single(binary.ConcreteGenericImplementationsByAddress[0x908]));
+    }
+
+    [Theory]
+    [InlineData(false, "search")]
+    [InlineData(true, "search")]
+    [InlineData(false, "first-mapping")]
+    [InlineData(true, "first-mapping")]
+    [InlineData(false, "second-mapping")]
+    [InlineData(true, "second-mapping")]
+    public void FailedInitializationLeavesNoPriorOrPartialGenericMethodOrigins(bool is32Bit, string failure)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        var prior = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[0]]);
+        if (failure == "search")
+        {
+            binary.FailSearch = true;
+            Assert.Throws<InvalidOperationException>(() => binary.Init(context));
+        }
+        else
+        {
+            binary.Word(failure == "first-mapping" ? 0x700ul : 0x70Cul, 99);
+            Assert.Throws<IndexOutOfRangeException>(() => binary.Init(context));
+        }
+        AssertUnavailable(binary);
+        Assert.False(binary.TryGetGenericMethodRegistration(prior, out _));
+        Assert.False(binary.TryGetGenericMethodPointerVirtualAddress(prior, out _));
+        Assert.Empty(binary.ConcreteGenericMethods);
+        Assert.Empty(binary.ConcreteGenericImplementationsByAddress);
+        Assert.Empty(Field<System.Collections.IDictionary>(binary, "_genericMethodRegistrations"));
+        Assert.Empty(Field<System.Collections.IDictionary>(binary, "_genericMethodDictionary"));
+        binary.FailSearch = false;
+        binary.Word(0x700, 0);
+        binary.Word(0x70C, 1);
+        binary.Init(context);
+        var current = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[0]]);
+        Assert.NotSame(prior, current);
+        Assert.True(binary.TryGetGenericMethodRegistration(current, out _));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EmptyGenericPointerGenerationCannotReuseEarlierOriginsOrPointers(bool is32Bit)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        var prior = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[0]]);
+        Assert.NotEmpty(Field<System.Collections.IDictionary>(binary, "_genericMethodDictionary"));
+        binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 2, 0);
+        binary.Native(0x100 + (ulong)binary.PointerSizeBytes * 3, 0);
+        binary.Init(context);
+        Assert.True(binary.TryGetGenericMethodTableRegistration(out var table));
+        Assert.Equal(0ul, table.MethodPointerCount);
+        Assert.False(binary.TryGetGenericMethodRegistration(prior, out _));
+        Assert.Empty(binary.ConcreteGenericMethods);
+        Assert.Empty(binary.ConcreteGenericImplementationsByAddress);
+        Assert.Empty(Field<System.Collections.IDictionary>(binary, "_genericMethodDictionary"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CurrentGenerationOriginsRemainUnavailableUntilMappingCompletionReturns(bool is32Bit)
+    {
+        var (binary, context) = Create(is32Bit, includeMethodTables: true);
+        var prior = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[0]]);
+        var observed = false;
+        var previousWriter = LibCpp2IL.Logging.LibLogger.Writer;
+        LibCpp2IL.Logging.LibLogger.Writer = new ObservingWriter(previousWriter, () =>
+        {
+            if (!binary.ConcreteGenericMethods.TryGetValue(context.Metadata.methodDefs[0], out var references)) return;
+            foreach (var current in references)
+            {
+                if (ReferenceEquals(current, prior)) continue;
+                observed = true;
+                Assert.False(binary.TryGetGenericMethodRegistration(current, out _));
+                Assert.False(binary.TryGetGenericMethodPointerVirtualAddress(current, out _));
+            }
+        });
+        try
+        {
+            binary.Init(context);
+            Assert.True(observed);
+            var current = Assert.Single(binary.ConcreteGenericMethods[context.Metadata.methodDefs[0]]);
+            Assert.True(binary.TryGetGenericMethodRegistration(current, out _));
+        }
+        finally
+        {
+            LibCpp2IL.Logging.LibLogger.Writer = previousWriter;
+        }
+    }
+
+    private sealed class ObservingWriter(LibCpp2IL.Logging.LogWriter previous, Action observe) : LibCpp2IL.Logging.LogWriter
+    {
+        private readonly int _ownerThread = Environment.CurrentManagedThreadId;
+        public override void Info(string message) => previous.Info(message);
+        public override void Warn(string message) => previous.Warn(message);
+        public override void Error(string message) => previous.Error(message);
+        public override void Verbose(string message)
+        {
+            if (Environment.CurrentManagedThreadId == _ownerThread) observe();
+            previous.Verbose(message);
+        }
+    }
+
     private static void AssertInstantiationUnavailable(Il2CppBinary binary)
     {
         Assert.False(binary.TryGetGenericInstantiationTableRegistration(out _));

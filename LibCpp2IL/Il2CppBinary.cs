@@ -51,6 +51,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     private readonly Dictionary<Il2CppType, ulong> _typeAddresses = new(new RegisteredIdentityComparer<Il2CppType>());
     private readonly Dictionary<Il2CppCodeGenModule, ulong> _codeGenModuleAddresses = new(new RegisteredIdentityComparer<Il2CppCodeGenModule>());
     private readonly Dictionary<Cpp2IlMethodRef, GenericMethodRegistration> _genericMethodRegistrations = new(new RegisteredIdentityComparer<Cpp2IlMethodRef>());
+    private bool _genericMethodRegistrationsPublished;
     private ulong _codeRegistrationAddress;
     private ulong _metadataRegistrationAddress;
 
@@ -404,32 +405,38 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
         {
             LibLogger.Verbose("\tReading generic methods...");
             start = DateTime.Now;
-            _genericMethodDictionary = new();
-
-            var maxAdjustorThunkIndex = metadata.genericMethodTables.Length == 0 ? -1 : metadata.genericMethodTables.Max(t => t.adjustorThunk);
-            var adjustorThunkPointers = _codeRegistration.genericAdjustorThunks != 0 && maxAdjustorThunkIndex >= 0
-                ? ReadNUintArrayAtVirtualAddress(_codeRegistration.genericAdjustorThunks, maxAdjustorThunkIndex + 1)
-                : [];
-
-            for (var tableIndex = 0; tableIndex < metadata.genericMethodTables.Length; tableIndex++)
+            try
             {
-                var table = metadata.genericMethodTables[tableIndex];
-                var genericMethodIndex = table.GenericMethodIndex;
-                var genericMethodPointerIndex = table.methodIndex;
-                var adjustorThunkPtr = table.adjustorThunk >= 0 && table.adjustorThunk < adjustorThunkPointers.Length
-                    ? adjustorThunkPointers[table.adjustorThunk]
-                    : 0;
+                var maxAdjustorThunkIndex = metadata.genericMethodTables.Length == 0 ? -1 : metadata.genericMethodTables.Max(t => t.adjustorThunk);
+                var adjustorThunkPointers = _codeRegistration.genericAdjustorThunks != 0 && maxAdjustorThunkIndex >= 0
+                    ? ReadNUintArrayAtVirtualAddress(_codeRegistration.genericAdjustorThunks, maxAdjustorThunkIndex + 1)
+                    : [];
 
-                var methodDefIndex = GetGenericMethodFromIndex(metadata, genericMethodIndex, genericMethodPointerIndex, adjustorThunkPtr, tableIndex);
-
-                if (!_genericMethodDictionary.ContainsKey(methodDefIndex) && genericMethodPointerIndex < _genericMethodPointers.Length)
+                for (var tableIndex = 0; tableIndex < metadata.genericMethodTables.Length; tableIndex++)
                 {
-                    _genericMethodDictionary.TryAdd(methodDefIndex, _genericMethodPointers[genericMethodPointerIndex]);
-                }
-            }
+                    var table = metadata.genericMethodTables[tableIndex];
+                    var genericMethodIndex = table.GenericMethodIndex;
+                    var genericMethodPointerIndex = table.methodIndex;
+                    var adjustorThunkPtr = table.adjustorThunk >= 0 && table.adjustorThunk < adjustorThunkPointers.Length
+                        ? adjustorThunkPointers[table.adjustorThunk]
+                        : 0;
 
-            LibLogger.VerboseNewline($"OK ({(DateTime.Now - start).TotalMilliseconds} ms)");
-            InBinaryMetadataSize += GetNumBytesReadSinceLastCallAndClear();
+                    var methodDefIndex = GetGenericMethodFromIndex(metadata, genericMethodIndex, genericMethodPointerIndex, adjustorThunkPtr, tableIndex);
+
+                    if (!_genericMethodDictionary.ContainsKey(methodDefIndex) && genericMethodPointerIndex < _genericMethodPointers.Length)
+                    {
+                        _genericMethodDictionary.TryAdd(methodDefIndex, _genericMethodPointers[genericMethodPointerIndex]);
+                    }
+                }
+
+                LibLogger.VerboseNewline($"OK ({(DateTime.Now - start).TotalMilliseconds} ms)");
+                InBinaryMetadataSize += GetNumBytesReadSinceLastCallAndClear();
+            }
+            catch
+            {
+                ClearGenericMethodMappings();
+                throw;
+            }
         }
         else
         {
@@ -442,6 +449,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
         _genericMethodTableRegistration = genericMethodTableRegistration;
         _genericInstantiationRegistrations = genericInstantiationRegistrations;
         _genericInstantiationTableRegistration = genericInstantiationTableRegistration;
+        _genericMethodRegistrationsPublished = true;
         _hasFinishedInitialRead = true;
     }
 
@@ -543,12 +551,22 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
     private void ClearGenericRegistrationSnapshots()
     {
+        ClearGenericMethodMappings();
         _genericInstantiationTableRegistration = null;
         _genericInstantiationRegistrations = [];
         _genericMethodTableRegistration = null;
         _genericMethodRegistrationMetadata = null;
         _genericMethodSpecificationRegistrations = [];
         _genericMethodFunctionRegistrations = [];
+    }
+
+    private void ClearGenericMethodMappings()
+    {
+        _genericMethodRegistrationsPublished = false;
+        _genericMethodRegistrations.Clear();
+        ConcreteGenericMethods.Clear();
+        ConcreteGenericImplementationsByAddress.Clear();
+        _genericMethodDictionary.Clear();
     }
 
     /// <summary>Returns the original parsed instantiation-table identity, independent of mutable cached rows.</summary>
@@ -613,7 +631,10 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
     /// <summary>Returns native registration provenance for the exact originally parsed reference.</summary>
     public bool TryGetGenericMethodRegistration(Cpp2IlMethodRef reference, out GenericMethodRegistration registration)
-        => _genericMethodRegistrations.TryGetValue(reference, out registration);
+    {
+        registration = default;
+        return _genericMethodRegistrationsPublished && _genericMethodRegistrations.TryGetValue(reference, out registration);
+    }
 
     public bool TryGetGenericMethodPointerVirtualAddress(Cpp2IlMethodRef reference, out ulong address)
     {
