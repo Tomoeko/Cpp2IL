@@ -57,6 +57,9 @@ public class CommandLineArgs
     [Option("unity-reference-dir", HelpText = "Directories containing the exact Unity, framework and package reference assemblies for source emission.")]
     public IEnumerable<string> UnityReferenceDirectories { get; set; } = new List<string>();
 
+    [Option("unity-runtime-reference-file", HelpText = "Explicit supplied Unity player runtime reference files for source resolution. Compiler references remain separate and consumed API compatibility is checked.")]
+    public IEnumerable<string> UnityRuntimeReferenceFiles { get; set; } = new List<string>();
+
     [Option("unity-package-manifest", HelpText = "Explicit Unity Packages/manifest.json input for cs_unity output. Package versions are never inferred from the player.")]
     public string? UnityPackageManifestPath { get; set; }
 

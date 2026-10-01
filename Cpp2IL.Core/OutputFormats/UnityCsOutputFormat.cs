@@ -20,6 +20,7 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
 
     public IReadOnlyList<string>? AssemblyNames { get; set; }
     public IReadOnlyList<string>? ReferenceDirectories { get; set; }
+    public IReadOnlyList<string>? RuntimeReferenceFiles { get; set; }
     public string? PackageManifestPath { get; set; }
     public string? ExternalReferenceMapPath { get; set; }
     public bool RequireCompleteRecovery { get; set; }
@@ -28,6 +29,7 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
     {
         var selected = (AssemblyNames ?? Cpp2IlApi.RuntimeOptions?.UnitySourceAssemblies ?? []).ToArray();
         var references = ReferenceDirectories ?? Cpp2IlApi.RuntimeOptions?.UnityReferenceDirectories ?? [];
+        var runtimeReferences = RuntimeReferenceFiles ?? Cpp2IlApi.RuntimeOptions?.UnityRuntimeReferenceFiles ?? [];
         var packageManifest = PackageManifestPath ?? Cpp2IlApi.RuntimeOptions?.UnityPackageManifestPath;
         var externalReferenceMap = ExternalReferenceMapPath ?? Cpp2IlApi.RuntimeOptions?.UnityExternalReferenceMapPath;
         var strict = RequireCompleteRecovery || (Cpp2IlApi.RuntimeOptions?.StrictRecovery ?? false);
@@ -60,7 +62,7 @@ public sealed class UnityCsOutputFormat : Cpp2IlOutputFormat
             report.EnsureComplete(selected);
 
         var sourceReport = UnitySourceProjectEmitter.Emit(assemblies, selected, references, projectDirectory, packageManifest,
-            externalReferenceMap, context.MetadataVersion);
+            externalReferenceMap, context.MetadataVersion, runtimeReferences);
         sourceReport.RecoveryReportFile = "../source-recovery-report.json";
         sourceReport.ReturnMetadata.AddRange(UnityV29ReturnMetadataProvenance.Analyze(context, selected));
         if (sourceReport.ReturnMetadata.Count != 0)

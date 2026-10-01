@@ -43,7 +43,7 @@ public sealed class UnitySourceEmissionReport
             "  \"PackageManifestProvenance\":" + JsonText.Quote(PackageManifestProvenance) + ",\n" +
             "  \"PackageDependencyCount\":" + PackageDependencyCount + ",\n" +
             "  \"ExternalReferenceMapProvenance\":" + JsonText.Quote(ExternalReferenceMapProvenance) + ",\n" +
-            "  \"ReferencePolicy\":\"Explicit target references and external compilation kinds; recovered selected application assemblies; no host fallback\",\n" +
+            "  \"ReferencePolicy\":\"Explicit compiler target references and separately qualified runtime signature transports; recovered selected application assemblies; no host fallback\",\n" +
             "  \"RecoveryReportFile\":" + JsonText.Quote(RecoveryReportFile) + ",\n" +
             "  \"Assemblies\":[" + string.Join(",", Assemblies.Select(a =>
                 "{\"Name\":" + JsonText.Quote(a.Name) + ",\"SourceFile\":" + JsonText.Quote(a.SourceFile) +
@@ -54,7 +54,13 @@ public sealed class UnitySourceEmissionReport
                 ",\"ExternalReferenceKinds\":[" + string.Join(",", a.ExternalReferenceKinds.Select(reference =>
                     "{\"Name\":" + JsonText.Quote(reference.Name) + ",\"Kind\":" + JsonText.Quote(reference.Kind) +
                     ",\"Provenance\":" + JsonText.Quote(reference.Provenance) + "}")) + "]" +
-                ",\"CompilerReferenceAliases\":" + JsonText.Array(a.CompilerReferenceAliases) + "}")) + "],\n" +
+                ",\"CompilerReferenceAliases\":" + JsonText.Array(a.CompilerReferenceAliases) +
+                ",\"ReferenceTransports\":[" + string.Join(",", a.ReferenceTransports.Select(transport =>
+                    "{\"Name\":" + JsonText.Quote(transport.Name) + ",\"OriginalIdentity\":" + JsonText.Quote(transport.OriginalIdentity) +
+                    ",\"CompilerIdentity\":" + JsonText.Quote(transport.CompilerIdentity) +
+                    ",\"ConsumedSignatureTypes\":" + JsonText.Array(transport.ConsumedSignatureTypes) +
+                    ",\"ConsumedLocalSignatureTypes\":" + JsonText.Array(transport.ConsumedLocalSignatureTypes) +
+                    ",\"ApiValidation\":\"ordinary-reference-signatures-and-opaque-locals-only\",\"LinkerTransportValidation\":\"unverified\"}")) + "]}")) + "],\n" +
             "  \"ReturnMetadata\":[" + string.Join(",", ReturnMetadata.Select(item =>
                 "{\"Name\":" + JsonText.Quote(item.Name) + ",\"PlayerMethodCount\":" + item.PlayerMethodCount +
                 ",\"UnknownReturnRowCount\":" + item.UnknownReturnRowCount +
@@ -147,6 +153,16 @@ public sealed class UnitySourceAssemblyReport
     public List<string> ExternalReferences { get; set; } = [];
     public List<UnityExternalReferenceReport> ExternalReferenceKinds { get; set; } = [];
     public List<string> CompilerReferenceAliases { get; set; } = [];
+    public List<UnityReferenceTransportReport> ReferenceTransports { get; set; } = [];
+}
+
+public sealed class UnityReferenceTransportReport
+{
+    public string Name { get; set; } = "";
+    public string OriginalIdentity { get; set; } = "";
+    public string CompilerIdentity { get; set; } = "";
+    public List<string> ConsumedSignatureTypes { get; set; } = [];
+    public List<string> ConsumedLocalSignatureTypes { get; set; } = [];
 }
 
 public sealed class UnityExternalReferenceReport

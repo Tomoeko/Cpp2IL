@@ -12,6 +12,90 @@ namespace Cpp2IL.Core.Tests;
 
 public class UnityTargetAssemblyScopeTests
 {
+    private static byte[] PlayerFrameworkToken() => [0x7c, 0xec, 0x85, 0xd7, 0xbe, 0xa7, 0x79, 0x8e];
+
+    [TestCase("System")]
+    [TestCase("System.Core")]
+    [TestCase("System.Xml")]
+    public void PlayerRuntimeAvailabilityDoesNotQualifyACompilerReference(string name)
+    {
+        var token = PlayerFrameworkToken();
+        var reference = new AssemblyReference(name, new Version(4, 0, 0, 0)) { PublicKeyOrToken = token };
+        Assert.That(UnityTargetAssemblyScope.Classify(name, reference.Version, "", token),
+            Is.EqualTo(UnityTargetAssemblyKind.TargetReference));
+        Assert.That(Unity2021TargetFrameworkAssemblies.HasTargetIdentity(reference), Is.False);
+        Assert.That(UnitySourceProjectEmitter.IsTargetProvidedAssembly(reference), Is.False);
+
+        // The original compiler identity remains valid in its separate role.
+        reference.PublicKeyOrToken = [0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89];
+        Assert.That(Unity2021TargetFrameworkAssemblies.HasTargetIdentity(reference), Is.True);
+    }
+
+    [TestCase("name")]
+    [TestCase("version")]
+    [TestCase("culture")]
+    [TestCase("missing-token")]
+    [TestCase("short-token")]
+    [TestCase("zero-token")]
+    [TestCase("foreign-token")]
+    public void APlayerRuntimeTokenDoesNotExemptAnUnsupportedIdentity(string defect)
+    {
+        var name = "System";
+        var version = new Version(4, 0, 0, 0);
+        string? culture = null;
+        byte[]? token = PlayerFrameworkToken();
+        switch (defect)
+        {
+            case "name": name = "mscorlib"; break;
+            case "version": version = new Version(4, 0, 0, 1); break;
+            case "culture": culture = "en"; break;
+            case "missing-token": token = null; break;
+            case "short-token": token = token[..7]; break;
+            case "zero-token": token = new byte[8]; break;
+            case "foreign-token": token[0] ^= 1; break;
+        }
+        Assert.That(UnityTargetAssemblyScope.Classify(name, version, culture, token),
+            Is.EqualTo(UnityTargetAssemblyKind.UnresolvedTargetReference));
+    }
+
+    [TestCase("application-name")]
+    [TestCase("reference-name")]
+    [TestCase("compiler-token")]
+    [TestCase("version")]
+    public void RuntimeIdentityOverridesCannotConcealTheOriginalDeclaration(string defect)
+    {
+        var original = new UnityTargetAssemblyScope.Identity("System", new Version(4, 0, 0, 0), "", null,
+            PlayerFrameworkToken());
+        var current = original with { PublicKeyToken = PlayerFrameworkToken() };
+        Assert.That(UnityTargetAssemblyScope.ClassifyOriginalIdentity(original, current),
+            Is.EqualTo(UnityTargetAssemblyKind.TargetReference));
+        switch (defect)
+        {
+            case "application-name": original = original with { Name = "System.Neutral.Package" }; break;
+            case "reference-name": current = current with { Name = "System.Neutral.Package" }; break;
+            case "compiler-token": current = current with { PublicKeyToken = [0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89] }; break;
+            case "version": current = current with { Version = new Version(4, 0, 0, 1) }; break;
+        }
+        Assert.That(UnityTargetAssemblyScope.ClassifyOriginalIdentity(original, current),
+            Is.EqualTo(UnityTargetAssemblyKind.UnresolvedTargetReference));
+    }
+
+    [Test]
+    public void RuntimeFullKeyNormalizationRetainsTokenConflictChecks()
+    {
+        // This standard signing key comes from the test host; it is not an
+        // authority for Unity runtime availability or a private player key.
+        var key = typeof(object).Assembly.GetName().GetPublicKey()!;
+        Assert.That(UnityTargetAssemblyScope.TryNormalizePublicKey(key, true, out var token), Is.True);
+        Assert.That(token, Is.EqualTo(PlayerFrameworkToken()));
+        Assert.That(UnityTargetAssemblyScope.ClassifyIdentity("System.Core", new Version(4, 0, 0, 0), "", key, token),
+            Is.EqualTo(UnityTargetAssemblyKind.TargetReference));
+        Assert.That(UnityTargetAssemblyScope.ClassifyIdentity("System.Core", new Version(4, 0, 0, 0), "", key, new byte[8]),
+            Is.EqualTo(UnityTargetAssemblyKind.UnresolvedTargetReference));
+        Assert.That(UnityTargetAssemblyScope.Classify("System.Core", new Version(4, 0, 0, 0), "", key),
+            Is.EqualTo(UnityTargetAssemblyKind.UnresolvedTargetReference));
+    }
+
     [TestCase("application-name")]
     [TestCase("reference-name")]
     [TestCase("version")]

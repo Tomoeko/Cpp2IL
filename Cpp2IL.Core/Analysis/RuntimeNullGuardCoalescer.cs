@@ -438,10 +438,15 @@ internal static class RuntimeNullGuardCoalescer
                         // later guard removal must also retain its exact native site.
                         var retainedNativeInvocation = requireNativeFieldBinding &&
                             X64NativeNullCheckedInvocationProof.HasEvidence(method);
+                        // Retain complete evidence for an earlier no-argument invocation
+                        // before the signature-only shortcut deletes its guard. Later
+                        // sites must distinguish that deletion from an unrelated jump.
+                        var zeroArgumentInvocation = requireNativeFieldBinding && ordinaryTypedCall &&
+                            target.Parameters.Count == 0 && !pendingTypedInvocationSetup && !pendingTailArgumentSetup;
                         var targetBound = scalarArguments && HasGuardedArrayInvocationEvidence(method,
                             comparison, branch, instruction, target) ||
                             (composedStore || scalarArguments || scalarProducer || referenceProducer || referenceArguments ||
-                                retainedNativeInvocation) &&
+                                retainedNativeInvocation || zeroArgumentInvocation) &&
                             X64NativeNullCheckedInvocationProof.TryRecord(method,
                                 comparison, branch, receiver, instruction, target);
                         if (!targetBound && !scalarArguments && !scalarProducer && !referenceProducer && !referenceArguments &&

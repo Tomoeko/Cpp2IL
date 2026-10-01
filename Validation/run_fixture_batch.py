@@ -85,6 +85,7 @@ def prepare_project(project, profiles, receipt):
     (project / "Reports").mkdir()
     (project / "ProjectSettings/ProjectVersion.txt").write_text(
         "m_EditorVersion: " + fixture.VERSION + "\n", encoding="utf-8")
+    receipt["initialTargetSettings"] = fixture.write_initial_target_settings(project)
     fixture.write_json(project / "Packages/manifest.json", {"dependencies": {}})
     central = project / "Assets/Validation"
     fixture.copy_sources(fixture.VALIDATION / "BatchHarness", central)

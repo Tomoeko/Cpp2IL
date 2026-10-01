@@ -43,7 +43,8 @@ public static class UnitySourceProjectEmitter
     /// <param name="playerMetadataVersion">The metadata version of player-derived assemblies. Leave unset for authored managed inputs.</param>
     public static UnitySourceEmissionReport Emit(IEnumerable<AssemblyDefinition> assemblies, IEnumerable<string> selectedAssemblyNames,
         IEnumerable<string> referenceDirectories, string outputDirectory, string? packageManifestPath = null,
-        string? externalReferenceMapPath = null, float? playerMetadataVersion = null)
+        string? externalReferenceMapPath = null, float? playerMetadataVersion = null,
+        IEnumerable<string>? runtimeReferenceFiles = null)
     {
         var packageManifest = UnityPackageManifest.Load(packageManifestPath);
         var externalReferenceMap = UnityExternalReferenceMap.Load(externalReferenceMapPath);
@@ -108,13 +109,18 @@ public static class UnitySourceProjectEmitter
                 managedPaths.Add(path);
             }
 
-            using var resolver = new ExplicitAssemblyResolver(managedPaths, referenceDirectories);
+            using var resolver = new ExplicitAssemblyResolver(managedPaths, referenceDirectories, runtimeReferenceFiles);
             foreach (var name in selected)
             {
                 var module = byName[name].ManifestModule!;
                 var references = module.AssemblyReferences.Select(r => r.Name!.ToString()).Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray();
                 var referencesByName = module.AssemblyReferences.GroupBy(r => r.Name!.ToString(), StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+                using var file = new PEFile(Path.Combine(managedDirectory, name + ".dll"));
+                // Preserve original AssemblyRefs in recovered IL. Only consumed, qualified
+                // source signature types may select the separate compiler reference role.
+                var transports = resolver.ValidateReferenceTransport(module, file);
+                var transportedNames = new HashSet<string>(transports.Select(transport => transport.Name), StringComparer.Ordinal);
                 if (name is "Assembly-CSharp-Editor" or "Assembly-CSharp-Editor-firstpass" ||
                     references.Any(reference => reference is "UnityEditor" ||
                         reference.StartsWith("UnityEditor.", StringComparison.Ordinal)))
@@ -143,7 +149,8 @@ public static class UnitySourceProjectEmitter
                 {
                     var configured = externalReferenceMap.TryGet(reference, out var entry);
                     var mismatchedFrameworkIdentity = Unity2021TargetFrameworkAssemblies.IsKnownName(reference) &&
-                        !referencesByName[reference].All(Unity2021TargetFrameworkAssemblies.HasTargetIdentity);
+                        !referencesByName[reference].All(original => Unity2021TargetFrameworkAssemblies.HasTargetIdentity(original) ||
+                            transportedNames.Contains(reference) && HasTransportedIdentity(original));
                     // NET_Unity_4_8 does not provide the host core library. For player-derived
                     // source, it cannot be classified as a target reference by its name alone.
                     var unavailableCoreLibrary = playerMetadataVersion is >= 29f and < 30f &&
@@ -162,20 +169,23 @@ public static class UnitySourceProjectEmitter
                         continue;
                     }
                     if (configured && entry.Kind == "target-provided" &&
-                        !referencesByName[reference].All(IsTargetProvidedAssembly))
+                        !referencesByName[reference].All(original => IsTargetProvidedAssembly(original) ||
+                            transportedNames.Contains(reference) && HasTransportedIdentity(original)))
                     {
                         report.Diagnostics.Add($"SOURCE007: {name}: {reference}: An explicit map cannot establish that an unknown assembly is supplied by the Unity {TargetUnityVersion} target.");
                         referenceKinds.Add(new UnityExternalReferenceReport { Name = reference, Kind = "unclassified", Provenance = "unknown-target-identity" });
                         continue;
                     }
-                    if (referencesByName[reference].All(IsTargetProvidedAssembly))
+                    if (referencesByName[reference].All(original => IsTargetProvidedAssembly(original) ||
+                            transportedNames.Contains(reference) && HasTransportedIdentity(original)))
                     {
                         if (configured && entry.Kind != "target-provided")
                             report.Diagnostics.Add($"SOURCE007: {name}: {reference}: A known target-provided assembly cannot be classified as an asmdef or plug-in.");
                         referenceKinds.Add(new UnityExternalReferenceReport
                         {
                             Name = reference, Kind = "target-provided",
-                            Provenance = IsTargetProvidedAssembly(reference) ? "known-target-name" : "known-target-identity",
+                            Provenance = transportedNames.Contains(reference) ? "explicit-runtime-to-compiler-signature-transport" :
+                                IsTargetProvidedAssembly(reference) ? "known-target-name" : "known-target-identity",
                         });
                         continue;
                     }
@@ -199,7 +209,6 @@ public static class UnitySourceProjectEmitter
                 if (!IsPredefinedAssembly(name) && sourceReferences.Any(IsPredefinedAssembly))
                     throw new NotSupportedException("Unity assembly definitions cannot reference predefined assemblies. The original assembly boundary requires explicit project configuration.");
 
-                using var file = new PEFile(Path.Combine(managedDirectory, name + ".dll"));
                 resolver.ValidateReferenceClosure(file);
                 var settings = CreateSettings();
                 var decompiler = new CSharpDecompiler(file, resolver, settings);
@@ -245,6 +254,7 @@ public static class UnitySourceProjectEmitter
                     ExternalReferences = externalReferences,
                     ExternalReferenceKinds = referenceKinds,
                     CompilerReferenceAliases = compilerReferenceAliases,
+                    ReferenceTransports = transports,
                 });
             }
 
@@ -272,6 +282,12 @@ public static class UnitySourceProjectEmitter
         }
         return report;
     }
+
+    private static bool HasTransportedIdentity(AsmResolver.DotNet.AssemblyReference reference) =>
+        reference.Name?.ToString() is "System" or "System.Core" or "System.Xml" &&
+        UnityTargetAssemblyScope.TryNormalizePublicKey(reference.PublicKeyOrToken, reference.HasPublicKey, out var token) &&
+        Unity2021TargetFrameworkAssemblies.HasPlayerRuntimeIdentity(reference.Name.ToString(), reference.Version,
+            reference.Culture?.ToString(), token);
 
     internal static bool AccessorsMatchPropertySignature(PropertyDefinition property)
     {

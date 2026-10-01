@@ -112,7 +112,8 @@ internal static partial class X64OriginalReferenceClassProof
     // Bind layout cache consumers to their own file-backed registration slots.
     // This proves current input values, not runtime immutability or the initial
     // provenance of an unused pointer table's individual payloads.
-    internal static bool OriginalInstanceFieldLayout(TypeAnalysisContext type, out byte[] snapshot)
+    internal static bool OriginalInstanceFieldLayout(TypeAnalysisContext type, out byte[] snapshot,
+        bool unboxValueTypeOffsets = false)
     {
         snapshot = [];
         var app = type.AppContext;
@@ -149,6 +150,15 @@ internal static partial class X64OriginalReferenceClassProof
             var address = checked(offsets + (ulong)index * sizeof(int));
             var raw = pe.MapVirtualAddressToRaw(address, false);
             var value = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(pe.GetRawBinaryContent().Slice(checked((int)raw), sizeof(int)));
+            if (unboxValueTypeOffsets && definition.IsValueType && !type.Fields[index].IsStatic)
+            {
+                // Registration offsets address a boxed instance. The managed
+                // field context uses unboxed offsets; the object header must
+                // not become a second valid encoding of unboxed offset zero.
+                var headerBytes = checked(2 * pe.PointerSizeBytes);
+                if (value < headerBytes) return false;
+                value -= headerBytes;
+            }
             if (value != type.Fields[index].DefaultOffset) return false;
             Capture(address, sizeof(int));
         }

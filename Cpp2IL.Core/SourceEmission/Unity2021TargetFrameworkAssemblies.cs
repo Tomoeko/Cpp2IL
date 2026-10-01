@@ -16,6 +16,7 @@ internal static class Unity2021TargetFrameworkAssemblies
     private static readonly byte[] FacadeToken = [0xb0, 0x3f, 0x5f, 0x7f, 0x11, 0xd5, 0x0a, 0x3a];
     private static readonly byte[] NetstandardToken = [0xcc, 0x7b, 0x13, 0xff, 0xcd, 0x2d, 0xdd, 0x51];
     private static readonly byte[] MonoSecurityToken = [0x07, 0x38, 0xeb, 0x9f, 0x13, 0x2e, 0xd7, 0x56];
+    private static readonly byte[] PlayerFrameworkToken = [0x7c, 0xec, 0x85, 0xd7, 0xbe, 0xa7, 0x79, 0x8e];
 
     private static readonly IReadOnlyDictionary<string, (Version Version, byte[] Token)> Identities =
         new Dictionary<string, (Version, byte[])>(StringComparer.Ordinal)
@@ -44,4 +45,14 @@ internal static class Unity2021TargetFrameworkAssemblies
     internal static bool HasTargetIdentity(string name, Version? version, string? culture, ReadOnlySpan<byte> token) =>
         Identities.TryGetValue(name, out var identity) && version == identity.Version &&
         string.IsNullOrEmpty(culture) && token.SequenceEqual(identity.Token);
+
+    // The supplied unityaot-win32 libraries use these identities after Unity's
+    // linker transport from the compiler API profile. This establishes target
+    // body availability only; source resolution and compiler aliases continue
+    // to use HasTargetIdentity and require their separate reference evidence.
+    internal static bool HasPlayerRuntimeIdentity(string name, Version? version, string? culture,
+        ReadOnlySpan<byte> token) =>
+        HasTargetIdentity(name, version, culture, token) ||
+        (name is "System" or "System.Core" or "System.Xml") && version == FrameworkVersion &&
+        string.IsNullOrEmpty(culture) && token.SequenceEqual(PlayerFrameworkToken);
 }

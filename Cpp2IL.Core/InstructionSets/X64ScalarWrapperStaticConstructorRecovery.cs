@@ -11,7 +11,8 @@ internal static class X64ScalarWrapperStaticConstructorRecovery
     internal static bool TryGenerate(MethodAnalysisContext method,
         MethodDefinition definition)
     {
-        if (!X64ScalarWrapperStaticConstructorProof.TryAuthenticate(method, out var proof))
+        if (!X64ScalarWrapperStaticConstructorProof.TryAuthenticate(method, out var proof) ||
+            !X64ScalarStaticConstructorProof.MatchesDeclaration(method, definition))
             return false;
 
         var owner = method.DeclaringType!;
@@ -21,7 +22,6 @@ internal static class X64ScalarWrapperStaticConstructorRecovery
             ComputeMaxStackOnBuild = true,
             VerifyLabelsOnBuild = true,
         };
-        definition.CilMethodBody = body;
         var value = new CilLocalVariable(owner.ToTypeSignature());
         body.LocalVariables.Add(value);
         var il = body.Instructions;
@@ -34,6 +34,7 @@ internal static class X64ScalarWrapperStaticConstructorRecovery
                 il.Add(CilOpCodes.Ldc_I4, (int)unchecked((short)proof.ValueBits));
                 break;
             case LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_U4:
+            case LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_I4:
                 il.Add(CilOpCodes.Ldc_I4, unchecked((int)proof.ValueBits));
                 break;
             case LibCpp2IL.BinaryStructures.Il2CppTypeEnum.IL2CPP_TYPE_U8:
@@ -46,8 +47,14 @@ internal static class X64ScalarWrapperStaticConstructorRecovery
         il.Add(CilOpCodes.Ldloc, value);
         il.Add(CilOpCodes.Stsfld, proof.StaticField.ToFieldDescriptor());
         il.Add(CilOpCodes.Ret);
-        body.VerifyLabels();
-        body.ComputeMaxStack();
+        var previous = definition.CilMethodBody;
+        definition.CilMethodBody = body;
+        try { body.VerifyLabels(); body.ComputeMaxStack(); }
+        catch
+        {
+            definition.CilMethodBody = previous;
+            throw;
+        }
         return true;
     }
 }

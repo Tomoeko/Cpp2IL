@@ -6,6 +6,8 @@ using AssetRipper.Primitives;
 using Cpp2IL.Core.InstructionSets;
 using Cpp2IL.Core.Model.Contexts;
 using Cpp2IL.Core.Utils;
+using LibCpp2IL.BinaryStructures;
+using LibCpp2IL.PE;
 
 namespace Cpp2IL.Core.Tests;
 
@@ -53,6 +55,38 @@ public class X64ScalarWrapperStaticConstructorFixtureTests
                     Assert.That((type.Attributes & TypeAttributes.BeforeFieldInit) != 0,
                         Is.EqualTo(beforeFieldInit), name);
                 });
+
+                Assert.That(X64ScalarWrapperStaticConstructorProof.TryAuthenticate(constructor, out _), Is.True);
+                var pe = (PE)constructor.AppContext.Binary;
+                Assert.That(pe.BaseStream, Is.InstanceOf<MemoryStream>());
+                Assert.That(pe.TryGetGenericMethodTableRegistration(out var origin), Is.True);
+                var registration = pe.ReadReadableAtVirtualAddress<Il2CppMetadataRegistration>(origin.MetadataRegistrationAddress);
+                var offsets = pe.ReadPointerAtVirtualAddress(registration.fieldOffsetListAddress +
+                    (ulong)type.Definition!.TypeIndex.Value * 8);
+                var address = offsets + (ulong)proof!.ScalarField.BackingData!.IndexInParent * 4;
+                var rawOffset = checked((int)pe.MapVirtualAddressToRaw(address, false));
+                var original = pe.GetRawBinaryContent().Slice(rawOffset, 4).ToArray();
+                Assert.That(BitConverter.ToInt32(original), Is.EqualTo(16));
+                foreach (var changedOffset in new[] { 0, 17 })
+                {
+                    var position = pe.BaseStream.Position;
+                    try
+                    {
+                        pe.BaseStream.Position = rawOffset;
+                        pe.BaseStream.Write(BitConverter.GetBytes(changedOffset));
+                        Assert.That(X64ScalarWrapperStaticConstructorProof.Find(constructor), Is.Null,
+                            "Fresh qualification requires a genuine boxed field offset translated to the unchanged unboxed layout.");
+                        Assert.That(X64ScalarWrapperStaticConstructorProof.TryAuthenticate(constructor, out _), Is.False,
+                            "Saved evidence cannot hide a changed raw layout.");
+                    }
+                    finally
+                    {
+                        pe.BaseStream.Position = rawOffset;
+                        pe.BaseStream.Write(original);
+                        pe.BaseStream.Position = position;
+                    }
+                    Assert.That(X64ScalarWrapperStaticConstructorProof.TryAuthenticate(constructor, out _), Is.True);
+                }
 
                 foreach (var methodName in methods)
                 {

@@ -174,8 +174,11 @@ import scalar_float_conversion
 import scalar_int32_single_conversion
 import scalar_word_wrapper_conversion
 import scalar_double_accumulator
+import native_scalar_double_leaf
+import native_framework_reference_transport
 import scalar_float_conversion_composition
 import native_null_checked_invocation
+import native_sequential_null_invocation
 import native_scalar_pair_invocation
 import native_scalar_field_invocation
 import native_scalar_producer_invocation
@@ -267,6 +270,10 @@ PROFILES = {
                                       "source": VALIDATION / "GuardedArrayTailInvocationFixture", "methods": 10},
     "scalar-float-selection": {"assembly": "ScalarFloatSelectionFixture",
                                "source": VALIDATION / "ScalarFloatSelectionFixture", "methods": 9},
+    "native-scalar-double-leaf": {"assembly": "NativeScalarDoubleLeafFixture",
+                                  "source": VALIDATION / "NativeScalarDoubleLeafFixture", "methods": 7},
+    "native-framework-reference-transport": {"assembly": "NativeFrameworkReferenceTransportFixture",
+                                             "source": VALIDATION / "NativeFrameworkReferenceTransportFixture", "methods": 4},
     "scalar-double-accumulator": {"assembly": "ScalarDoubleAccumulatorFixture",
                                   "source": VALIDATION / "ScalarDoubleAccumulatorFixture", "methods": 2},
     "native-boolean-predicate-invocation": {"assembly": "NativeBooleanPredicateInvocationFixture",
@@ -283,6 +290,8 @@ PROFILES = {
                                             "source": VALIDATION / "ScalarFloatConversionCompositionFixture", "methods": 8},
     "native-null-checked-invocation": {"assembly": "NativeNullCheckedInvocationFixture",
                                       "source": VALIDATION / "NativeNullCheckedInvocationFixture", "methods": 18},
+    "native-sequential-null-invocation": {"assembly": "NativeSequentialNullInvocationFixture",
+                                          "source": VALIDATION / "NativeSequentialNullInvocationFixture", "methods": 15},
     "native-scalar-pair-invocation": {"assembly": "NativeScalarPairInvocationFixture",
                                      "source": VALIDATION / "NativeScalarPairInvocationFixture", "methods": 15},
     "native-scalar-field-invocation": {"assembly": "NativeScalarFieldInvocationFixture",
@@ -632,6 +641,23 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
+def write_initial_target_settings(project):
+    """Select the target API profile before Unity imports any fixture scripts."""
+    path = project / "ProjectSettings/ProjectSettings.asset"
+    # Unity 2021.3 serializes NET_Unity_4_8 as 3 for the Standalone group.
+    # Configuring it in an editor entrypoint is too late for the first import:
+    # explicit target references can conflict with the default netstandard API.
+    settings = ("%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n--- !u!129 &1\n"
+                "PlayerSettings:\n  m_ObjectHideFlags: 0\n  serializedVersion: 24\n"
+                "  scriptingRuntimeVersion: 1\n  apiCompatibilityLevelPerPlatform:\n"
+                "    Standalone: 3\n")
+    with path.open("x", encoding="utf-8") as output:
+        output.write(settings)
+    return {"path": path.relative_to(project).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "apiCompatibility": "NET_Unity_4_8", "provenance": "initial-project-settings-before-script-import"}
+
+
 def int32(value):
     return (value + 2**31) % 2**32 - 2**31
 
@@ -731,6 +757,10 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return guarded_array_tail_invocation.verify(path, stage, VERSION)
     if profile == "scalar-float-selection":
         return scalar_float_selection.verify(path, stage, VERSION)
+    if profile == "native-scalar-double-leaf":
+        return native_scalar_double_leaf.verify(path, stage, VERSION)
+    if profile == "native-framework-reference-transport":
+        return native_framework_reference_transport.verify(path, stage, VERSION)
     if profile == "scalar-double-accumulator":
         return scalar_double_accumulator.verify(path, stage, VERSION)
     if profile == "native-boolean-predicate-invocation":
@@ -747,6 +777,8 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return scalar_float_conversion_composition.verify(path, stage, VERSION)
     if profile == "native-null-checked-invocation":
         return native_null_checked_invocation.verify(path, stage, VERSION)
+    if profile == "native-sequential-null-invocation":
+        return native_sequential_null_invocation.verify(path, stage, VERSION)
     if profile == "native-scalar-pair-invocation":
         return native_scalar_pair_invocation.verify(path, stage, VERSION)
     if profile == "native-scalar-field-invocation":
@@ -1999,6 +2031,7 @@ def main():
         (project / "Packages").mkdir()
         (project / "Reports").mkdir()
         (project / "ProjectSettings" / "ProjectVersion.txt").write_text("m_EditorVersion: " + VERSION + "\n", encoding="utf-8")
+        receipt["initialTargetSettings"] = write_initial_target_settings(project)
         project_manifest = project / "Packages" / "manifest.json"
         if package_manifest is None:
             write_json(project_manifest, {"dependencies": {}})

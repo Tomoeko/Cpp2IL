@@ -16,10 +16,12 @@ public sealed class ExplicitAssemblyResolver : IAssemblyResolver, IDisposable
 {
     private readonly Dictionary<string, string> _recovered;
     private readonly string[] _directories;
+    private readonly UnityTargetReferenceTransport _transport;
     private readonly Dictionary<string, PEFile> _files = new(StringComparer.Ordinal);
     private readonly object _lock = new();
 
-    public ExplicitAssemblyResolver(IEnumerable<string> recoveredAssemblies, IEnumerable<string> referenceDirectories)
+    public ExplicitAssemblyResolver(IEnumerable<string> recoveredAssemblies, IEnumerable<string> referenceDirectories,
+        IEnumerable<string>? runtimeReferenceFiles = null)
     {
         _recovered = recoveredAssemblies.ToDictionary(p => AssemblyName.GetAssemblyName(p).Name!, Path.GetFullPath, StringComparer.Ordinal);
         _directories = referenceDirectories.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal).ToArray();
@@ -28,6 +30,7 @@ public sealed class ExplicitAssemblyResolver : IAssemblyResolver, IDisposable
             if (!Directory.Exists(directory))
                 throw new DirectoryNotFoundException("A configured target reference directory does not exist.");
         }
+        _transport = new UnityTargetReferenceTransport(_directories, runtimeReferenceFiles ?? []);
     }
 
     public MetadataFile? Resolve(IAssemblyReference reference)
@@ -37,6 +40,9 @@ public sealed class ExplicitAssemblyResolver : IAssemblyResolver, IDisposable
             ValidateSimpleName(reference.Name);
             if (_recovered.TryGetValue(reference.Name, out var recovered))
                 return LoadMatching(recovered, reference);
+
+            if (_transport.TryGet(reference, out var binding))
+                return LoadMatching(binding.RuntimePath, reference);
 
             // A supplied Unity engine reference can target an older framework identity than
             // the application. Resolve each identity exactly, without inventing a redirect.
@@ -52,6 +58,23 @@ public sealed class ExplicitAssemblyResolver : IAssemblyResolver, IDisposable
             return LoadMatching(matches[0], reference);
         }
     }
+
+    internal bool TryGetReferenceTransport(IAssemblyReference reference,
+        out UnityTargetReferenceTransport.Binding binding) => _transport.TryGet(reference, out binding);
+
+    internal PEFile ResolveCompilerReference(IAssemblyReference reference)
+    {
+        lock (_lock)
+        {
+            if (!_transport.TryGet(reference, out var binding))
+                return Resolve(reference) as PEFile ??
+                       throw new InvalidOperationException("A compiler reference must resolve to an explicit managed file.");
+            return LoadMatching(binding.CompilerPath, binding.CompilerReference);
+        }
+    }
+
+    internal List<UnityReferenceTransportReport> ValidateReferenceTransport(AsmResolver.DotNet.ModuleDefinition module,
+        PEFile file) => _transport.ValidateConsumedSignatures(module, file, this);
 
     public MetadataFile? ResolveModule(MetadataFile mainModule, string moduleName)
     {

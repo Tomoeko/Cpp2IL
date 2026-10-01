@@ -22,12 +22,14 @@ namespace Cpp2IL.Core.InstructionSets;
 /// </summary>
 internal static class X64ScalarWrapperStaticConstructorProof
 {
-    private const string EvidenceKey = "X64ScalarWrapperStaticConstructorProof";
+    internal const string EvidenceKey = "X64ScalarWrapperStaticConstructorProof";
     internal static bool HasEvidence(MethodAnalysisContext method) =>
         NativeRecoveryProofTracker.Has(method, EvidenceKey) ||
-        method.GetExtraData<X64SmallAggregateFieldGetterProof.InputState>(EvidenceKey) != null;
+        method.GetExtraData<Evidence>(EvidenceKey) != null;
     internal sealed record Evidence(FieldAnalysisContext StaticField,
-        FieldAnalysisContext ScalarField, ulong ValueBits);
+        FieldAnalysisContext ScalarField, ulong ValueBits,
+        X64SmallAggregateFieldGetterProof.InputState Input,
+        X64GenericMethodTableProof.Evidence GenericTables);
     internal readonly record struct Shape(ulong Flag, ulong TypeInfoSlot,
         ulong Initializer, int Width, ulong ValueBits);
 
@@ -35,23 +37,18 @@ internal static class X64ScalarWrapperStaticConstructorProof
     {
         proof = null!;
         if (Find(method) is not { } current) return false;
-        var values = new List<object>();
-        X64SmallAggregateFieldGetterProof.CaptureType(method.DeclaringType!, values);
-        X64SmallAggregateFieldGetterProof.CaptureMethod(method, values);
-        X64SmallAggregateFieldGetterProof.CaptureRawType(method.Definition!.RawReturnType!, values);
-        values.Add(current.StaticField);
-        values.Add(current.ScalarField);
-        values.Add(current.ValueBits);
-        var input = new X64SmallAggregateFieldGetterProof.InputState(values, method.RawBytes.AsSpan().ToArray());
-        var saved = method.GetExtraData<X64SmallAggregateFieldGetterProof.InputState>(EvidenceKey);
+        var saved = method.GetExtraData<Evidence>(EvidenceKey);
         if (NativeRecoveryProofTracker.Has(method, EvidenceKey))
         {
-            if (saved == null || !saved.Matches(input)) return false;
+            if (saved == null || method.AppContext.Binary is not PE pe ||
+                X64UnwindProof.ForApplication(method.AppContext) is not { } unwind ||
+                !saved.GenericTables.Matches(method.AppContext, pe, unwind) ||
+                !saved.Input.Matches(current.Input)) return false;
         }
         else
         {
             if (saved != null) return false;
-            method.PutExtraData(EvidenceKey, input);
+            method.PutExtraData(EvidenceKey, current);
             NativeRecoveryProofTracker.Mark(method, EvidenceKey);
         }
         proof = current;
@@ -67,7 +64,7 @@ internal static class X64ScalarWrapperStaticConstructorProof
                 !OrdinaryConstructor(method) ||
                 method.DeclaringType is not { } owner ||
                 !OrdinaryOwner(owner, method) ||
-                X64ScalarWrapperTailCallProof.ScalarField(owner, allowSignedWord: true) is not { } scalar ||
+                ConstructorScalarField(owner) is not { } scalar ||
                 app.Binary is not PE { PointerSizeBytes: 8 } pe ||
                 X64UnwindProof.ForApplication(app) is not { } unwind ||
                 method.UnderlyingPointer is 0 or ulong.MaxValue ||
@@ -131,15 +128,35 @@ internal static class X64ScalarWrapperStaticConstructorProof
                 !ReferenceEquals(app.ResolveIl2CppType(usage.AsType()), owner))
                 return null;
 
-            return new Evidence(stored, scalar, shape.ValueBits);
+            var values = new List<object>();
+            if (!X64ScalarStaticConstructorProof.CaptureBinding(method, stored, shape, values, out var tables)) return null;
+            values.Add(scalar);
+            values.Add(shape.ValueBits);
+            return new Evidence(stored, scalar, shape.ValueBits,
+                new X64SmallAggregateFieldGetterProof.InputState(values, method.RawBytes.AsSpan().ToArray()), tables);
         }
         catch (Exception exception) when (exception is ArgumentException or
                                           InvalidOperationException or
                                           IndexOutOfRangeException or
-                                          OverflowException)
+                                          OverflowException or
+                                          KeyNotFoundException or
+                                          NullReferenceException)
         {
             return null;
         }
+    }
+
+    // The Int32 extension belongs only to initialization from an immediate.
+    // It does not admit a new wrapper receiver ABI or dependent tail call.
+    private static FieldAnalysisContext? ConstructorScalarField(TypeAnalysisContext owner)
+    {
+        if (X64ScalarWrapperTailCallProof.ScalarField(owner, allowSignedWord: true) is { } existing) return existing;
+        return owner.Fields.Where(field => !field.IsStatic).ToArray() is [var scalar] &&
+               ReferenceEquals(scalar.DeclaringType, owner) && scalar.Offset == 0 &&
+               X64ScalarStaticConstructorProof.OrdinaryField(scalar) &&
+               scalar.BackingData?.Field.RawFieldType is { Type: Il2CppTypeEnum.IL2CPP_TYPE_I4 } &&
+               ReferenceEquals(scalar.FieldType, owner.AppContext.SystemTypes.SystemInt32Type) &&
+               TypeSizes.UnboxedSize(owner, 8) == 4 ? scalar : null;
     }
 
     internal static Shape? TryProveShape(IReadOnlyList<NativeInstruction> body)

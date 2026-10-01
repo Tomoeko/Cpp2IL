@@ -221,4 +221,10 @@ public enum OpCode
     /// under default rounding and masked exceptions; no floating control/status claim.
     /// </summary>
     FloatMultiply,
+
+    /// <summary>
+    /// Signed Int64 to binary64: destination, source. Rounds once to binary64
+    /// under default rounding and masked exceptions; no floating control/status claim.
+    /// </summary>
+    Int64ToDouble,
 }

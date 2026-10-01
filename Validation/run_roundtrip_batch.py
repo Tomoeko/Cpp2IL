@@ -220,6 +220,7 @@ def main(argv=None):
     parser.add_argument("--cpp2il", type=Path, required=True)
     parser.add_argument("--dotnet", default="dotnet")
     parser.add_argument("--reference-dir", action="append", type=Path, required=True)
+    parser.add_argument("--runtime-reference-file", action="append", type=Path, default=[])
     parser.add_argument("--il-reference-dir", action="append", type=Path)
     parser.add_argument("--install-ilverify", action="store_true")
     parser.add_argument("--run-dir", type=Path, required=True)
@@ -288,6 +289,8 @@ def main(argv=None):
                 command += ["--toolchain-root", str(args.toolchain_root)]
             for path in args.reference_dir:
                 command += ["--reference-dir", str(path)]
+            for path in args.runtime_reference_file:
+                command += ["--runtime-reference-file", str(path)]
             for path in args.il_reference_dir or ():
                 command += ["--il-reference-dir", str(path)]
             if args.install_ilverify:

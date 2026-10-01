@@ -385,6 +385,15 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
             if (X64ScalarWrapperConversionProof.HasEvidence(methodContext))
                 throw new InvalidOperationException("Retained scalar wrapper conversion evidence is missing or changed.");
 
+            if (X64ScalarStaticConstructorRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Static Int32 constructor IL emitted from complete bounded native, metadata, and unchanged field-storage evidence; behavior remains unverified.");
+                return;
+            }
+            if (X64ScalarStaticConstructorProof.HasEvidence(methodContext))
+                throw new InvalidOperationException("Retained static Int32 constructor evidence is missing or changed.");
+
             if (X64ScalarWrapperStaticConstructorRecovery.TryGenerate(methodContext,
                     methodDefinition))
             {

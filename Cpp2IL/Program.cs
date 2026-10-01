@@ -562,6 +562,7 @@ internal static class Program
         result.StrictRecovery = options.StrictRecovery;
         result.UnitySourceAssemblies = options.UnitySourceAssemblies.ToList();
         result.UnityReferenceDirectories = options.UnityReferenceDirectories.ToList();
+        result.UnityRuntimeReferenceFiles = options.UnityRuntimeReferenceFiles.ToList();
         result.UnityPackageManifestPath = options.UnityPackageManifestPath;
         result.UnityExternalReferenceMapPath = options.UnityExternalReferenceMapPath;
 

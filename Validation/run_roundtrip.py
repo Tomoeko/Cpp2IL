@@ -42,10 +42,13 @@ PROFILES = {name: FIXTURE_PROFILES[name] for name in (
     "scalar-int32-single-conversion",
     "scalar-word-wrapper-conversion",
     "scalar-double-accumulator",
+    "native-scalar-double-leaf",
+    "native-framework-reference-transport",
     "native-boolean-toggle-invocation",
     "native-boolean-predicate-invocation",
     "scalar-float-conversion-composition",
     "native-null-checked-invocation",
+    "native-sequential-null-invocation",
     "native-scalar-pair-invocation",
     "native-scalar-field-invocation",
     "native-scalar-producer-invocation",
@@ -190,6 +193,9 @@ def verify_player_inputs(directory, recorded):
 
 def verify_snapshot_inputs(directory, receipt):
     """Authenticate the isolated player, tools, oracles and recovered artifacts."""
+    for path, expected in receipt.get("referenceConfiguration", {}).get("runtimeReferenceFiles", {}).items():
+        if not Path(path).is_file() or digest(Path(path)) != expected:
+            raise ValueError("A supplied runtime reference changed during validation")
     for key, root in (("inputFiles", "recovery-input"), ("toolFiles", "tool"),
                       ("comparisonToolFiles", "declaration-comparer"), ("artifacts", "")):
         for item in receipt[key]:
@@ -463,6 +469,8 @@ def main():
     parser.add_argument("--cpp2il", type=Path, required=True, help="Built Cpp2IL.dll, executed with dotnet")
     parser.add_argument("--dotnet", default="dotnet")
     parser.add_argument("--reference-dir", action="append", type=Path, required=True)
+    parser.add_argument("--runtime-reference-file", action="append", type=Path, default=[],
+                        help="Explicit supplied player runtime files for source resolution; compiler reference directories stay separate.")
     parser.add_argument("--il-reference-dir", action="append", type=Path,
                         help="Explicit ILVerify reference set; defaults to --reference-dir. Source/declaration resolution keeps the full source set.")
     parser.add_argument("--baseline-run", type=Path, help="Reuse a verified original synthetic baseline; otherwise build it")
@@ -490,6 +498,11 @@ def main():
         parser.error("--run-dir must be ignored by Git")
     if args.timeout <= 0 or not args.cpp2il.is_file():
         parser.error("Provide a positive timeout and an existing built Cpp2IL.dll")
+    runtime_references = [path.expanduser().resolve() for path in args.runtime_reference_file]
+    if any(not path.is_file() or path.name.casefold() == (assembly + ".dll").casefold()
+           for path in runtime_references):
+        parser.error("Runtime references must be explicit existing files outside the selected application assembly")
+    runtime_reference_hashes = {str(path): digest(path) for path in runtime_references}
     if bool(args.comparison_tool_manifest) != bool(args.comparison_tool_manifest_sha256):
         parser.error("Both declaration comparer snapshot arguments are required")
     if args.comparison_tool_manifest:
@@ -539,6 +552,8 @@ def main():
         reference_map_sha256 = digest(reference_map_snapshot)
         receipt["externalReferenceMap"] = {"provenance": "explicit-auxiliary", "sha256": reference_map_sha256}
     recovery_inputs = ["isolated player binary and metadata"]
+    if runtime_references:
+        recovery_inputs.append("explicit supplied target runtime reference files for source resolution")
     if manifest_snapshot is not None:
         recovery_inputs.append("explicit package manifest")
     if reference_map_snapshot is not None:
@@ -665,7 +680,8 @@ def main():
             comparison_references.append(str(extra))
         receipt["referenceConfiguration"] = {"sourceAndDeclarations": references, "declarations": comparison_references,
                                              "managedIl": il_references,
-                                             "managedIlExplicit": args.il_reference_dir is not None}
+                                             "managedIlExplicit": args.il_reference_dir is not None,
+                                             "runtimeReferenceFiles": runtime_reference_hashes}
         if any((Path(path) / (assembly + ".dll")).exists() for path in references + il_references):
             raise ValueError("Reference directories must not contain the original application assembly")
         recovered = directory / "recovered"
@@ -677,6 +693,8 @@ def main():
             recovery_command += ["--unity-package-manifest", str(manifest_snapshot)]
         if reference_map_snapshot is not None:
             recovery_command += ["--unity-external-reference-map", str(reference_map_snapshot)]
+        if runtime_references:
+            recovery_command += ["--unity-runtime-reference-file", *map(str, runtime_references)]
         run("recovery", recovery_command)
         report = json.loads((recovered / "source-recovery-report.json").read_text(encoding="utf-8"))
         methods = [method for method in report["Methods"] if method["AssemblyName"] == assembly]
@@ -872,6 +890,8 @@ def main():
         if digest(baseline / "receipt.json") != receipt["baselineReceipt"]["sha256"]:
             raise ValueError("Original baseline receipt changed during validation")
         checked_declaration_stages(directory, receipt, replacement)
+        if any(digest(Path(path)) != expected for path, expected in runtime_reference_hashes.items()):
+            raise ValueError("A supplied runtime reference changed during validation")
         receipt["status"] = "passed"
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         receipt["status"] = "failed"

@@ -480,8 +480,8 @@ public static class LocalVariables
         foreach (var instruction in method.ControlFlowGraph!.Instructions)
             if (IntegerFloatConversion.TryGet(instruction))
             {
-                SetTypeIfUnknown((LocalVariable)instruction.Operands[0], method.AppContext.SystemTypes.SystemSingleType);
-                SetTypeIfUnknown((LocalVariable)instruction.Operands[1], method.AppContext.SystemTypes.SystemInt32Type);
+                SetTypeIfUnknown((LocalVariable)instruction.Operands[0], IntegerFloatConversion.ResultType(instruction, method.AppContext.SystemTypes));
+                SetTypeIfUnknown((LocalVariable)instruction.Operands[1], IntegerFloatConversion.SourceType(instruction, method.AppContext.SystemTypes));
             }
     }
 

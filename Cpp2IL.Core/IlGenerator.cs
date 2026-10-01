@@ -108,6 +108,9 @@ public static partial class IlGenerator
         if (X64ScalarInt32ToSingleProof.HasEvidence(context) &&
             !X64ScalarInt32ToSingleProof.IsValidFor(context))
             throw new DecompilerException("Int32-to-Single recovery lost its complete native body, signed conversion, field layout or arithmetic proof");
+        if (X64ScalarDoubleLeafProof.HasEvidence(context) &&
+            (!X64ScalarDoubleLeafProof.IsValidFor(context) || !X64ScalarDoubleLeafProof.MatchesOutput(context, definition)))
+            throw new DecompilerException("Double leaf recovery lost its original identity, complete body, ordered field reads, signed conversion or binary64 arithmetic proof");
         ValidateGuardedArrayAccesses(context);
         ValidateParameterGuardedArrayAccesses(context);
         ValidateGuardedArrayOperations(context);
@@ -626,6 +629,7 @@ public static partial class IlGenerator
                 break;
 
             case OpCode.Int32ToSingle:
+            case OpCode.Int64ToDouble:
                 EmitIntegerFloatConversion(instruction, method, locals);
                 break;
 

@@ -14,6 +14,22 @@ from run_fixture import VERSION, verify_behavior
 from static_scalar_setter import observations
 
 
+class RuntimeReferenceAuthenticationTests(unittest.TestCase):
+    def test_changed_or_missing_runtime_reference_invalidates_later_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reference = root / "System.dll"
+            reference.write_bytes(b"neutral original runtime reference")
+            receipt = {"referenceConfiguration": {"runtimeReferenceFiles": {
+                str(reference): roundtrip.digest(reference)}}}
+            reference.write_bytes(b"neutral changed runtime reference")
+            with self.assertRaisesRegex(ValueError, "runtime reference changed"):
+                roundtrip.verify_snapshot_inputs(root, receipt)
+            reference.unlink()
+            with self.assertRaisesRegex(ValueError, "runtime reference changed"):
+                roundtrip.verify_snapshot_inputs(root, receipt)
+
+
 class DeclarationReportAuthenticationTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

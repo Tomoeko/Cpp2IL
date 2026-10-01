@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -279,6 +280,134 @@ public class X64NativeNullCheckedInvocationFixtureTests
                     finally { block.Instructions[first] = stores[0]; block.Instructions[second] = stores[1]; }
                 }
                 Assert.That(X64NativeNullCheckedInvocationProof.IsValidFor(caller), Is.True, "Restored " + caller.Name);
+            }
+        }
+        finally { Cpp2IlApi.ResetInternalState(); }
+    }
+
+    [Test]
+    public void SequentialInvocationsRetainEarlierZeroArgumentSitesAndRejectStaleComposition()
+    {
+        var directory = Environment.GetEnvironmentVariable("CPP2IL_NATIVE_SEQUENTIAL_NULL_INVOCATION_FIXTURE_INPUT");
+        if (string.IsNullOrEmpty(directory))
+            Assert.Ignore("Set CPP2IL_NATIVE_SEQUENTIAL_NULL_INVOCATION_FIXTURE_INPUT to the neutral exact player input.");
+        Cpp2IlApi.ResetInternalState();
+        TestGameLoader.EnsureInit();
+        try
+        {
+            Cpp2IlApi.InitializeLibCpp2Il(Path.Combine(directory!, "GameAssembly.dll"),
+                Path.Combine(directory!, "RecoveryFixture_Data", "il2cpp_data", "Metadata", "global-metadata.dat"),
+                UnityVersion.Parse("2021.3.35f1"));
+            var app = Cpp2IlApi.CurrentAppContext!;
+            _ = new AsmResolverDllOutputFormatEmpty().BuildAssemblies(app);
+            var callers = app.GetAssemblyByName("NativeSequentialNullInvocationFixture")!.Types
+                .Single(type => type.Name == "InvocationHolder").Methods.Where(method => method.Name != ".ctor").ToArray();
+            Assert.That(callers, Has.Length.EqualTo(8));
+            foreach (var caller in callers)
+            {
+                caller.Analyze();
+                Assert.That(caller.ControlFlowGraph!.Instructions.Any(i => i.OpCode == OpCode.RuntimeNullThrow),
+                    Is.False, caller.Name);
+                Assert.That(X64NativeNullCheckedInvocationProof.IsValidFor(caller), Is.True, caller.Name);
+                var sites = (IList)caller.GetExtraData<object>(X64NativeNullCheckedInvocationProof.EvidenceKey)!;
+                var first = sites[0]!;
+                var firstCall = (Instruction)first.GetType().GetProperty("Invocation")!.GetValue(first)!;
+                var firstBranch = (Instruction)first.GetType().GetProperty("GuardBranch")!.GetValue(first)!;
+                var firstTarget = (MethodAnalysisContext)first.GetType().GetProperty("Target")!.GetValue(first)!;
+                Assert.That(firstTarget.Parameters, Is.Empty, "The earlier zero-argument site must be retained.");
+                Assert.That(firstCall.CallSemantics, Is.EqualTo(CallSemantics.NullCheckedInstance));
+                var definition = caller.GetExtraData<MethodDefinition>("AsmResolverMethod")!;
+                Assert.DoesNotThrow(() => IlGenerator.GenerateIl(caller, definition), caller.Name);
+                Assert.That(definition.CilMethodBody!.Instructions.Any(i => i.OpCode == CilOpCodes.Callvirt), Is.True);
+
+                sites.RemoveAt(0);
+                try
+                {
+                    Reject(caller);
+                    Assert.That(() => IlGenerator.GenerateIl(caller, definition), Throws.TypeOf<DecompilerException>());
+                }
+                finally { sites.Insert(0, first); }
+                firstCall.CallSemantics = CallSemantics.Direct;
+                try { Reject(caller); }
+                finally { firstCall.CallSemantics = CallSemantics.NullCheckedInstance; }
+                var address = firstBranch.NativeAddress;
+                firstBranch.NativeAddress = address!.Value + 1;
+                try { Reject(caller); }
+                finally { firstBranch.NativeAddress = address; }
+                var code = firstBranch.OpCode;
+                firstBranch.OpCode = OpCode.ConditionalJump;
+                try { Reject(caller); }
+                finally { firstBranch.OpCode = code; }
+                var targetName = firstTarget.OverrideName;
+                firstTarget.Name = "changed";
+                try { Reject(caller); }
+                finally { firstTarget.OverrideName = targetName; }
+                var rawReturn = firstTarget.Definition!.RawReturnType!;
+                var pinned = rawReturn.Pinned;
+                rawReturn.Pinned = 1;
+                try { Reject(caller); }
+                finally { rawReturn.Pinned = pinned; }
+                var rawBytes = caller.RawBytes;
+                var changedBytes = rawBytes.AsSpan().ToArray();
+                changedBytes[0] ^= 1;
+                caller.RawBytes = new BinarySlice(changedBytes);
+                try { Reject(caller); }
+                finally { caller.RawBytes = rawBytes; }
+                var scalarCall = caller.ControlFlowGraph.Instructions.First(i => i.IsCall &&
+                    i.Operands[0] is MethodAnalysisContext { Parameters.Count: > 0 });
+                var argumentIndex = scalarCall.OpCode == OpCode.Call ? 3 : 2;
+                var argument = scalarCall.Operands[argumentIndex];
+                scalarCall.SetOperand(argumentIndex, new Immediate(123));
+                try { Reject(caller); }
+                finally { scalarCall.SetOperand(argumentIndex, argument); }
+                if (caller.Name == "DistinctReceivers")
+                {
+                    var receiverIndex = firstCall.OpCode == OpCode.Call ? 2 : 1;
+                    var receiver = firstCall.Operands[receiverIndex];
+                    var otherReceiver = scalarCall.Operands[scalarCall.OpCode == OpCode.Call ? 2 : 1];
+                    Assert.That(otherReceiver, Is.Not.SameAs(receiver));
+                    firstCall.SetOperand(receiverIndex, otherReceiver);
+                    try { Reject(caller); }
+                    finally { firstCall.SetOperand(receiverIndex, receiver); }
+                }
+                if (caller.Name == "ReplaceThenApply")
+                {
+                    var graph = caller.ControlFlowGraph;
+                    var targetStore = graph.Instructions.Single(i =>
+                        i.Operands is [FieldReference { Field.Name: "Target" }, _]);
+                    var counterStore = graph.Instructions.Single(i =>
+                        i.OpCode == OpCode.Add && i.Operands is [FieldReference { Field.Name: "BeforeCount" }, _, _]);
+                    var targetBlock = graph.FindBlockByInstruction(targetStore)!;
+                    var counterBlock = graph.FindBlockByInstruction(counterStore)!;
+                    var targetIndex = targetBlock.Instructions.IndexOf(targetStore);
+                    var counterIndex = counterBlock.Instructions.IndexOf(counterStore);
+                    Assert.That(graph.Instructions.IndexOf(targetStore), Is.LessThan(graph.Instructions.IndexOf(counterStore)));
+                    var branchTargets = graph.Instructions.Where(i =>
+                            i.OpCode is OpCode.Jump or OpCode.ConditionalJump && i.Operands.Count > 0 &&
+                            (ReferenceEquals(i.Operands[0], targetStore) || ReferenceEquals(i.Operands[0], counterStore)))
+                        .Select(i => (Branch: i, Target: i.Operands[0])).ToArray();
+                    try
+                    {
+                        targetBlock.Instructions[targetIndex] = counterStore;
+                        counterBlock.Instructions[counterIndex] = targetStore;
+                        // IL generation may have lowered Block destinations to their first
+                        // Instruction. Preserve those block edges while exchanging effects.
+                        foreach (var (branch, target) in branchTargets)
+                            branch.SetOperand(0, ReferenceEquals(target, targetStore) ? counterStore : targetStore);
+                        Assert.That(graph.FindBlockByInstruction(counterStore), Is.SameAs(targetBlock));
+                        Assert.That(graph.FindBlockByInstruction(targetStore), Is.SameAs(counterBlock));
+                        Assert.That(graph.Instructions.IndexOf(counterStore), Is.LessThan(graph.Instructions.IndexOf(targetStore)));
+                        Reject(caller);
+                    }
+                    finally
+                    {
+                        targetBlock.Instructions[targetIndex] = targetStore;
+                        counterBlock.Instructions[counterIndex] = counterStore;
+                        foreach (var (branch, target) in branchTargets) branch.SetOperand(0, target);
+                    }
+                }
+                Assert.That(X64NativeNullCheckedInvocationProof.IsValidFor(caller), Is.True, "Restored " + caller.Name);
+                Assert.DoesNotThrow(() => IlGenerator.GenerateIl(caller, definition), caller.Name);
             }
         }
         finally { Cpp2IlApi.ResetInternalState(); }

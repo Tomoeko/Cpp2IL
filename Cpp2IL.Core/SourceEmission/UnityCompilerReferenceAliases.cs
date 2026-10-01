@@ -34,7 +34,8 @@ internal static class UnityCompilerReferenceAliases
             // dependencies keep their existing explicit compilation configuration.
             if (originals.Length == 0 || !originals.All(original =>
                     Unity2021TargetAssemblies.HasTargetIdentity(original) ||
-                    Unity2021TargetFrameworkAssemblies.HasTargetIdentity(original)))
+                    Unity2021TargetFrameworkAssemblies.HasTargetIdentity(original) ||
+                    resolver.TryGetReferenceTransport(reference, out _)))
                 continue;
             if ((int)file.Metadata.GetAssemblyReference(handle).Flags != 0)
             {
@@ -48,8 +49,9 @@ internal static class UnityCompilerReferenceAliases
             if (reference.Name == "mscorlib")
                 continue;
 
-            var resolved = resolver.Resolve(reference) as PEFile ??
-                throw new InvalidOperationException("A target compiler reference must resolve to an explicit managed file.");
+            // A transported reference is decompiled against its exact runtime file,
+            // but source uses the independently qualified compiler-role identity.
+            var resolved = resolver.ResolveCompilerReference(reference);
             var path = Path.GetFullPath(resolved.FileName).Replace('\\', '/');
             if (path.Contains('"') || path.Any(char.IsControl))
                 throw new ArgumentException("A configured target reference path cannot be quoted safely for the Unity compiler.");

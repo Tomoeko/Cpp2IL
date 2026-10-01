@@ -85,7 +85,7 @@ internal static class UnityTargetAssemblyScope
         if (!TryNormalizePublicKey(publicKeyOrToken, isFullPublicKey, out var token))
             return UnityTargetAssemblyKind.UnresolvedTargetReference;
         return Unity2021TargetAssemblies.HasTargetIdentity(name, version, culture, token) ||
-               Unity2021TargetFrameworkAssemblies.HasTargetIdentity(name, version, culture, token)
+               Unity2021TargetFrameworkAssemblies.HasPlayerRuntimeIdentity(name, version, culture, token)
             ? UnityTargetAssemblyKind.TargetReference : UnityTargetAssemblyKind.UnresolvedTargetReference;
     }
 
