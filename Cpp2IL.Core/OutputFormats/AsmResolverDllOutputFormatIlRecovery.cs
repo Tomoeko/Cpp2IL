@@ -390,6 +390,13 @@ public class AsmResolverDllOutputFormatIlRecovery : AsmResolverDllOutputFormat
                 return;
             }
 
+            if (X64RetainedAncestorConstructorRecovery.TryGenerate(methodContext, methodDefinition))
+            {
+                Record(methodContext, MethodRecoveryDisposition.Emitted,
+                    "Retained external base constructor IL emitted from complete native class-init guard, canonical original reference identity and independently proved inert immediate-base thunk; behavior remains unverified.");
+                return;
+            }
+
             if (X64GuardedBaseConstructorRecovery.TryGenerate(methodContext, methodDefinition))
             {
                 Record(methodContext, MethodRecoveryDisposition.Emitted,

@@ -182,6 +182,11 @@ import native_nested_reference_field_invocation
 import native_nested_reference_getter_invocation
 import native_constant_reference_array_argument
 import owner_effect_array_element_store
+import framework_ancestor_array_argument
+import native_direct_generic_reference_invocation
+import application_parent_cctor_array_argument
+import owner_cctor_array_argument
+import element_cctor_array_argument
 import class_reference_setter
 import signed_field_comparison
 import typed_field_address
@@ -300,6 +305,21 @@ PROFILES = {
     "owner-effect-array-element-store": {
         "assembly": "OwnerEffectArrayElementStoreFixture",
         "source": VALIDATION / "OwnerEffectArrayElementStoreFixture", "methods": 3},
+    "framework-ancestor-array-argument": {
+        "assembly": "FrameworkAncestorArrayArgumentFixture",
+        "source": VALIDATION / "FrameworkAncestorArrayArgumentFixture", "methods": 4},
+    "native-direct-generic-reference-invocation": {
+        "assembly": "NativeDirectGenericReferenceInvocationFixture",
+        "source": VALIDATION / "NativeDirectGenericReferenceInvocationFixture", "methods": 6},
+    "application-parent-cctor-array-argument": {
+        "assembly": "ApplicationParentCctorArrayArgumentFixture",
+        "source": VALIDATION / "ApplicationParentCctorArrayArgumentFixture", "methods": 6},
+    "owner-cctor-array-argument": {
+        "assembly": "OwnerCctorArrayArgumentFixture",
+        "source": VALIDATION / "OwnerCctorArrayArgumentFixture", "methods": 5},
+    "element-cctor-array-argument": {
+        "assembly": "ElementCctorArrayArgumentFixture",
+        "source": VALIDATION / "ElementCctorArrayArgumentFixture", "methods": 5},
     "signed-field-comparison": {"assembly": "SignedFieldComparisonFixture",
                                 "source": VALIDATION / "SignedFieldComparisonFixture", "methods": 6},
     "typed-field-address": {"assembly": "TypedFieldAddressFixture",
@@ -735,6 +755,16 @@ def verify_behavior(path, stage, profile="arithmetic"):
         return native_constant_reference_array_argument.verify(path, stage, VERSION)
     if profile == "owner-effect-array-element-store":
         return owner_effect_array_element_store.verify(path, stage, VERSION)
+    if profile == "framework-ancestor-array-argument":
+        return framework_ancestor_array_argument.verify(path, stage, VERSION)
+    if profile == "native-direct-generic-reference-invocation":
+        return native_direct_generic_reference_invocation.verify(path, stage, VERSION)
+    if profile == "application-parent-cctor-array-argument":
+        return application_parent_cctor_array_argument.verify(path, stage, VERSION)
+    if profile == "owner-cctor-array-argument":
+        return owner_cctor_array_argument.verify(path, stage, VERSION)
+    if profile == "element-cctor-array-argument":
+        return element_cctor_array_argument.verify(path, stage, VERSION)
     if profile == "class-reference-setter":
         return class_reference_setter.verify(path, stage, VERSION)
     if profile == "signed-field-comparison":

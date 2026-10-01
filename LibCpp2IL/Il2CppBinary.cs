@@ -48,12 +48,19 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
     private Dictionary<string, Il2CppCodeGenModule> _codeGenModulesByName = new(); //24.2+
     private Dictionary<Il2CppVariableWidthIndex<Il2CppMethodDefinition>, ulong> _genericMethodDictionary = new();
     private readonly Dictionary<ulong, Il2CppType> _typesByAddress = new();
-    private readonly Dictionary<Il2CppType, ulong> _typeAddresses = new(new RegisteredTypeIdentityComparer());
+    private readonly Dictionary<Il2CppType, ulong> _typeAddresses = new(new RegisteredIdentityComparer<Il2CppType>());
+    private readonly Dictionary<Il2CppCodeGenModule, ulong> _codeGenModuleAddresses = new(new RegisteredIdentityComparer<Il2CppCodeGenModule>());
+    private readonly Dictionary<Cpp2IlMethodRef, GenericMethodRegistration> _genericMethodRegistrations = new(new RegisteredIdentityComparer<Cpp2IlMethodRef>());
+    private ulong _codeRegistrationAddress;
+    private ulong _metadataRegistrationAddress;
 
-    private sealed class RegisteredTypeIdentityComparer : IEqualityComparer<Il2CppType>
+    public readonly record struct GenericMethodRegistration(int SpecificationIndex, int TableIndex,
+        ulong PointerAddress, ulong CodeRegistrationAddress, ulong MetadataRegistrationAddress);
+
+    private sealed class RegisteredIdentityComparer<T> : IEqualityComparer<T> where T : class
     {
-        public bool Equals(Il2CppType? first, Il2CppType? second) => ReferenceEquals(first, second);
-        public int GetHashCode(Il2CppType type) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(type);
+        public bool Equals(T? first, T? second) => ReferenceEquals(first, second);
+        public int GetHashCode(T value) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value);
     }
 
     public abstract long RawLength { get; }
@@ -124,6 +131,8 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
         _codeRegistration = cr;
         _metadataRegistration = mr;
+        _codeRegistrationAddress = pCodeRegistration;
+        _metadataRegistrationAddress = pMetadataRegistration;
         
         InBinaryMetadataSize += GetNumBytesReadSinceLastCallAndClear();
 
@@ -224,6 +233,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
             {
                 var codeGenModule = ReadReadableAtVirtualAddress<Il2CppCodeGenModule>(codeGenModulePtrs[i]);
                 _codeGenModules[i] = codeGenModule;
+                _codeGenModuleAddresses[codeGenModule] = codeGenModulePtrs[i];
                 _codeGenModulesByName[codeGenModule.Name] = codeGenModule;
                 var name = codeGenModule.Name;
                 LibLogger.VerboseNewline($"\t\t-Read module data for {name}, contains {codeGenModule.methodPointerCount} method pointers starting at 0x{codeGenModule.methodPointers:X}");
@@ -326,15 +336,16 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
                 ? ReadNUintArrayAtVirtualAddress(_codeRegistration.genericAdjustorThunks, maxAdjustorThunkIndex + 1)
                 : [];
 
-            foreach (var table in metadata.genericMethodTables)
+            for (var tableIndex = 0; tableIndex < metadata.genericMethodTables.Length; tableIndex++)
             {
+                var table = metadata.genericMethodTables[tableIndex];
                 var genericMethodIndex = table.GenericMethodIndex;
                 var genericMethodPointerIndex = table.methodIndex;
                 var adjustorThunkPtr = table.adjustorThunk >= 0 && table.adjustorThunk < adjustorThunkPointers.Length
                     ? adjustorThunkPointers[table.adjustorThunk]
                     : 0;
 
-                var methodDefIndex = GetGenericMethodFromIndex(metadata, genericMethodIndex, genericMethodPointerIndex, adjustorThunkPtr);
+                var methodDefIndex = GetGenericMethodFromIndex(metadata, genericMethodIndex, genericMethodPointerIndex, adjustorThunkPtr, tableIndex);
 
                 if (!_genericMethodDictionary.ContainsKey(methodDefIndex) && genericMethodPointerIndex < _genericMethodPointers.Length)
                 {
@@ -353,7 +364,7 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
         _hasFinishedInitialRead = true;
     }
 
-    private Il2CppVariableWidthIndex<Il2CppMethodDefinition> GetGenericMethodFromIndex(Il2CppMetadata metadata, int genericMethodIndex, int genericMethodPointerIndex, ulong adjustorThunkPtr)
+    private Il2CppVariableWidthIndex<Il2CppMethodDefinition> GetGenericMethodFromIndex(Il2CppMetadata metadata, int genericMethodIndex, int genericMethodPointerIndex, ulong adjustorThunkPtr, int tableIndex)
     {
         Cpp2IlMethodRef? genericMethodRef;
         var methodSpec = metadata.GetMethodSpec(genericMethodIndex);
@@ -364,7 +375,12 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
         if (genericMethodPointerIndex >= 0)
         {
             if (genericMethodPointerIndex < _genericMethodPointers.Length)
+            {
                 genericMethodRef.GenericVariantPtr = _genericMethodPointers[genericMethodPointerIndex];
+                var pointerAddress = checked(_codeRegistration.genericMethodPointers + (ulong)genericMethodPointerIndex * (ulong)PointerSizeBytes);
+                _genericMethodRegistrations[genericMethodRef] = new(genericMethodIndex, tableIndex,
+                    pointerAddress, _codeRegistrationAddress, _metadataRegistrationAddress);
+            }
         }
 
         if (!ConcreteGenericMethods.ContainsKey(genericMethodRef.BaseMethod))
@@ -439,6 +455,22 @@ public abstract class Il2CppBinary(Stream input) : ClassReadingBinaryReader(inpu
 
     public bool TryGetTypeVirtualAddress(Il2CppType type, out ulong address)
         => _typeAddresses.TryGetValue(type, out address) && address != 0;
+
+    /// <summary>Returns the registration address for the exact parsed module instance.</summary>
+    public bool TryGetCodegenModuleVirtualAddress(Il2CppCodeGenModule module, out ulong address)
+        => _codeGenModuleAddresses.TryGetValue(module, out address) && address != 0;
+
+    /// <summary>Returns native registration provenance for the exact originally parsed reference.</summary>
+    public bool TryGetGenericMethodRegistration(Cpp2IlMethodRef reference, out GenericMethodRegistration registration)
+        => _genericMethodRegistrations.TryGetValue(reference, out registration);
+
+    public bool TryGetGenericMethodPointerVirtualAddress(Cpp2IlMethodRef reference, out ulong address)
+    {
+        address = 0;
+        if (!TryGetGenericMethodRegistration(reference, out var registration)) return false;
+        address = registration.PointerAddress;
+        return address != 0;
+    }
 
     public int GetFieldOffsetFromIndex(Il2CppVariableWidthIndex<Il2CppTypeDefinition> typeIndex, int fieldIndexInType, Il2CppVariableWidthIndex<Il2CppFieldDefinition> fieldIndex, bool isValueType, bool isStatic)
     {

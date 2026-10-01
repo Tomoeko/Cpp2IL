@@ -1,0 +1,15 @@
+{
+  "name": "RecoveryValidation.Runtime",
+  "references": [
+    "OwnerCctorArrayArgumentFixture"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

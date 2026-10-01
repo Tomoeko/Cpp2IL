@@ -19,7 +19,7 @@ namespace Cpp2IL.Core.InstructionSets;
 /// managed base. A second folded constructor body and an inert Object thunk
 /// establish the complete native tail despite two constructor aliases.
 /// </summary>
-internal static class X64GuardedBaseConstructorProof
+internal static partial class X64GuardedBaseConstructorProof
 {
     private static readonly byte[] SavedRbxFrame = [0x06, 0x32, 0x02, 0x30];
 
