@@ -55,6 +55,7 @@ import signal
 import subprocess
 import sys
 import time
+import storage_budget
 
 import byte_fields
 import byte_mask_parameter
@@ -1522,29 +1523,82 @@ def translate_target_path(path, wine, environment, timeout=30):
 def run_process(command, environment, log, timeout, cwd=None):
     started = time.monotonic()
     timed_out = False
+    storage_limit_reached = False
+    storage_root = storage_budget.root_for_log(ROOT, log)
+    storage = storage_budget.check_headroom(storage_root) if storage_root else None
+    peak_bytes = storage["countedBytes"] if storage else 0
+
+    def sample_storage():
+        nonlocal storage, peak_bytes, storage_limit_reached
+        if storage_root:
+            storage = storage_budget.usage(storage_root)
+            peak_bytes = max(peak_bytes, storage["countedBytes"])
+            storage_limit_reached = storage["countedBytes"] + storage_budget.STOP_RESERVE_BYTES > storage_budget.LIMIT_BYTES
+
+    def stop_process(process, output):
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           stdout=output, stderr=subprocess.STDOUT, check=False)
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            if os.name == "nt":
+                process.kill()
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.wait()
+        if os.name != "nt":
+            # The session leader can exit while descendants ignore SIGTERM.
+            # Escalate the entire group even after reaping a successful leader.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
     with log.open("wb") as output:
         process = subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT,
                                    start_new_session=True, cwd=cwd)
         try:
-            code = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                               stdout=output, stderr=subprocess.STDOUT, check=False)
-            else:
-                os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                if os.name == "nt":
-                    process.kill()
-                else:
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-            code = process.returncode
-    return {"command": command, "exitCode": code, "timedOut": timed_out,
-            "seconds": round(time.monotonic() - started, 3)}
+            while True:
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0:
+                    timed_out = True
+                    stop_process(process, output)
+                    break
+                try:
+                    process.wait(timeout=min(remaining, storage_budget.POLL_SECONDS) if storage_root else remaining)
+                    sample_storage()
+                    if storage_limit_reached:
+                        stop_process(process, output)
+                    break
+                except subprocess.TimeoutExpired:
+                    sample_storage()
+                    if storage_limit_reached:
+                        stop_process(process, output)
+                        break
+        except BaseException:
+            # A failed scan or interruption must not leave a child writing artifacts.
+            stop_process(process, output)
+            raise
+    result = {"command": command, "exitCode": process.returncode, "timedOut": timed_out,
+              "storageLimitReached": storage_limit_reached,
+              "seconds": round(time.monotonic() - started, 3)}
+    if storage:
+        result["storageBudget"] = {**storage, "peakObservedBytes": peak_bytes,
+                                   "stopReserveBytes": storage_budget.STOP_RESERVE_BYTES}
+    return result
+
+
+def process_succeeded(result):
+    return result["exitCode"] == 0 and not result["timedOut"] and not result.get("storageLimitReached", False)
 
 
 @contextmanager
@@ -1584,6 +1638,9 @@ def isolate_player(player, destination):
     def excluded(_directory, names):
         return [name for name in names if "BackUpThisFolder" in name or "BurstDebugInformation" in name
                 or Path(name).suffix.lower() in {".pdb", ".mdb", ".cs", ".cpp", ".h", ".map"}]
+    # Account for this synchronous copy before duplicating the native player.
+    copy_bytes = sum(path.stat().st_size for path in player.rglob("*") if path.is_file())
+    storage_budget.check_headroom(ROOT / "Files", copy_bytes + storage_budget.STOP_RESERVE_BYTES)
     shutil.copytree(player, destination, ignore=excluded)
     required = ["RecoveryFixture.exe", "GameAssembly.dll", "UnityPlayer.dll",
                 "RecoveryFixture_Data/il2cpp_data/Metadata/global-metadata.dat"]
@@ -1720,7 +1777,7 @@ def install_external_reference_fixture(project, run_dir, receipt, timeout):
     result = run_process(command, os.environ.copy(), run_dir / "dependency-plugin.log", timeout, cwd=ROOT)
     receipt["commands"].append(result)
     binary = plugin_output / "Neutral.Plugin.dll"
-    if result["timedOut"] or result["exitCode"] != 0 or not binary.is_file():
+    if not process_succeeded(result) or not binary.is_file():
         raise ValueError("Synthetic managed plug-in build did not complete")
     destination = project / "Assets" / "Plugins"
     destination.mkdir(parents=True)
@@ -1859,6 +1916,8 @@ def main():
     receipt_path = run_dir / "receipt.json"
     write_json(receipt_path, receipt)
     try:
+        receipt["storageBudget"] = storage_budget.check_headroom(
+            private_root, storage_budget.BUILD_RESERVE_BYTES if args.stage != "compile" else storage_budget.STOP_RESERVE_BYTES)
         temporary = run_dir / "environment" / "tmp"
         dotnet_home = run_dir / "environment" / "dotnet-home"
         temporary.mkdir(parents=True)
@@ -1913,6 +1972,8 @@ def main():
         def editor_stage(method, label):
             command = common + ["-executeMethod", method, "-logFile", target_path(run_dir / (label + "-editor.log"))]
             with wine_editor_slot(bool(args.wine)) as queue_seconds:
+                storage_budget.check_headroom(private_root, storage_budget.BUILD_RESERVE_BYTES
+                                              if args.stage != "compile" else storage_budget.STOP_RESERVE_BYTES)
                 outcome = run_process(command, environment, run_dir / (label + "-process.log"), args.timeout)
             outcome["editorQueueSeconds"] = queue_seconds
             receipt["commands"].append(outcome)
@@ -1935,7 +1996,7 @@ def main():
             raise ValueError("Fresh compilation completion marker is missing or incorrect")
         receipt["stages"]["unityCompilation"] = {"status": "passed", "version": VERSION}
         behavior_stage(project / "Reports" / "editor-behavior.json", "editorBehavior", "editor")
-        if outcome["timedOut"] or outcome["exitCode"] != 0:
+        if not process_succeeded(outcome):
             raise RuntimeError(label + " editor process failed")
         if args.stage != "compile":
             build = json.loads((project / "Reports" / "build.json").read_text(encoding="utf-8"))
@@ -1954,7 +2015,7 @@ def main():
                     "--validation-report", target_path(report_path)]
                 outcome = run_process(command, environment, run_dir / "player-process.log", args.timeout)
                 receipt["commands"].append(outcome)
-                if outcome["timedOut"] or outcome["exitCode"] != 0:
+                if not process_succeeded(outcome):
                     raise RuntimeError("Native player process failed")
                 behavior_stage(report_path, "playerBehavior", "player")
         if package_manifest is not None:

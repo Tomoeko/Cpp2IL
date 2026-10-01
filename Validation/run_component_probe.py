@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from run_fixture import ROOT, VERSION, copy_sources, run_process, write_json
+from run_fixture import ROOT, VERSION, copy_sources, run_process, process_succeeded, write_json
 
 
 EXPECTED = {
@@ -141,12 +141,12 @@ def main():
         configure[configure.index("-logFile") + 1] = target_path(directory / "configure-editor.log")
         configured = run_process(configure, environment, directory / "configure-process.log", args.timeout)
         receipt["configureCommand"] = configured
-        if configured["exitCode"] != 0 or configured["timedOut"]:
-            raise ValueError("Editor API-profile configuration failed or timed out")
+        if not process_succeeded(configured):
+            raise ValueError("Editor API-profile configuration failed, timed out, or reached the storage limit")
         result = run_process(command, environment, directory / "process.log", args.timeout)
         receipt["command"] = result
-        if result["exitCode"] != 0 or result["timedOut"]:
-            raise ValueError("Editor process failed or timed out")
+        if not process_succeeded(result):
+            raise ValueError("Editor process failed, timed out, or reached the storage limit")
         report = json.loads((project / "Reports/components.json").read_text())
         receipt["editorCheck"] = verify_report(report, args.expect_discovery)
         if args.recovery_receipt:

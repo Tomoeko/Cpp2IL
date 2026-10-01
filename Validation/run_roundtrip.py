@@ -13,7 +13,7 @@ import sys
 import declaration_comparer_snapshot as comparer_snapshot
 from behavior_oracle import read_report, _same_type_and_value
 
-from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process,
+from run_fixture import (ROOT, VERSION, PROFILES as FIXTURE_PROFILES, run_process, process_succeeded,
                          write_json, resolved_package_lock_sha256, embedded_reference_lock_sha256,
                          embedded_package_lock_sha256, profile_harness_directory,
                          EMBEDDED_FIXTURE_PACKAGES, verify_external_reference_fixture,
@@ -567,8 +567,8 @@ def main():
         result = run_process(command, os.environ.copy(), directory / (name + ".log"), timeout or args.timeout,
                              cwd=tool_directory if name == "recovery" else ROOT)
         receipt["commands"].append({"stage": name, **result})
-        if result["timedOut"] or result["exitCode"] != 0:
-            raise ValueError(name + " failed or timed out; inspect its local log")
+        if not process_succeeded(result):
+            raise ValueError(name + " failed, timed out, or reached the storage limit; inspect its local log")
 
     fixture_command = [sys.executable, str(ROOT / "Validation/run_fixture.py"),
                        "--editor", str(args.editor.expanduser().resolve()), "--stage", "run", "--timeout", str(args.timeout),

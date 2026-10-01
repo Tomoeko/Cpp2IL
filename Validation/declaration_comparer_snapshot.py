@@ -77,6 +77,7 @@ def build_command(repository, dotnet):
 def freeze(repository, output, destination, build, sources):
     """Freeze all build outputs only after a successful build and unchanged inputs."""
     if (type(build.get("exitCode")) is not int or build["exitCode"] != 0 or build.get("timedOut") is not False or
+            build.get("storageLimitReached", False) is not False or
             build.get("command", [])[1:] != build_command(repository, "dotnet")[1:]):
         raise ValueError("A fresh successful Release declaration comparer build is required")
     if source_files(repository) != sources:
@@ -109,6 +110,7 @@ def checked(repository, manifest, expected_hash):
     if (data.get("schemaVersion") != 1 or data.get("status") != "passed" or
             data.get("configuration") != "Release" or data.get("targetFramework") != "net10.0" or
             not isinstance(build, dict) or type(build.get("exitCode")) is not int or build["exitCode"] != 0 or
+            build.get("storageLimitReached", False) is not False or
             build.get("timedOut") is not False or
             build.get("command", [])[1:] != build_command(repository, "dotnet")[1:]):
         raise ValueError("Declaration comparer snapshot has no successful matching build evidence")

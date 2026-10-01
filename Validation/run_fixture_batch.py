@@ -201,6 +201,8 @@ def main():
     receipt_path = run_dir / "receipt.json"
     fixture.write_json(receipt_path, receipt)
     try:
+        receipt["storageBudget"] = fixture.storage_budget.check_headroom(
+            private_root, fixture.storage_budget.BUILD_RESERVE_BYTES)
         temporary, dotnet_home = run_dir / "environment/tmp", run_dir / "environment/dotnet-home"
         temporary.mkdir(parents=True)
         dotnet_home.mkdir()
@@ -226,12 +228,13 @@ def main():
             "-batchmode", "-nographics", "-quit", "-projectPath", target_path(project), "-buildTarget", "Win64",
             "-executeMethod", "RecoveryValidation.ValidationEntry.Build", "-logFile", target_path(run_dir / "build-editor.log")]
         with fixture.wine_editor_slot(bool(args.wine), timeout=remaining()) as queue_seconds:
+            fixture.storage_budget.check_headroom(private_root, fixture.storage_budget.BUILD_RESERVE_BYTES)
             outcome = fixture.run_process(command, environment, run_dir / "build-process.log", remaining())
         outcome["editorQueueSeconds"] = queue_seconds
         receipt["commands"].append({"stage": "build", **outcome})
         fixture.write_json(receipt_path, receipt)
-        if outcome["timedOut"] or outcome["exitCode"] != 0:
-            raise ValueError("Batch editor build failed or timed out")
+        if not fixture.process_succeeded(outcome):
+            raise ValueError("Batch editor build failed, timed out, or reached the storage limit")
         if (project / "Reports/compilation-complete.txt").read_text(encoding="utf-8").strip() != fixture.VERSION:
             raise ValueError("Fresh exact-version compilation marker is missing or incorrect")
         compilation = {"status": "passed", "version": fixture.VERSION}
@@ -262,8 +265,8 @@ def main():
             "--validation-batch-report-directory", target_path(reports)]
         outcome = fixture.run_process(command, environment, run_dir / "player-process.log", remaining())
         receipt["commands"].append({"stage": "player", **outcome})
-        if outcome["timedOut"] or outcome["exitCode"] != 0:
-            raise ValueError("Fresh batch Windows player failed or timed out")
+        if not fixture.process_succeeded(outcome):
+            raise ValueError("Fresh batch Windows player failed, timed out, or reached the storage limit")
         for item in profiles:
             name, assembly = item["profile"], item["assembly"]
             record = receipt["profiles"][name]

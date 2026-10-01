@@ -11,7 +11,7 @@ import time
 
 import declaration_comparer_snapshot as comparer_snapshot
 
-from run_fixture import (ROOT, VERSION, EMBEDDED_FIXTURE_PACKAGES, run_process, write_json,
+from run_fixture import (ROOT, VERSION, EMBEDDED_FIXTURE_PACKAGES, run_process, process_succeeded, write_json,
                          verify_behavior, verify_embedded_fixture_dependency, verify_source_copy,
                          checked_behavior_report_files)
 from run_roundtrip import (PROFILES, checked_baseline, current_source_files, digest,
@@ -258,8 +258,8 @@ def main(argv=None):
                               remaining() + cleanup_grace, cwd=ROOT)
         receipt["commands"].append({"stage": stage, **outcome})
         write_json(directory / "roundtrip.json", receipt)
-        if outcome["timedOut"] or outcome["exitCode"] != 0:
-            raise ValueError(stage + " failed or timed out; inspect its local log")
+        if not process_succeeded(outcome):
+            raise ValueError(stage + " failed, timed out, or reached the storage limit; inspect its local log")
 
     try:
         for name, baseline in baselines.items():
